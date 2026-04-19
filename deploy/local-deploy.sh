@@ -1,11 +1,16 @@
 #!/usr/bin/env sh
 set -eu
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+
 APP_IMAGE="${APP_IMAGE:-prts-backend-local}"
 WEB_IMAGE="${WEB_IMAGE:-prts-web-local}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 EDGE_PORT="${EDGE_PORT:-18000}"
-COMPOSE_FILE="${COMPOSE_FILE:-deploy/docker-compose.prod.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-$REPO_ROOT/deploy/docker-compose.prod.yml}"
+
+cd "$REPO_ROOT"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker 未安装或不在 PATH 中"
