@@ -9,6 +9,12 @@ WEB_IMAGE="${WEB_IMAGE:-prts-web-local}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 EDGE_PORT="${EDGE_PORT:-18000}"
 COMPOSE_FILE="${COMPOSE_FILE:-$REPO_ROOT/deploy/docker-compose.prod.yml}"
+GOPROXY_VALUE="${GOPROXY_VALUE:-https://proxy.golang.org,direct}"
+GOSUMDB_VALUE="${GOSUMDB_VALUE:-sum.golang.org}"
+HTTP_PROXY_VALUE="${HTTP_PROXY_VALUE:-}"
+HTTPS_PROXY_VALUE="${HTTPS_PROXY_VALUE:-}"
+NO_PROXY_VALUE="${NO_PROXY_VALUE:-}"
+NPM_REGISTRY_VALUE="${NPM_REGISTRY_VALUE:-}"
 
 cd "$REPO_ROOT"
 
@@ -45,6 +51,42 @@ if [ -n "${input_edge_port:-}" ]; then
   EDGE_PORT="$input_edge_port"
 fi
 
+printf "Go 模块代理 GOPROXY [%s]: " "$GOPROXY_VALUE"
+read -r input_goproxy || true
+if [ -n "${input_goproxy:-}" ]; then
+  GOPROXY_VALUE="$input_goproxy"
+fi
+
+printf "Go 校验服务 GOSUMDB [%s]: " "$GOSUMDB_VALUE"
+read -r input_gosumdb || true
+if [ -n "${input_gosumdb:-}" ]; then
+  GOSUMDB_VALUE="$input_gosumdb"
+fi
+
+printf "HTTP_PROXY [%s]: " "${HTTP_PROXY_VALUE:-<empty>}"
+read -r input_http_proxy || true
+if [ -n "${input_http_proxy:-}" ]; then
+  HTTP_PROXY_VALUE="$input_http_proxy"
+fi
+
+printf "HTTPS_PROXY [%s]: " "${HTTPS_PROXY_VALUE:-<empty>}"
+read -r input_https_proxy || true
+if [ -n "${input_https_proxy:-}" ]; then
+  HTTPS_PROXY_VALUE="$input_https_proxy"
+fi
+
+printf "NO_PROXY [%s]: " "${NO_PROXY_VALUE:-<empty>}"
+read -r input_no_proxy || true
+if [ -n "${input_no_proxy:-}" ]; then
+  NO_PROXY_VALUE="$input_no_proxy"
+fi
+
+printf "NPM registry [%s]: " "${NPM_REGISTRY_VALUE:-<empty>}"
+read -r input_npm_registry || true
+if [ -n "${input_npm_registry:-}" ]; then
+  NPM_REGISTRY_VALUE="$input_npm_registry"
+fi
+
 printf "是否重新构建后端镜像？[Y/n]: "
 read -r rebuild_backend || true
 rebuild_backend=${rebuild_backend:-Y}
@@ -54,11 +96,22 @@ read -r rebuild_web || true
 rebuild_web=${rebuild_web:-Y}
 
 if [ "$rebuild_backend" = "Y" ] || [ "$rebuild_backend" = "y" ]; then
-  docker build -t "${APP_IMAGE}:${IMAGE_TAG}" .
+  docker build \
+    --build-arg GOPROXY="$GOPROXY_VALUE" \
+    --build-arg GOSUMDB="$GOSUMDB_VALUE" \
+    --build-arg HTTP_PROXY="$HTTP_PROXY_VALUE" \
+    --build-arg HTTPS_PROXY="$HTTPS_PROXY_VALUE" \
+    --build-arg NO_PROXY="$NO_PROXY_VALUE" \
+    -t "${APP_IMAGE}:${IMAGE_TAG}" .
 fi
 
 if [ "$rebuild_web" = "Y" ] || [ "$rebuild_web" = "y" ]; then
-  docker build -t "${WEB_IMAGE}:${IMAGE_TAG}" ./web
+  docker build \
+    --build-arg HTTP_PROXY="$HTTP_PROXY_VALUE" \
+    --build-arg HTTPS_PROXY="$HTTPS_PROXY_VALUE" \
+    --build-arg NO_PROXY="$NO_PROXY_VALUE" \
+    --build-arg NPM_REGISTRY="$NPM_REGISTRY_VALUE" \
+    -t "${WEB_IMAGE}:${IMAGE_TAG}" ./web
 fi
 
 export APP_IMAGE
