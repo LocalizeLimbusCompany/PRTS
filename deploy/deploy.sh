@@ -16,6 +16,10 @@ if ! docker info >/dev/null 2>&1; then
   DOCKER_BIN="sudo docker"
 fi
 
+if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
+  printf '%s' "$GHCR_TOKEN" | sh -c "$DOCKER_BIN login ghcr.io -u \"$GHCR_USERNAME\" --password-stdin"
+fi
+
 sh -c "$DOCKER_BIN compose -f docker-compose.prod.yml pull"
 sh -c "$DOCKER_BIN compose -f docker-compose.prod.yml run --rm api prts-migrate"
 sh -c "$DOCKER_BIN compose -f docker-compose.prod.yml up -d --remove-orphans"

@@ -75,6 +75,7 @@ jobs:
           test -n "${{ secrets.DEPLOY_USER }}" || (echo "Missing DEPLOY_USER secret" && exit 1)
           test -n "${{ secrets.DEPLOY_KEY }}" || (echo "Missing DEPLOY_KEY secret" && exit 1)
           test -n "${{ secrets.DEPLOY_APP_DIR }}" || (echo "Missing DEPLOY_APP_DIR secret" && exit 1)
+          test -n "${{ secrets.GHCR_TOKEN }}" || (echo "Missing GHCR_TOKEN secret. Create a PAT with read:packages." && exit 1)
 
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.2.0
@@ -87,4 +88,6 @@ jobs:
             export APP_IMAGE=${{ steps.image-names.outputs.app_image }}
             export WEB_IMAGE=${{ steps.image-names.outputs.web_image }}
             export APP_DIR=${{ secrets.DEPLOY_APP_DIR }}
+            export GHCR_USERNAME=${{ github.actor }}
+            export GHCR_TOKEN=${{ secrets.GHCR_TOKEN }}
             sh ${{ secrets.DEPLOY_APP_DIR }}/deploy.sh
