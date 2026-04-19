@@ -1,390 +1,190 @@
-# PRTS Translation System
+# 🌐 PRTS Translation System
 
-一个面向公开协作场景的翻译平台。
+<p align="left">
+  <img src="https://img.shields.io/badge/Backend-Go_1.25+-00ADD8?style=flat-square&logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/Frontend-React_%2B_TypeScript-61DAFB?style=flat-square&logo=react" alt="React">
+  <img src="https://img.shields.io/badge/Database-PostgreSQL-4169E1?style=flat-square&logo=postgresql" alt="Postgres">
+  <img src="https://img.shields.io/badge/Cache-Redis-DC382D?style=flat-square&logo=redis" alt="Redis">
+  <img src="https://img.shields.io/badge/Tooling-Docker-2496ED?style=flat-square&logo=docker" alt="Docker">
+</p>
 
-它的重点不是机翻，也不是 Git 同步，而是：
+一个面向**公开协作场景**的现代翻译工作台。
 
-- 多组织、多项目
-- 多原文到单目标语言
-- 文档级 JSON 导入导出
-- 文档标签
-- 简单实用的版本历史
-- 细粒度权限
+它的重点不是机器翻译，也不是 Git 源码同步，而是专注于高效的翻译协作、精细的权限管理以及稳定的版本追踪。
 
-## 当前技术栈
+### ✨ 核心特性
 
-后端固定为：
+- 🏢 **多组织、多项目架构**：单一部署即可支持多个独立翻译组运行。
+- 🌍 **多原文到单目标语言**：完美适配诸如 `EN/JP/KR -> CN` 的多源交叉翻译场景。
+- 📦 **文档级 JSON 导入导出**：无缝对接游戏/软件等结构化本地化资源。
+- 🏷️ **灵活的文档标签**：支持分类筛选与批量管理。
+- 📜 **简单实用的版本历史**：清晰记录每一个翻译条目的变更轨迹（Who, When, What）。
+- 🔐 **细粒度权限管控**：涵盖角色、单用户覆写、文档级范围限定以及多级审核流（译文 -> 校对 -> 批准）。
 
-- Go
-- chi
-- PostgreSQL
-- Redis
-- Docker Compose
+---
 
-前端固定为：
+## 🏗️ 技术栈选型
 
-- React
-- TypeScript
-- Vite
-- TanStack Router
-- TanStack Query
-- Zustand
-- Tailwind CSS
+**后端：**
+- **Go** + **chi** (路由)
+- **PostgreSQL** (核心数据) + **Redis** (缓存与会话)
+- **Docker Compose** (编排)
 
-前端实现者请先看：
+**前端：**
+- **React** + **TypeScript** + **Vite**
+- **TanStack Router** (类型安全路由) + **TanStack Query** (服务端状态)
+- **Zustand** (客户端状态)
+- **Tailwind CSS** (样式原子化)
 
-- [UI/GEMINI_README.md](D:/ZengXiaoPi/repo/PRTS_TranslationSystem/UI/GEMINI_README.md)
-- [UI/GEMINI_MISSION.md](D:/ZengXiaoPi/repo/PRTS_TranslationSystem/UI/GEMINI_MISSION.md)
-- [docs/frontend-handoff.md](D:/ZengXiaoPi/repo/PRTS_TranslationSystem/docs/frontend-handoff.md)
+---
 
-后端规格请看：
+## 🚀 快速开始 (本地开发)
 
-- [docs/backend-architecture.md](D:/ZengXiaoPi/repo/PRTS_TranslationSystem/docs/backend-architecture.md)
-- [docs/backend-spec.md](D:/ZengXiaoPi/repo/PRTS_TranslationSystem/docs/backend-spec.md)
+### 1. 环境准备
+确保已安装 [Go 1.25.3+](https://go.dev/)、[Docker](https://www.docker.com/) 和 Docker Compose。
 
-## 固定端口
-
-- 前端开发端口：`13000`
-- 后端 API 端口：`18080`
-- PostgreSQL 本地端口：`15432`
-- Redis 本地端口：`16379`
-
-## 目录说明
-
-```text
-cmd/
-  api/        API 入口
-  worker/     后台任务入口
-internal/
-  app/        启动逻辑
-  config/     环境配置
-  handlers/   HTTP 处理器
-  httpserver/ 路由组装
-  middleware/ 中间件
-  platform/   通用返回和基础工具
-db/
-  migrations/ 数据库迁移
-docs/         需求和架构文档
-deploy/       生产部署文件
-UI/           给 Gemini 的前端任务书
-```
-
-## 本地开发
-
-### 1. 准备环境
-
-需要先安装：
-
-- Go 1.25.3 或更高版本
-- Docker
-- Docker Compose
-
-复制环境变量：
-
+**克隆环境变量配置：**
 ```bash
+# Linux / macOS
 cp .env.example .env
-```
 
-Windows PowerShell：
-
-```powershell
+# Windows PowerShell
 Copy-Item .env.example .env
 ```
 
-### 2. 启动依赖
+### 2. 启动基础设施与初始化数据库
+启动依赖服务（PostgreSQL, Redis）并执行数据库自动迁移与种子数据填充：
 
 ```bash
+# 启动依赖组件
 docker compose up -d postgres redis
-```
 
-### 2.1 初始化数据库
-
-```bash
+# 等待数据库就绪后，执行迁移与种子数据填充
 go run ./cmd/migrate
 ```
+*执行完毕后，数据库会自动创建表结构并写入演示用的组织、项目及账户数据。*
 
-Windows PowerShell 同样使用：
+**🔑 默认演示账号：**
+- 管理员：`admin@example.com` / `admin123`
+- 校对员：`reviewer@example.com` / `reviewer123`
 
-```powershell
-go run ./cmd/migrate
-```
+### 3. 启动应用
 
-### 3. 安装依赖并整理模块
-
+整理 Go 模块：
 ```bash
 go mod tidy
 ```
 
-### 4. 启动 API
-
+开启两个终端分别启动 API 与后台 Worker：
 ```bash
+# 终端 1: 启动 API 服务 (端口: 18080)
 go run ./cmd/api
-```
 
-### 5. 启动 worker
-
-另开一个终端：
-
-```bash
+# 终端 2: 启动异步任务 Worker
 go run ./cmd/worker
 ```
 
-### 6. 验证接口
+前端项目的启动请参考 `UI/GEMINI_README.md`，前端开发环境已在 `web/` 目录初始化完毕，默认端口为 `13000`。
 
-健康检查：
+---
 
+## 📂 目录结构
+
+```text
+PRTS_TranslationSystem/
+├── cmd/
+│   ├── api/          # 后端 API 入口
+│   ├── worker/       # 异步任务 Worker 入口
+│   └── migrate/      # 数据库迁移工具
+├── internal/
+│   ├── app/          # 核心启动与装配逻辑
+│   ├── config/       # 环境变量解析
+│   ├── handlers/     # HTTP 请求处理
+│   ├── middleware/   # 鉴权、日志等中间件
+│   ├── platform/     # 基础工具与响应封装
+│   └── store/        # 数据库仓储接口
+├── db/
+│   └── migrations/   # SQL 迁移文件
+├── docs/             # 架构设计与需求文档
+├── deploy/           # 生产环境部署脚本及 Compose 文件
+├── web/              # 前端 React + Vite 项目代码
+└── UI/               # 早期给 AI 助手提供的前端开发指令
+```
+
+---
+
+## 🛠️ Docker Compose 完整启动
+
+如果你不想在宿主机直接跑 Go，可以使用 Docker Compose 一键拉起完整环境（含 API、Worker、Postgres、Redis）：
+
+```bash
+docker compose up --build
+```
+*服务停止指令：`docker compose down`*
+
+---
+
+## 🚢 生产环境部署
+
+本项目采用基于 **GitHub Actions + GHCR (GitHub Container Registry) + SSH** 的轻量级自动部署方案。
+**核心原则：不在服务器上手动构建，也不手动同步源码。**
+
+### 1. 服务器环境准备
+```bash
+# 创建部署目录并授权
+sudo mkdir -p /opt/prts-translation-system
+sudo chown -R $USER:$USER /opt/prts-translation-system
+```
+
+只需将仓库中的 3 个文件上传至服务器该目录下：
+- `deploy/docker-compose.prod.yml`
+- `deploy/deploy.sh`
+- `.env` (需修改为生产环境配置，如真实的 `DATABASE_URL` 和 `POSTGRES_PASSWORD`)
+
+### 2. GitHub Secrets 配置
+在 GitHub 仓库设置中配置以下 Secrets，以激活 `deploy.yml` 工作流：
+- `DEPLOY_HOST`: 服务器 IP 或域名
+- `DEPLOY_USER`: SSH 登录用户名
+- `DEPLOY_KEY`: SSH 私钥
+- `DEPLOY_APP_DIR`: `/opt/prts-translation-system`
+
+### 3. 自动化部署流程
+每次将代码推送到 `main` (或 `master`) 分支后：
+1. Actions 自动执行 `ci.yml` 验证代码。
+2. Actions 构建最新的 Docker 镜像并推送至 `ghcr.io/<Your-Repo>`。
+3. 通过 SSH 登录服务器执行 `deploy.sh`。
+4. 服务器拉取最新镜像，执行平滑重启。
+
+*如需更改镜像托管源，可在服务器的 `.env` 中指定 `APP_IMAGE=xxx`。*
+
+---
+
+<details>
+<summary>💡 API 调试示例 (点击展开)</summary>
+
+**健康检查**
 ```bash
 curl http://localhost:18080/healthz
 ```
 
-接口元信息：
-
-```bash
-curl http://localhost:18080/api/v1/meta
-```
-
-登录演示账号：
-
+**获取登录 Token**
 ```bash
 curl -X POST http://localhost:18080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@example.com","password":"admin123"}'
 ```
 
-组织列表示例：
-
+**获取条目列表 (带 Token)**
 ```bash
-curl http://localhost:18080/api/v1/organizations
+curl -H "Authorization: Bearer <token>" \
+  "http://localhost:18080/api/v1/projects/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/units?page=1&pageSize=50"
 ```
 
-项目列表示例：
-
-```bash
-curl http://localhost:18080/api/v1/organizations/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/projects
-```
-
-翻译条目列表示例：
-
-```bash
-curl "http://localhost:18080/api/v1/projects/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/units?page=1&pageSize=50"
-```
-
-导入 JSON 示例：
-
+**上传 JSON 导入任务**
 ```bash
 curl -X POST http://localhost:18080/api/v1/projects/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/imports \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d @example-import.json
 ```
-
-导出 zip 示例：
-
-```bash
-curl -X POST http://localhost:18080/api/v1/projects/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/exports \
-  -H "Authorization: Bearer <token>"
-```
-
-## 使用 Docker Compose 本地完整启动
-
-```bash
-docker compose up --build
-```
-
-这会启动：
-
-- API
-- worker
-- PostgreSQL
-- Redis
-
-## 生产部署
-
-目标是“不手动复制项目代码到服务器”。
-
-采用的方式是：
-
-1. GitHub Actions 自动构建 Docker 镜像
-2. 推送到 GHCR
-3. 通过 SSH 在服务器上执行部署脚本
-4. 服务器只拉新镜像并重启服务
-
-也就是说，服务器上只需要保留：
-
-- `deploy/docker-compose.prod.yml`
-- `deploy/deploy.sh`
-- `.env`
-
-不需要你每次手动把整份代码复制过去。
-
-## 生产服务器初始化
-
-### 1. 服务器准备目录
-
-```bash
-sudo mkdir -p /opt/prts-translation-system
-sudo chown -R $USER:$USER /opt/prts-translation-system
-```
-
-### 2. 上传部署文件
-
-第一次只需要把下面几个文件放到服务器：
-
-- `deploy/docker-compose.prod.yml`
-- `deploy/deploy.sh`
-- `.env`
-
-建议目录结构：
-
-```text
-/opt/prts-translation-system/
-  docker-compose.prod.yml
-  deploy.sh
-  .env
-```
-
-### 3. 服务器 `.env` 示例
-
-```env
-APP_NAME=prts-translation-system
-APP_ENV=production
-API_PORT=18080
-DATABASE_URL=postgres://postgres:your-password@postgres:5432/prts_translation_system?sslmode=disable
-REDIS_URL=redis://redis:6379/0
-EXPORT_RETENTION=24h
-EXPORT_CLEANUP_INTERVAL=1h
-POSTGRES_PASSWORD=your-password
-```
-
-### 4. 首次部署命令
-
-```bash
-cd /opt/prts-translation-system
-IMAGE_TAG=latest APP_DIR=/opt/prts-translation-system sh ./deploy.sh
-```
-
-## GitHub Actions 自动部署
-
-仓库中已经准备了：
-
-- [ci.yml](D:/ZengXiaoPi/repo/PRTS_TranslationSystem/.github/workflows/ci.yml)
-- [deploy.yml](D:/ZengXiaoPi/repo/PRTS_TranslationSystem/.github/workflows/deploy.yml)
-
-需要在 GitHub Secrets 中配置：
-
-- `DEPLOY_HOST`
-- `DEPLOY_USER`
-- `DEPLOY_KEY`
-- `DEPLOY_APP_DIR`
-
-部署流程是：
-
-- 推送到 `main` 或 `master`
-- Actions 构建镜像
-- 推送到 `ghcr.io/<你的仓库名>`
-- SSH 到服务器
-- 执行 `deploy.sh`
-- 服务器拉新镜像并重启
-
-生产部署使用的镜像名默认为：
-
-```text
-ghcr.io/<你的 GitHub 仓库名>
-```
-
-如果你想换成别的镜像仓库，只需要在服务器 `.env` 或部署环境里设置：
-
-```env
-APP_IMAGE=ghcr.io/your-name/prts-translation-system
-```
-
-## 常用命令
-
-整理依赖：
-
-```bash
-go mod tidy
-```
-
-编译 API：
-
-```bash
-go build ./cmd/api
-```
-
-编译 worker：
-
-```bash
-go build ./cmd/worker
-```
-
-启动本地完整环境：
-
-```bash
-docker compose up --build
-```
-
-停止本地环境：
-
-```bash
-docker compose down
-```
-
-查看服务日志：
-
-```bash
-docker compose logs -f api
-docker compose logs -f worker
-```
-
-## 说明
-
-当前仓库已经有：
-
-- 后端最小可运行骨架
-- PostgreSQL 初始化 SQL
-- 演示种子数据
-- organization / project / tag / document / version / translation unit / history 只读接口
-- organization / project / document 的创建与更新接口
-- 标签创建、更新、绑定、解绑接口
-- 翻译条目更新、校对、批准接口
-- 项目成员、角色、权限节点、权限覆写、文档范围规则接口
-- 翻译条目的 `permissions` 字段已接入基础权限计算
-- `auth/login`、`auth/logout`、`me`、`me/preferences` 已可用
-- glossary / tm / imports / exports / audit-logs 接口已可用
-- JSON 导入已真实写入文档、版本和翻译条目
-- 项目导出已真实生成 zip 文件
-- `go run ./cmd/migrate` 数据库迁移命令已可用
-- 容器构建文件
-- 本地开发方式
-- 自动部署工作流
-- 前端任务书
-
-## 数据库初始化到底怎么做
-
-最短步骤就是：
-
-1. 复制环境变量
-2. 启动 PostgreSQL 和 Redis
-3. 执行迁移命令
-
-```bash
-cp .env.example .env
-docker compose up -d postgres redis
-go run ./cmd/migrate
-```
-
-Windows PowerShell：
-
-```powershell
-Copy-Item .env.example .env
-docker compose up -d postgres redis
-go run ./cmd/migrate
-```
-
-执行完后，数据库里会自动创建表并写入演示数据。
-
-默认演示账号：
-
-- `admin@example.com / admin123`
-- `reviewer@example.com / reviewer123`
+</details>
