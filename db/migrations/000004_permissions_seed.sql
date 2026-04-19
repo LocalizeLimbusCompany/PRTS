@@ -33,7 +33,7 @@ VALUES
 ON CONFLICT (project_id, user_id) DO NOTHING;
 
 INSERT INTO project_role_permissions (project_role_id, permission_node_id)
-SELECT role_map.role_id, pn.id
+SELECT role_map.id, pn.id
 FROM (
     VALUES
         ('owner', 'project.view'),
