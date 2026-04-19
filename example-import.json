@@ -1,0 +1,20 @@
+{
+  "document": "StoryData/S003.json",
+  "entries": [
+    {
+      "key": "story.line.001",
+      "source": {
+        "en": "The operation begins now.",
+        "jp": "作戦を開始します。",
+        "kr": "작전을 시작합니다."
+      },
+      "target": {
+        "cn": "作战现在开始。"
+      },
+      "meta": {
+        "status": "translated",
+        "comment": "示例导入"
+      }
+    }
+  ]
+}

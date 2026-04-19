@@ -1,0 +1,8 @@
+.env
+.cache/
+bin/
+dist/
+coverage/
+vendor/
+docker-data/
+exports/
