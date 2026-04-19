@@ -360,12 +360,31 @@ docker compose logs -f worker
 - 自动部署工作流
 - 前端任务书
 
-还没有开始实现：
+## 数据库初始化到底怎么做
 
-- 数据库真实迁移
-- 登录鉴权
-- 项目、文档、翻译条目接口
-- 权限计算
-- 导入导出任务
+最短步骤就是：
 
-这些就是下一阶段的实现重点。
+1. 复制环境变量
+2. 启动 PostgreSQL 和 Redis
+3. 执行迁移命令
+
+```bash
+cp .env.example .env
+docker compose up -d postgres redis
+go run ./cmd/migrate
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d postgres redis
+go run ./cmd/migrate
+```
+
+执行完后，数据库里会自动创建表并写入演示数据。
+
+默认演示账号：
+
+- `admin@example.com / admin123`
+- `reviewer@example.com / reviewer123`

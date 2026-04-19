@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -1582,7 +1583,7 @@ func (s *Store) Login(ctx context.Context, email, password string) (string, Auth
 	if err != nil {
 		return "", AuthUser{}, err
 	}
-	if passwordHash != password {
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
 		return "", AuthUser{}, errors.New("invalid credentials")
 	}
 

@@ -25,11 +25,14 @@ function ProjectLayout() {
             PRTS
           </Link>
 
-          <nav className="flex space-x-1">
-            <NavLink to={`/project/${projectId}/dashboard`} icon={<LayoutDashboard size={16} />} label="Overview" />
-            <NavLink to={`/project/${projectId}/workbench`} icon={<Activity size={16} />} label="Workbench" />  
-            <NavLink to={`/project/${projectId}/documents`} icon={<FileText size={16} />} label="Documents" />  
-            <NavLink to={`/project/${projectId}/settings`} icon={<Settings size={16} />} label="Settings" />    
+          <nav className="flex space-x-1 overflow-x-auto shrink-0 pb-1 -mb-1 scrollbar-hide">
+            <NavLink to={`/project/${projectId}/dashboard`} icon={<LayoutDashboard size={14} />} label="Overview" />
+            <NavLink to={`/project/${projectId}/workbench`} icon={<Activity size={14} />} label="Workbench" />  
+            <NavLink to={`/project/${projectId}/documents`} icon={<FileText size={14} />} label="Documents" />  
+            <NavLink to={`/project/${projectId}/jobs`} icon={<FileText size={14} />} label="Jobs" />
+            <NavLink to={`/project/${projectId}/history`} icon={<FileText size={14} />} label="History" />
+            <NavLink to={`/project/${projectId}/members`} icon={<FileText size={14} />} label="Members" />
+            <NavLink to={`/project/${projectId}/settings`} icon={<Settings size={14} />} label="Settings" />    
           </nav>
         </div>
 

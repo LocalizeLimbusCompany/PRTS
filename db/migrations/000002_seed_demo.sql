@@ -1,8 +1,12 @@
 INSERT INTO users (id, email, username, password_hash, display_name, preferred_locale, preferred_source_language)
 VALUES
-    ('11111111-1111-1111-1111-111111111111', 'admin@example.com', 'admin', 'admin123', 'Amiya', 'zh-CN', 'jp'),
-    ('22222222-2222-2222-2222-222222222222', 'reviewer@example.com', 'reviewer', 'reviewer123', 'Kal''tsit', 'zh-CN', 'en')
-ON CONFLICT (email) DO NOTHING;
+    ('11111111-1111-1111-1111-111111111111', 'admin@example.com', 'admin', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5NLqC8oWQz1xM0t1Ik5dUvNbK/C.j7G', 'Amiya', 'zh-CN', 'jp'),
+    ('22222222-2222-2222-2222-222222222222', 'reviewer@example.com', 'reviewer', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Kal''tsit', 'zh-CN', 'en')
+ON CONFLICT (email) DO UPDATE SET
+    password_hash = EXCLUDED.password_hash,
+    display_name = EXCLUDED.display_name,
+    preferred_locale = EXCLUDED.preferred_locale,
+    preferred_source_language = EXCLUDED.preferred_source_language;
 
 INSERT INTO organizations (id, slug, name, description, visibility, created_by)
 VALUES
