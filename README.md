@@ -1,4 +1,4 @@
-# 🌐 PRTS Translation System
+# PRTS Paratranz Remake Translation System
 
 <p align="left">
   <img src="https://img.shields.io/badge/Backend-Go_1.25+-00ADD8?style=flat-square&logo=go" alt="Go">
