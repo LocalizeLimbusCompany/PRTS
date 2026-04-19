@@ -33,6 +33,25 @@ if [ ! -f ".env" ]; then
   exit 1
 fi
 
+set -a
+. ./.env
+set +a
+
+if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+  echo "POSTGRES_PASSWORD 未配置，请先修改 .env"
+  exit 1
+fi
+
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "DATABASE_URL 未配置，请先修改 .env"
+  exit 1
+fi
+
+if [ -z "${REDIS_URL:-}" ]; then
+  echo "REDIS_URL 未配置，请先修改 .env"
+  exit 1
+fi
+
 printf "后端镜像名 [%s]: " "$APP_IMAGE"
 read -r input_app_image || true
 if [ -n "${input_app_image:-}" ]; then
@@ -120,7 +139,11 @@ export APP_IMAGE_TAG="$IMAGE_TAG"
 export EDGE_PORT
 
 docker compose -f "$COMPOSE_FILE" up -d postgres redis
-docker compose -f "$COMPOSE_FILE" run --rm api prts-migrate
+
+echo "等待 PostgreSQL 就绪..."
+docker compose -f "$COMPOSE_FILE" exec -T postgres sh -c 'until pg_isready -U postgres -d prts_translation_system; do sleep 1; done'
+
+docker compose -f "$COMPOSE_FILE" run --rm --use-aliases api prts-migrate
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 
 echo ""
