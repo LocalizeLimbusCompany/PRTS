@@ -26,11 +26,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalize image names
+        id: image-names
+        run: |
+          app_image="ghcr.io/${{ github.repository }}"
+          web_image="ghcr.io/${{ github.repository }}-web"
+          echo "app_image=${app_image,,}" >> "$GITHUB_OUTPUT"
+          echo "web_image=${web_image,,}" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ steps.image-names.outputs.app_image }}
           tags: |
             type=sha
             type=raw,value=latest
@@ -39,7 +47,7 @@ jobs:
         id: web-meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}-web
+          images: ${{ steps.image-names.outputs.web_image }}
           tags: |
             type=sha
             type=raw,value=latest
@@ -76,7 +84,7 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
             export IMAGE_TAG=${{ github.sha }}
-            export APP_IMAGE=ghcr.io/${{ github.repository }}
-            export WEB_IMAGE=ghcr.io/${{ github.repository }}-web
+            export APP_IMAGE=${{ steps.image-names.outputs.app_image }}
+            export WEB_IMAGE=${{ steps.image-names.outputs.web_image }}
             export APP_DIR=${{ secrets.DEPLOY_APP_DIR }}
             sh ${{ secrets.DEPLOY_APP_DIR }}/deploy.sh
