@@ -119,6 +119,7 @@ export WEB_IMAGE
 export APP_IMAGE_TAG="$IMAGE_TAG"
 export EDGE_PORT
 
+docker compose -f "$COMPOSE_FILE" up -d postgres redis
 docker compose -f "$COMPOSE_FILE" run --rm api prts-migrate
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 
