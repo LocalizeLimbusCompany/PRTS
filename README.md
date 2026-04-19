@@ -124,38 +124,91 @@ docker compose up --build
 
 ---
 
-## 🚢 生产环境部署
+## 🚢 服务器部署
 
-本项目采用基于 **GitHub Actions + GHCR (GitHub Container Registry) + SSH** 的轻量级自动部署方案。
-**核心原则：不在服务器上手动构建，也不手动同步源码。**
+推荐方式是：
+
+1. 在服务器上手动 `git pull`
+2. 执行一条交互式命令完成部署
+
+不再使用 GitHub Actions 远程部署。
 
 ### 1. 服务器环境准备
+
 ```bash
-# 创建部署目录并授权
-sudo mkdir -p /opt/prts-translation-system
-sudo chown -R $USER:$USER /opt/prts-translation-system
+sudo apt update
+sudo apt install -y git docker.io docker-compose-plugin
+sudo systemctl enable --now docker
+sudo groupadd docker || true
+sudo usermod -aG docker $USER
+newgrp docker
 ```
 
-只需将仓库中的 3 个文件上传至服务器该目录下：
-- `deploy/docker-compose.prod.yml`
-- `deploy/deploy.sh`
-- `.env` (需修改为生产环境配置，如真实的 `DATABASE_URL` 和 `POSTGRES_PASSWORD`)
+验证：
 
-### 2. GitHub Secrets 配置
-在 GitHub 仓库设置中配置以下 Secrets，以激活 `deploy.yml` 工作流：
-- `DEPLOY_HOST`: 服务器 IP 或域名
-- `DEPLOY_USER`: SSH 登录用户名
-- `DEPLOY_KEY`: SSH 私钥
-- `DEPLOY_APP_DIR`: `/opt/prts-translation-system`
+```bash
+docker ps
+```
 
-### 3. 自动化部署流程
-每次将代码推送到 `main` (或 `master`) 分支后：
-1. Actions 自动执行 `ci.yml` 验证代码。
-2. Actions 构建最新的 Docker 镜像并推送至 `ghcr.io/<Your-Repo>`。
-3. 通过 SSH 登录服务器执行 `deploy.sh`。
-4. 服务器拉取最新镜像，执行平滑重启。
+### 2. 拉代码
 
-*如需更改镜像托管源，可在服务器的 `.env` 中指定 `APP_IMAGE=xxx`。*
+```bash
+sudo mkdir -p /opt/prts-translation-system
+sudo chown -R $USER:$USER /opt/prts-translation-system
+cd /opt/prts-translation-system
+git clone git@github.com:LocalizeLimbusCompany/PRTS.git repo
+cd repo
+```
+
+### 3. 准备配置
+
+```bash
+cp .env.example .env
+```
+
+至少修改：
+
+```env
+POSTGRES_PASSWORD=换成强密码
+DATABASE_URL=postgres://postgres:换成强密码@postgres:5432/prts_translation_system?sslmode=disable
+EDGE_PORT=18000
+```
+
+注意：
+
+- 不再默认占用 `80`
+- 默认监听 `18000`
+- 你后续自己用 Nginx / Caddy / 宝塔做反代
+
+### 4. 一条命令交互式部署
+
+```bash
+chmod +x ./deploy/local-deploy.sh
+sh ./deploy/local-deploy.sh
+```
+
+脚本会交互询问：
+
+- 后端镜像名
+- 前端镜像名
+- 对外监听端口
+- 是否重新构建后端
+- 是否重新构建前端
+
+默认行为：
+
+- 本地构建后端镜像 `prts-backend-local`
+- 本地构建前端镜像 `prts-web-local`
+- 执行数据库迁移
+- 启动整套服务
+
+### 5. 访问
+
+如果你的服务器 IP 是 `1.2.3.4`，默认访问：
+
+```text
+http://1.2.3.4:18000
+```
 
 ---
 
