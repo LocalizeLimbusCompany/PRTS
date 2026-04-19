@@ -61,6 +61,13 @@ jobs:
           tags: ${{ steps.web-meta.outputs.tags }}
           labels: ${{ steps.web-meta.outputs.labels }}
 
+      - name: Validate deploy secrets
+        run: |
+          test -n "${{ secrets.DEPLOY_HOST }}" || (echo "Missing DEPLOY_HOST secret" && exit 1)
+          test -n "${{ secrets.DEPLOY_USER }}" || (echo "Missing DEPLOY_USER secret" && exit 1)
+          test -n "${{ secrets.DEPLOY_KEY }}" || (echo "Missing DEPLOY_KEY secret" && exit 1)
+          test -n "${{ secrets.DEPLOY_APP_DIR }}" || (echo "Missing DEPLOY_APP_DIR secret" && exit 1)
+
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.2.0
         with:
