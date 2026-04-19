@@ -279,7 +279,7 @@ IMAGE_TAG=latest APP_DIR=/opt/prts-translation-system sh ./deploy.sh
 
 部署流程是：
 
-- 推送到 `main`
+- 推送到 `main` 或 `master`
 - Actions 构建镜像
 - 推送到 `ghcr.io/<你的仓库名>`
 - SSH 到服务器
