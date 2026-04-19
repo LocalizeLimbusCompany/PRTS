@@ -19,7 +19,7 @@ services:
     command: ["prts-api"]
     restart: unless-stopped
     env_file:
-      - .env
+      - ../.env
     volumes:
       - /opt/prts-translation-system/exports:/app/exports
     depends_on:
@@ -31,7 +31,7 @@ services:
     command: ["prts-worker"]
     restart: unless-stopped
     env_file:
-      - .env
+      - ../.env
     volumes:
       - /opt/prts-translation-system/exports:/app/exports
     depends_on:
