@@ -199,6 +199,10 @@ sh ./deploy/local-deploy.sh
 
 - 本地构建后端镜像 `prts-backend-local`
 - 本地构建前端镜像 `prts-web-local`
+- 默认使用国内镜像源：
+  - `GOPROXY=https://goproxy.cn,direct`
+  - `GOSUMDB=off`
+  - `NPM registry=https://registry.npmmirror.com`
 - 执行数据库迁移
 - 启动整套服务
 
@@ -209,6 +213,21 @@ sh ./deploy/local-deploy.sh
 ```text
 http://1.2.3.4:18000
 ```
+
+### 6. 以后如何更新
+
+以后在服务器上只需要：
+
+```bash
+cd /opt/prts-translation-system/repo
+sh ./deploy/update.sh
+```
+
+这条命令会：
+
+- `git pull`
+- 重新进入交互式部署
+- 重新构建并迁移
 
 ---
 

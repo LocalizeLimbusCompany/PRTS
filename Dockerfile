@@ -2,8 +2,8 @@ FROM golang:1.25.3-alpine AS builder
 
 WORKDIR /app
 
-ARG GOPROXY=https://proxy.golang.org,direct
-ARG GOSUMDB=sum.golang.org
+ARG GOPROXY=https://goproxy.cn,direct
+ARG GOSUMDB=off
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG NO_PROXY
