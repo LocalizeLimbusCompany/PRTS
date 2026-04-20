@@ -18,6 +18,10 @@ type updatePreferencesRequest struct {
 	PreferredSourceLanguage string `json:"preferredSourceLanguage"`
 }
 
+type updateProfileRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
 func Login(dataStore *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req loginRequest
@@ -96,6 +100,35 @@ func UpdateMyPreferences(dataStore *store.Store) http.HandlerFunc {
 		user, err := dataStore.UpdateUserPreferences(r.Context(), authUser.ID, preferredLocale, preferredSourceLanguage)
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "更新用户偏好失败")
+			return
+		}
+
+		platform.WriteSuccess(w, r, http.StatusOK, user)
+	}
+}
+
+func UpdateMyProfile(dataStore *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authUser, ok := platform.AuthUserFromContext(r.Context())
+		if !ok {
+			platform.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "请先登录")
+			return
+		}
+
+		var req updateProfileRequest
+		if err := platform.DecodeJSON(r, &req); err != nil {
+			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "请求体格式不正确")
+			return
+		}
+
+		displayName := platform.NormalizeText(req.DisplayName)
+		if displayName == "" {
+			displayName = authUser.DisplayName
+		}
+
+		user, err := dataStore.UpdateUserDisplayName(r.Context(), authUser.ID, displayName)
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "更新用户资料失败")
 			return
 		}
 

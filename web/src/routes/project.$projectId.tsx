@@ -1,5 +1,7 @@
 import { createFileRoute, Outlet, Link } from '@tanstack/react-router';
+import { normalizeLocale, translate } from '@/i18n';
 import { useAuthStore } from '@/store/auth';
+import { usePreferencesStore } from '@/store/preferences';
 import { Settings, LogOut, FileText, Activity, LayoutDashboard, Globe } from 'lucide-react';
 
 export const Route = createFileRoute('/project/$projectId')({
@@ -10,6 +12,9 @@ function ProjectLayout() {
   const { projectId } = Route.useParams();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const uiLocale = usePreferencesStore((s) => s.uiLocale);
+  const locale = normalizeLocale(user?.preferredLocale || uiLocale);
+  const t = (key: string) => translate(locale, key);
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
@@ -41,14 +46,14 @@ function ProjectLayout() {
               <button
                 onClick={() => logout()}
                 className="text-slate-400 hover:text-red-500 transition-colors"
-                title="Log out"
+                title={t('common.logout')}
               >
                 <LogOut size={16} />
               </button>
             </>
           ) : (
             <Link to="/login" className="text-sm font-medium text-blue-600 hover:underline">
-              Log in
+              {t('common.login')}
             </Link>
           )}
         </div>

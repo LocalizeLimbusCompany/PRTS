@@ -3,7 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import { useState } from 'react';
 
+import { normalizeLocale, translate } from '@/i18n';
 import { useAuthStore } from '@/store/auth';
+import { usePreferencesStore } from '@/store/preferences';
 
 export const Route = createFileRoute('/project/$projectId/jobs')({
   component: Jobs,
@@ -14,6 +16,9 @@ function Jobs() {
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const user = useAuthStore(s => s.user);
+  const uiLocale = usePreferencesStore((s) => s.uiLocale);
+  const locale = normalizeLocale(user?.preferredLocale || uiLocale);
+  const t = (key: string) => translate(locale, key);
 
   const { data: exportsData, isLoading: isLoadingExports } = useQuery({
     queryKey: ['exports', projectId],
@@ -46,32 +51,31 @@ function Jobs() {
         const json = JSON.parse(e.target?.result as string);
         createImport.mutate(json);
       } catch (err) {
-        alert("Invalid JSON file.");
-      }
-    };
+          alert(t('jobs.invalidJson'));
+        }
+      };
     reader.readAsText(file);
   };
 
-  const handleDownload = (downloadUrl: string) => {
-    // Navigate to the download URL to trigger browser download
-    window.location.href = downloadUrl;
+  const handleDownload = (jobId: string) => {
+    window.location.href = `/api/v1/projects/${projectId}/exports/${jobId}/download`;
   };
 
   return (
     <div className="p-6 h-full overflow-y-auto">
       <div className="max-w-5xl mx-auto space-y-8">
-        <h1 className="text-2xl font-bold">Import / Export Jobs</h1>
+        <h1 className="text-2xl font-bold">{t('jobs.title')}</h1>
         
         {!user && (
           <div className="bg-blue-50 text-blue-700 p-3 rounded mb-4 text-sm">
-            You must be logged in to create new import/export jobs. You can still view the job history.
+            {t('jobs.loginHint')}
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Import Section */}
           <div className="bg-white p-6 rounded shadow-sm border border-slate-200">
-            <h2 className="text-lg font-semibold mb-4">Import JSON</h2>
+            <h2 className="text-lg font-semibold mb-4">{t('jobs.importTitle')}</h2>
             <div className="space-y-4">
               <input 
                 type="file" 
@@ -85,13 +89,13 @@ function Jobs() {
                 disabled={!file || createImport.isPending || !user}
                 className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
               >
-                {createImport.isPending ? 'Importing...' : 'Start Import'}
-              </button>
+                  {createImport.isPending ? t('jobs.importLoading') : t('jobs.importAction')}
+                </button>
             </div>
 
             <div className="mt-8">
-              <h3 className="text-sm font-semibold text-slate-600 mb-2">Recent Imports</h3>
-              {isLoadingImports ? <div className="text-sm">Loading...</div> : (
+              <h3 className="text-sm font-semibold text-slate-600 mb-2">{t('jobs.recentImports')}</h3>
+              {isLoadingImports ? <div className="text-sm">{t('common.loading')}</div> : (
                 <ul className="space-y-2 text-sm text-slate-600">
                   {importsData?.items?.map((job: any) => (
                     <li key={job.id} className="flex justify-between border-b pb-2">
@@ -99,7 +103,7 @@ function Jobs() {
                       <span className="capitalize">{job.status}</span>
                     </li>
                   ))}
-                  {!importsData?.items?.length && <li>No import jobs found.</li>}
+                  {!importsData?.items?.length && <li>{t('jobs.importEmpty')}</li>}
                 </ul>
               )}
             </div>
@@ -107,18 +111,18 @@ function Jobs() {
 
           {/* Export Section */}
           <div className="bg-white p-6 rounded shadow-sm border border-slate-200">
-            <h2 className="text-lg font-semibold mb-4">Export ZIP</h2>
+            <h2 className="text-lg font-semibold mb-4">{t('jobs.exportTitle')}</h2>
             <button 
               onClick={() => createExport.mutate()}
               disabled={createExport.isPending || !user}
               className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50 mb-4"
             >
-              {createExport.isPending ? 'Requesting Export...' : 'Request New Export'}
+              {createExport.isPending ? t('jobs.exportLoading') : t('jobs.exportAction')}
             </button>
 
             <div className="mt-8">
-              <h3 className="text-sm font-semibold text-slate-600 mb-2">Recent Exports</h3>
-              {isLoadingExports ? <div className="text-sm">Loading...</div> : (
+              <h3 className="text-sm font-semibold text-slate-600 mb-2">{t('jobs.recentExports')}</h3>
+              {isLoadingExports ? <div className="text-sm">{t('common.loading')}</div> : (
                 <ul className="space-y-2 text-sm text-slate-600">
                   {exportsData?.items?.map((job: any) => (
                     <li key={job.id} className="flex flex-col border-b pb-2">
@@ -126,17 +130,17 @@ function Jobs() {
                         <span>{job.fileName || `Export ${job.id.substring(0,6)}`}</span>
                         <span className="capitalize font-semibold">{job.status}</span>
                       </div>
-                      {job.status === 'finished' && job.downloadUrl && (
+                      {job.status === 'finished' && job.id && (
                         <button 
-                          onClick={() => handleDownload(job.downloadUrl)}
+                          onClick={() => handleDownload(job.id)}
                           className="text-blue-600 text-left mt-1 hover:underline"
                         >
-                          Download ZIP
+                          {t('jobs.exportDownload')}
                         </button>
                       )}
                     </li>
                   ))}
-                  {!exportsData?.items?.length && <li>No export jobs found.</li>}
+                  {!exportsData?.items?.length && <li>{t('jobs.exportEmpty')}</li>}
                 </ul>
               )}
             </div>

@@ -271,6 +271,7 @@ type Organization struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Visibility  string    `json:"visibility"`
+	CreatedBy   string    `json:"createdBy"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -419,7 +420,7 @@ func (s *Store) Close() {
 
 func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, slug, name, description, visibility, created_at, updated_at
+		SELECT id::text, slug, name, description, visibility, COALESCE(created_by::text, ''), created_at, updated_at
 		FROM organizations
 		ORDER BY name ASC
 	`)
@@ -437,6 +438,7 @@ func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 			&item.Name,
 			&item.Description,
 			&item.Visibility,
+			&item.CreatedBy,
 			&item.CreatedAt,
 			&item.UpdatedAt,
 		); err != nil {
@@ -451,7 +453,7 @@ func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 func (s *Store) GetOrganization(ctx context.Context, organizationID string) (Organization, error) {
 	var item Organization
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, slug, name, description, visibility, created_at, updated_at
+		SELECT id::text, slug, name, description, visibility, COALESCE(created_by::text, ''), created_at, updated_at
 		FROM organizations
 		WHERE id = $1
 	`, organizationID).Scan(
@@ -460,6 +462,7 @@ func (s *Store) GetOrganization(ctx context.Context, organizationID string) (Org
 		&item.Name,
 		&item.Description,
 		&item.Visibility,
+		&item.CreatedBy,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
@@ -474,13 +477,14 @@ func (s *Store) CreateOrganization(ctx context.Context, input CreateOrganization
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO organizations (slug, name, description, visibility, created_by)
 		VALUES ($1, $2, $3, $4, NULLIF($5, '')::uuid)
-		RETURNING id::text, slug, name, description, visibility, created_at, updated_at
+		RETURNING id::text, slug, name, description, visibility, COALESCE(created_by::text, ''), created_at, updated_at
 	`, input.Slug, input.Name, input.Description, input.Visibility, nullableUUID(input.CreatedBy)).Scan(
 		&item.ID,
 		&item.Slug,
 		&item.Name,
 		&item.Description,
 		&item.Visibility,
+		&item.CreatedBy,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
@@ -496,13 +500,14 @@ func (s *Store) UpdateOrganization(ctx context.Context, organizationID string, i
 			visibility = $4,
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id::text, slug, name, description, visibility, created_at, updated_at
+		RETURNING id::text, slug, name, description, visibility, COALESCE(created_by::text, ''), created_at, updated_at
 	`, organizationID, input.Name, input.Description, input.Visibility).Scan(
 		&item.ID,
 		&item.Slug,
 		&item.Name,
 		&item.Description,
 		&item.Visibility,
+		&item.CreatedBy,
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	)
@@ -673,6 +678,27 @@ func (s *Store) CreateProject(ctx context.Context, organizationID string, input 
 	}
 
 	return s.GetProject(ctx, projectID)
+}
+
+func (s *Store) CanManageOrganizationProjects(ctx context.Context, organizationID, userID string) (bool, error) {
+	if userID == "" {
+		return false, nil
+	}
+
+	var createdBy string
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(created_by::text, '')
+		FROM organizations
+		WHERE id = $1
+	`, organizationID).Scan(&createdBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return createdBy != "" && createdBy == userID, nil
 }
 
 func (s *Store) UpdateProject(ctx context.Context, projectID string, input UpdateProjectInput) (ProjectOverview, error) {
@@ -1649,6 +1675,28 @@ func (s *Store) UpdateUserPreferences(ctx context.Context, userID, preferredLoca
 		WHERE id = $1::uuid
 		RETURNING id::text, email, username, display_name, preferred_locale, COALESCE(preferred_source_language, '')
 	`, userID, preferredLocale, preferredSourceLanguage).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Username,
+		&user.DisplayName,
+		&user.PreferredLocale,
+		&user.PreferredSourceLanguage,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AuthUser{}, ErrNotFound
+	}
+	return user, err
+}
+
+func (s *Store) UpdateUserDisplayName(ctx context.Context, userID, displayName string) (AuthUser, error) {
+	var user AuthUser
+	err := s.pool.QueryRow(ctx, `
+		UPDATE users
+		SET display_name = $2,
+			updated_at = NOW()
+		WHERE id = $1::uuid
+		RETURNING id::text, email, username, display_name, preferred_locale, COALESCE(preferred_source_language, '')
+	`, userID, displayName).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Username,

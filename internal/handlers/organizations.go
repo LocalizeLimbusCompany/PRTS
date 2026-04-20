@@ -58,6 +58,12 @@ func GetOrganization(dataStore *store.Store) http.HandlerFunc {
 
 func CreateOrganization(dataStore *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		authUser, ok := platform.AuthUserFromContext(r.Context())
+		if !ok || authUser.ID == "" {
+			platform.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "请先登录")
+			return
+		}
+
 		var req createOrganizationRequest
 		if err := platform.DecodeJSON(r, &req); err != nil {
 			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "请求体格式不正确")
@@ -82,7 +88,7 @@ func CreateOrganization(dataStore *store.Store) http.HandlerFunc {
 			Name:        name,
 			Description: description,
 			Visibility:  visibility,
-			CreatedBy:   platform.NormalizeText(req.CreatedBy),
+			CreatedBy:   authUser.ID,
 		})
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "创建组织失败")

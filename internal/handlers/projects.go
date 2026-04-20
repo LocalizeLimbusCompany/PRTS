@@ -66,6 +66,26 @@ func GetProject(dataStore *store.Store) http.HandlerFunc {
 func CreateProject(dataStore *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		organizationID := chi.URLParam(r, "organizationId")
+		authUser, ok := platform.AuthUserFromContext(r.Context())
+		if !ok || authUser.ID == "" {
+			platform.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "请先登录")
+			return
+		}
+
+		allowed, err := dataStore.CanManageOrganizationProjects(r.Context(), organizationID, authUser.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			platform.WriteError(w, r, http.StatusNotFound, "not_found", "组织不存在")
+			return
+		}
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "校验组织权限失败")
+			return
+		}
+		if !allowed {
+			platform.WriteError(w, r, http.StatusForbidden, "forbidden", "当前用户无权在该组织下创建项目")
+			return
+		}
+
 		var req createProjectRequest
 		if err := platform.DecodeJSON(r, &req); err != nil {
 			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "请求体格式不正确")
@@ -99,7 +119,7 @@ func CreateProject(dataStore *store.Store) http.HandlerFunc {
 			SourceLanguages: sourceLanguages,
 			Visibility:      visibility,
 			GuestPolicy:     guestPolicy,
-			CreatedBy:       platform.NormalizeText(req.CreatedBy),
+			CreatedBy:       authUser.ID,
 		})
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "创建项目失败")
