@@ -1,11 +1,17 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import React, { useState } from 'react';
 import { api } from '@/api/client';
-import { useAuthStore } from '@/store/auth';
+import { getErrorMessage } from '@/lib/getErrorMessage';
+import { useAuthStore, type User } from '@/store/auth';
 
 export const Route = createFileRoute('/login')({
   component: Login,
 });
+
+interface LoginResponse {
+  token: string;
+  user: User;
+}
 
 function Login() {
   const [email, setEmail] = useState('admin@example.com');
@@ -21,12 +27,12 @@ function Login() {
     setLoading(true);
 
     try {
-      const data = await api.post<any>('/auth/login', { email, password });
+      const data = await api.post<LoginResponse>('/auth/login', { email, password });
       localStorage.setItem('prts_token', data.token);
       setAuth(data.user, data.token);
       navigate({ to: '/organizations' });
-    } catch (err: any) {
-      setError(err?.message || 'Login failed');
+    } catch (error: unknown) {
+      setError(getErrorMessage(error));
     } finally {
       setLoading(false);
     }

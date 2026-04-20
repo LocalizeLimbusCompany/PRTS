@@ -1,7 +1,7 @@
 INSERT INTO users (id, email, username, password_hash, display_name, preferred_locale, preferred_source_language)
 VALUES
-    ('11111111-1111-1111-1111-111111111111', 'admin@example.com', 'admin', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5NLqC8oWQz1xM0t1Ik5dUvNbK/C.j7G', 'Amiya', 'zh-CN', 'jp'),
-    ('22222222-2222-2222-2222-222222222222', 'reviewer@example.com', 'reviewer', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'Kal''tsit', 'zh-CN', 'en')
+    ('11111111-1111-1111-1111-111111111111', 'admin@example.com', 'admin', '$2a$10$VRt8Z35mWSN.dCJNSj3f8OQ2XE/mSsZ/rVg4oHdtsZu6zfckxNfXa', 'Amiya', 'zh-CN', 'jp'),
+    ('22222222-2222-2222-2222-222222222222', 'reviewer@example.com', 'reviewer', '$2a$10$tm/ecu/2Co4MMCbOjpPzQOARuvMGwnmtXHv9QAAPg27Ea5dBrO1a6', 'Kal''tsit', 'zh-CN', 'en')
 ON CONFLICT (email) DO UPDATE SET
     password_hash = EXCLUDED.password_hash,
     display_name = EXCLUDED.display_name,

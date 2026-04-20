@@ -1,4 +1,4 @@
-import { createFileRoute, Outlet, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Outlet, Link } from '@tanstack/react-router';
 import { useAuthStore } from '@/store/auth';
 import { Settings, LogOut, FileText, Activity, LayoutDashboard, Globe } from 'lucide-react';
 

@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import { FolderKanban, Globe, Lock } from 'lucide-react';
