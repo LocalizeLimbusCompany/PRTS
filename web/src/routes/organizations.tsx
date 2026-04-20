@@ -1,10 +1,11 @@
-import { createFileRoute, Link, redirect } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import { Building2 } from 'lucide-react';
+import { useAuthStore } from '@/store/auth';
 
 export const Route = createFileRoute('/organizations')({
-  component: Organizations,
+  component: OrganizationsPage,
 });
 
 interface Organization {
@@ -13,9 +14,7 @@ interface Organization {
   slug: string;
 }
 
-import { useAuthStore } from '@/store/auth';
-
-function Organizations() {
+export function OrganizationsPage() {
   const { data: orgs, isLoading, error } = useQuery({
     queryKey: ['organizations'],
     queryFn: () => api.get<{ items: Organization[] }>('/organizations'),

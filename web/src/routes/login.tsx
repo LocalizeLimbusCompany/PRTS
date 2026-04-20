@@ -9,7 +9,7 @@ export const Route = createFileRoute('/login')({
 
 function Login() {
   const [email, setEmail] = useState('admin@example.com');
-  const [password, setPassword] = useState('your-password');
+  const [password, setPassword] = useState('admin123');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
