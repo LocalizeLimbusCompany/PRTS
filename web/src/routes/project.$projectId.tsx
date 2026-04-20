@@ -3,11 +3,6 @@ import { useAuthStore } from '@/store/auth';
 import { Settings, LogOut, FileText, Activity, LayoutDashboard, Globe } from 'lucide-react';
 
 export const Route = createFileRoute('/project/$projectId')({
-  beforeLoad: () => {
-    if (!localStorage.getItem('prts_token')) {
-      throw redirect({ to: '/login' });
-    }
-  },
   component: ProjectLayout,
 });
 
@@ -37,17 +32,25 @@ function ProjectLayout() {
         </div>
 
         <div className="flex items-center space-x-4">
-          <div className="text-sm font-medium text-slate-600 flex items-center">
-            <Globe size={14} className="mr-1.5" />
-            {user?.displayName} ({user?.preferredLocale})
-          </div>
-          <button
-            onClick={() => logout()}
-            className="text-slate-400 hover:text-red-500 transition-colors"
-            title="Log out"
-          >
-            <LogOut size={16} />
-          </button>
+          {user ? (
+            <>
+              <div className="text-sm font-medium text-slate-600 flex items-center">
+                <Globe size={14} className="mr-1.5" />
+                {user.displayName} ({user.preferredLocale})
+              </div>
+              <button
+                onClick={() => logout()}
+                className="text-slate-400 hover:text-red-500 transition-colors"
+                title="Log out"
+              >
+                <LogOut size={16} />
+              </button>
+            </>
+          ) : (
+            <Link to="/login" className="text-sm font-medium text-blue-600 hover:underline">
+              Log in
+            </Link>
+          )}
         </div>
       </header>
 

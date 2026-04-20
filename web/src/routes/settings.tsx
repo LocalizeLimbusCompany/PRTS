@@ -1,6 +1,11 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, redirect } from '@tanstack/react-router';
 
 export const Route = createFileRoute('/settings')({
+  beforeLoad: () => {
+    if (!localStorage.getItem('auth-storage') || !JSON.parse(localStorage.getItem('auth-storage') || '{}').state?.token) {
+      throw redirect({ to: '/login' });
+    }
+  },
   component: UserSettings,
 });
 

@@ -4,11 +4,6 @@ import { api } from '@/api/client';
 import { Building2 } from 'lucide-react';
 
 export const Route = createFileRoute('/organizations')({
-  beforeLoad: () => {
-    if (!localStorage.getItem('prts_token')) {
-      throw redirect({ to: '/login' });
-    }
-  },
   component: Organizations,
 });
 
@@ -18,14 +13,30 @@ interface Organization {
   slug: string;
 }
 
+import { useAuthStore } from '@/store/auth';
+
 function Organizations() {
   const { data: orgs, isLoading, error } = useQuery({
     queryKey: ['organizations'],
     queryFn: () => api.get<{ items: Organization[] }>('/organizations'),
   });
+  
+  const user = useAuthStore(s => s.user);
+  const logout = useAuthStore(s => s.logout);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-slate-50 flex flex-col p-4">
+      <header className="flex justify-end mb-8 w-full max-w-4xl mx-auto">
+        {user ? (
+           <div className="flex items-center space-x-4">
+             <span className="text-sm text-slate-600">{user.displayName}</span>
+             <button onClick={() => logout()} className="text-sm text-slate-400 hover:text-red-500">Log out</button>
+           </div>
+        ) : (
+           <Link to="/login" className="text-sm font-medium text-blue-600 hover:underline">Log in</Link>
+        )}
+      </header>
+      <div className="flex-1 flex items-center justify-center">
       <div className="bg-white max-w-3xl w-full p-8 rounded-lg shadow-sm border border-slate-200">
         <h1 className="text-2xl font-semibold text-slate-900 mb-6 flex items-center">
           <Building2 className="mr-2" />
@@ -51,6 +62,7 @@ function Organizations() {
         {orgs?.items?.length === 0 && (
           <div className="text-slate-500">No organizations found.</div>
         )}
+      </div>
       </div>
     </div>
   );

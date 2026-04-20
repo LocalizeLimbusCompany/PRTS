@@ -3,12 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import { FolderKanban, Globe, Lock } from 'lucide-react';
 
+import { useAuthStore } from '@/store/auth';
+
 export const Route = createFileRoute('/$orgId/projects')({
-  beforeLoad: () => {
-    if (!localStorage.getItem('prts_token')) {
-      throw redirect({ to: '/login' });
-    }
-  },
   component: Projects,
 });
 
@@ -29,8 +26,22 @@ function Projects() {
     queryFn: () => api.get<{ items: Project[] }>(`/organizations/${orgId}/projects`),
   });
 
+  const user = useAuthStore(s => s.user);
+  const logout = useAuthStore(s => s.logout);
+
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-slate-50 flex flex-col p-4">
+      <header className="flex justify-end mb-8 w-full max-w-4xl mx-auto">
+        {user ? (
+           <div className="flex items-center space-x-4">
+             <span className="text-sm text-slate-600">{user.displayName}</span>
+             <button onClick={() => logout()} className="text-sm text-slate-400 hover:text-red-500">Log out</button>
+           </div>
+        ) : (
+           <Link to="/login" className="text-sm font-medium text-blue-600 hover:underline">Log in</Link>
+        )}
+      </header>
+      <div className="flex-1 flex items-center justify-center">
       <div className="bg-white max-w-4xl w-full p-8 rounded-lg shadow-sm border border-slate-200">
         <h1 className="text-2xl font-semibold text-slate-900 mb-6 flex items-center">
           <FolderKanban className="mr-2" />
@@ -75,6 +86,7 @@ function Projects() {
             ← Back to Organizations
           </Link>
         </div>
+      </div>
       </div>
     </div>
   );
