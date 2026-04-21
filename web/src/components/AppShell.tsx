@@ -24,7 +24,7 @@ export function AppShell({
       <header className="border-b border-slate-200/80 bg-white/85 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            <Link to="/" className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white">
+            <Link to="/organizations" className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-white">
               <Building2 className="h-5 w-5" />
             </Link>
             <div>

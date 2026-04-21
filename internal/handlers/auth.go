@@ -152,13 +152,20 @@ func UpdateMyProfile(dataStore *store.Store) http.HandlerFunc {
 
 func UploadMyAvatar(appRuntime *runtime.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		const maxAvatarBytes = 2 << 20
+
 		authUser, ok := platform.AuthUserFromContext(r.Context())
 		if !ok {
 			platform.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "请先登录")
 			return
 		}
 
-		if err := r.ParseMultipartForm(5 << 20); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxAvatarBytes+(512<<10))
+		if err := r.ParseMultipartForm(maxAvatarBytes + (512 << 10)); err != nil {
+			if strings.Contains(err.Error(), "request body too large") {
+				platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "头像文件不能超过 2MB")
+				return
+			}
 			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "头像上传表单解析失败")
 			return
 		}
@@ -170,7 +177,22 @@ func UploadMyAvatar(appRuntime *runtime.Runtime) http.HandlerFunc {
 		}
 		defer file.Close()
 
-		contentType := header.Header.Get("Content-Type")
+		if header.Size > maxAvatarBytes {
+			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "头像文件不能超过 2MB")
+			return
+		}
+
+		data, err := io.ReadAll(io.LimitReader(file, maxAvatarBytes+1))
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "读取头像文件失败")
+			return
+		}
+		if len(data) > maxAvatarBytes {
+			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "头像文件不能超过 2MB")
+			return
+		}
+
+		contentType := http.DetectContentType(data)
 		ext := avatarExtension(contentType, header.Filename)
 		if ext == "" {
 			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "仅支持 PNG、JPG、WEBP、GIF")
@@ -191,7 +213,7 @@ func UploadMyAvatar(appRuntime *runtime.Runtime) http.HandlerFunc {
 		}
 		defer dst.Close()
 
-		if _, err := io.Copy(dst, file); err != nil {
+		if _, err := dst.Write(data); err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "写入头像失败")
 			return
 		}

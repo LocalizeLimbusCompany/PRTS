@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { History, LoaderCircle } from 'lucide-react';
 
 import { api } from '@/api/client';
+import { RevisionChange } from '@/components/RevisionChange';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface Props {
@@ -58,18 +59,11 @@ export default function ContextSidebar({ projectId, unitId }: Props) {
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">#{item.revisionNo}</div>
                   <div className="text-[11px] text-slate-400">{new Date(item.changedAt).toLocaleString()}</div>
                 </div>
-                <div className="mt-3 grid gap-3">
-                  <div className="rounded-xl bg-slate-50 p-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t('history.before')}</div>
-                    <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{item.beforeTargetText || '∅'}</div>
-                  </div>
-                  <div className="rounded-xl bg-blue-50 p-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-500">{t('history.after')}</div>
-                    <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{item.afterTargetText || '∅'}</div>
-                  </div>
+                <div className="mt-3">
+                  <RevisionChange item={item} t={t} compact />
                 </div>
                 <div className="mt-3 text-xs text-slate-500">
-                  {item.changedBy?.name || '-'} · {item.beforeStatus} → {item.afterStatus}
+                  {item.changedBy?.name || '-'}
                 </div>
                 {item.changeNote ? <div className="mt-2 text-xs leading-6 text-slate-500">{item.changeNote}</div> : null}
               </article>

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 
 import { getProjectHistory } from '@/api/projects';
+import { RevisionChange } from '@/components/RevisionChange';
 import { useTranslation } from '@/hooks/useTranslation';
 
 export const Route = createFileRoute('/project/$projectId/history')({
@@ -72,17 +73,8 @@ function HistoryPage() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 md:grid-cols-2">
-                <div className="rounded-2xl bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{t('history.before')}</div>
-                  <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.beforeTargetText || '∅'}</div>
-                  <div className="mt-3 text-xs text-slate-500">{item.beforeStatus}</div>
-                </div>
-                <div className="rounded-2xl bg-emerald-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-500">{t('history.after')}</div>
-                  <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{item.afterTargetText || '∅'}</div>
-                  <div className="mt-3 text-xs text-slate-500">{item.afterStatus}</div>
-                </div>
+              <div className="mt-5">
+                <RevisionChange item={item} t={t} />
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">

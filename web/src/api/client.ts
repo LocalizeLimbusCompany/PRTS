@@ -26,6 +26,10 @@ const apiClient: AxiosInstance = axios.create({
 });
 
 apiClient.interceptors.request.use((config) => {
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData && config.headers) {
+    delete (config.headers as Record<string, unknown>)['Content-Type'];
+  }
+
   let token = localStorage.getItem('prts_token');
   
   // Attempt to extract from Zustand persist storage

@@ -1,12 +1,13 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useState } from 'react';
 
+import { AvatarCropDialog, MAX_AVATAR_BYTES } from '@/components/AvatarCropDialog';
+import { AppShell } from '@/components/AppShell';
 import { updateMyPreferences, updateMyProfile, uploadMyAvatar } from '@/api/me';
 import { normalizeLocale, translate } from '@/i18n';
+import { COMMON_LANGUAGE_OPTIONS } from '@/lib/languages';
 import { useAuthStore } from '@/store/auth';
 import { usePreferencesStore } from '@/store/preferences';
-import { COMMON_LANGUAGE_OPTIONS } from '@/lib/languages';
-import { AppShell } from '@/components/AppShell';
 
 export const Route = createFileRoute('/settings')({
   beforeLoad: () => {
@@ -29,6 +30,9 @@ function UserSettings() {
   const [preferredLocale, setPreferredLocale] = useState(locale);
   const [preferredSourceLanguage, setPreferredSourceLanguage] = useState(user?.preferredSourceLanguage || 'en');
   const [saving, setSaving] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const t = (key: string) => translate(preferredLocale, key);
@@ -66,6 +70,42 @@ function UserSettings() {
     }
   };
 
+  const handleAvatarFileSelect = (file?: File | null) => {
+    setAvatarError(null);
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      setAvatarError(t('settings.avatarInvalid'));
+      return;
+    }
+    if (file.size > MAX_AVATAR_BYTES) {
+      setAvatarError(t('settings.avatarTooLarge'));
+      return;
+    }
+    setAvatarFile(file);
+  };
+
+  const handleAvatarConfirm = async (blob: Blob) => {
+    try {
+      setAvatarUploading(true);
+      setAvatarError(null);
+      setMessage(null);
+
+      const extension = blob.type === 'image/jpeg' ? '.jpg' : '.png';
+      const uploadFile = new File([blob], `avatar${extension}`, { type: blob.type });
+      const uploaded = await uploadMyAvatar(uploadFile);
+      setAvatarUrl(uploaded.avatarUrl || '');
+      updateUser({ avatarUrl: uploaded.avatarUrl });
+      setAvatarFile(null);
+      setMessage(t('settings.avatarUpdated'));
+    } catch (error: any) {
+      setAvatarError(error?.message || t('settings.avatarUploadFailed'));
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   return (
     <AppShell title={t('settings.title')} subtitle={t('settings.subtitle')}>
       <div className="max-w-4xl rounded-[30px] border border-slate-200 bg-white p-8 shadow-[0_30px_70px_-45px_rgba(15,23,42,0.35)]">
@@ -83,29 +123,25 @@ function UserSettings() {
 
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">{t('settings.avatarLabel')}</label>
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[22px] bg-slate-100 text-slate-400">
-                {avatarUrl ? <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" /> : displayName.slice(0, 1)}
-              </div>
-              <div className="flex-1 space-y-3">
-                <input
-                  value={avatarUrl}
-                  onChange={(event) => setAvatarUrl(event.target.value)}
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500"
-                  placeholder="/uploads/avatar-xxx.png"
-                />
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  onChange={async (event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    const uploaded = await uploadMyAvatar(file);
-                    setAvatarUrl(uploaded.avatarUrl || '');
-                    updateUser({ avatarUrl: uploaded.avatarUrl });
-                  }}
-                  className="block w-full text-sm text-slate-500 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
-                />
+            <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-5">
+              <div className="flex flex-wrap items-center gap-5">
+                <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-[26px] bg-slate-200 text-2xl font-semibold text-slate-500">
+                  {avatarUrl ? <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" /> : (displayName.slice(0, 1) || '?')}
+                </div>
+                <div className="flex-1 space-y-3">
+                  <div className="text-sm leading-6 text-slate-600">{t('settings.avatarHint')}</div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      handleAvatarFileSelect(file);
+                      event.currentTarget.value = '';
+                    }}
+                    className="block w-full text-sm text-slate-500 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                  />
+                  {avatarError ? <div className="text-sm text-rose-600">{avatarError}</div> : null}
+                </div>
               </div>
             </div>
           </div>
@@ -154,6 +190,22 @@ function UserSettings() {
           {message && <span className="text-sm text-slate-500">{message}</span>}
         </div>
       </div>
+      {avatarFile ? (
+        <AvatarCropDialog
+          file={avatarFile}
+          busy={avatarUploading}
+          error={avatarError}
+          t={t}
+          onCancel={() => {
+            if (avatarUploading) {
+              return;
+            }
+            setAvatarFile(null);
+            setAvatarError(null);
+          }}
+          onConfirm={handleAvatarConfirm}
+        />
+      ) : null}
     </AppShell>
   );
 }

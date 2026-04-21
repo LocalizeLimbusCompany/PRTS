@@ -1,8 +1,10 @@
 import { createFileRoute, Outlet, Link } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import { normalizeLocale, translate } from '@/i18n';
+import { api } from '@/api/client';
 import { useAuthStore } from '@/store/auth';
 import { usePreferencesStore } from '@/store/preferences';
-import { Settings, LogOut, FileText, Activity, LayoutDashboard, Globe, Shield } from 'lucide-react';
+import { Settings, LogOut, FileText, Activity, LayoutDashboard, Globe, Shield, Building2, FolderKanban } from 'lucide-react';
 
 export const Route = createFileRoute('/project/$projectId')({
   component: ProjectLayout,
@@ -15,6 +17,10 @@ function ProjectLayout() {
   const uiLocale = usePreferencesStore((s) => s.uiLocale);
   const locale = normalizeLocale(user?.preferredLocale || uiLocale);
   const t = (key: string) => translate(locale, key);
+  const { data: project } = useQuery({
+    queryKey: ['project-layout', projectId],
+    queryFn: () => api.get<{ id: string; name: string; organizationId: string }>(`/projects/${projectId}`),
+  });
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
@@ -24,6 +30,19 @@ function ProjectLayout() {
           <Link to="/organizations" className="font-bold text-slate-800 tracking-tight">
             PRTS
           </Link>
+
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <Link to="/organizations" className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 hover:bg-slate-100 hover:text-slate-700">
+              <Building2 size={13} />
+              <span>{t('organizations.title')}</span>
+            </Link>
+            {project?.organizationId ? (
+              <Link to="/$orgId/projects" params={{ orgId: project.organizationId }} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 hover:bg-slate-100 hover:text-slate-700">
+                <FolderKanban size={13} />
+                <span>{t('projects.title')}</span>
+              </Link>
+            ) : null}
+          </div>
 
           <nav className="flex space-x-1 overflow-x-auto shrink-0 pb-1 -mb-1 scrollbar-hide">
             <NavLink to={`/project/${projectId}/dashboard`} icon={<LayoutDashboard size={14} />} label="Overview" />

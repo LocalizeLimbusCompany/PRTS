@@ -16,7 +16,5 @@ export function updateMyProfile(payload: { displayName: string; avatarUrl?: stri
 export function uploadMyAvatar(file: File) {
   const formData = new FormData();
   formData.append('avatar', file);
-  return api.post<User>('/me/avatar', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
+  return api.post<User>('/me/avatar', formData);
 }
