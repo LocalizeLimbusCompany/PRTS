@@ -1313,7 +1313,7 @@ func (s *Store) ListTranslationUnits(ctx context.Context, filter UnitListFilter)
 				where = append(where, fmt.Sprintf("tu.target_text ILIKE $%d", index))
 			}
 		case strings.HasPrefix(field, "source:"):
-			lang := platform.NormalizeIdentifier(strings.TrimPrefix(field, "source:"))
+			lang := normalizeSearchLanguage(strings.TrimPrefix(field, "source:"))
 			args = append(args, lang)
 			langIndex := len(args)
 			comparison := "ILIKE"
@@ -3420,4 +3420,17 @@ func fileNameFromPath(path string) string {
 	path = strings.ReplaceAll(path, "\\", "/")
 	parts := strings.Split(path, "/")
 	return parts[len(parts)-1]
+}
+
+func normalizeSearchLanguage(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, " ", "-")
+	switch value {
+	case "jp":
+		return "ja"
+	case "cn":
+		return "zh-cn"
+	default:
+		return value
+	}
 }
