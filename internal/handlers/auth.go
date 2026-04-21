@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"prts-translation-system/internal/platform"
 	"prts-translation-system/internal/runtime"
@@ -204,9 +205,9 @@ func UploadMyAvatar(appRuntime *runtime.Runtime) http.HandlerFunc {
 			return
 		}
 
-		fileName := fmt.Sprintf("avatar-%s%s", authUser.ID, ext)
+		fileName := fmt.Sprintf("avatar-%s-%d%s", authUser.ID, time.Now().UnixNano(), ext)
 		fullPath := filepath.Join(appRuntime.Config.Upload.Dir, fileName)
-		dst, err := os.Create(fullPath)
+		dst, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "保存头像失败")
 			return

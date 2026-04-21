@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Crop, LoaderCircle, MoveHorizontal, MoveVertical, X, ZoomIn } from 'lucide-react';
+import { Crop, LoaderCircle, X, ZoomIn } from 'lucide-react';
 
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
@@ -22,12 +22,21 @@ export function AvatarCropDialog({
   onConfirm: (blob: Blob) => Promise<void>;
 }) {
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startOffsetX: number;
+    startOffsetY: number;
+  } | null>(null);
   const [sourceUrl, setSourceUrl] = useState('');
   const [naturalWidth, setNaturalWidth] = useState(0);
   const [naturalHeight, setNaturalHeight] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     const objectUrl = URL.createObjectURL(file);
@@ -44,14 +53,54 @@ export function AvatarCropDialog({
       return;
     }
 
-    let blob = await cropToBlob(imageRef.current, naturalWidth, naturalHeight, zoom, offsetX, offsetY, 'image/png');
-    if (blob.size > MAX_AVATAR_BYTES) {
-      blob = await cropToBlob(imageRef.current, naturalWidth, naturalHeight, zoom, offsetX, offsetY, 'image/jpeg', 0.92);
+    try {
+      setLocalError(null);
+      let blob = await cropToBlob(imageRef.current, naturalWidth, naturalHeight, zoom, offsetX, offsetY, 'image/png');
+      if (blob.size > MAX_AVATAR_BYTES) {
+        blob = await cropToBlob(imageRef.current, naturalWidth, naturalHeight, zoom, offsetX, offsetY, 'image/jpeg', 0.92);
+      }
+      if (blob.size > MAX_AVATAR_BYTES) {
+        throw new Error(t('settings.avatarTooLarge'));
+      }
+      await onConfirm(blob);
+    } catch (submitError: any) {
+      setLocalError(submitError?.message || t('settings.avatarUploadFailed'));
     }
-    if (blob.size > MAX_AVATAR_BYTES) {
-      throw new Error(t('settings.avatarTooLarge'));
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (busy || !naturalWidth || !naturalHeight || (previewMetrics.maxOffsetX === 0 && previewMetrics.maxOffsetY === 0)) {
+      return;
     }
-    await onConfirm(blob);
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startOffsetX: offsetX,
+      startOffsetY: offsetY,
+    };
+    setIsDragging(true);
+    setLocalError(null);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStateRef.current || dragStateRef.current.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - dragStateRef.current.startX;
+    const deltaY = event.clientY - dragStateRef.current.startY;
+    setOffsetX(clampOffsetPercentage(dragStateRef.current.startOffsetX, deltaX, previewMetrics.maxOffsetX));
+    setOffsetY(clampOffsetPercentage(dragStateRef.current.startOffsetY, deltaY, previewMetrics.maxOffsetY));
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragStateRef.current?.pointerId === event.pointerId) {
+      dragStateRef.current = null;
+      setIsDragging(false);
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   return (
@@ -69,12 +118,19 @@ export function AvatarCropDialog({
 
         <div className="grid gap-8 px-6 py-6 md:grid-cols-[360px_1fr]">
           <div className="flex flex-col items-center">
-            <div className="relative h-80 w-80 overflow-hidden rounded-[32px] border border-slate-200 bg-slate-100 shadow-inner">
+            <div
+              className={`relative h-80 w-80 overflow-hidden rounded-[32px] border border-slate-200 bg-slate-100 shadow-inner ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+            >
               {sourceUrl ? (
                 <img
                   ref={imageRef}
                   src={sourceUrl}
                   alt={file.name}
+                  draggable={false}
                   onLoad={(event) => {
                     setNaturalWidth(event.currentTarget.naturalWidth);
                     setNaturalHeight(event.currentTarget.naturalHeight);
@@ -85,6 +141,7 @@ export function AvatarCropDialog({
                     height: `${previewMetrics.renderedHeight}px`,
                     left: `${previewLeft}px`,
                     top: `${previewTop}px`,
+                    touchAction: 'none',
                   }}
                 />
               ) : null}
@@ -100,32 +157,30 @@ export function AvatarCropDialog({
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
               {t('settings.avatarHint')}
             </div>
+            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-700">
+              {t('settings.avatarDragHint')}
+            </div>
 
             <SliderField
               icon={<ZoomIn className="h-4 w-4" />}
               label={t('settings.avatarZoom')}
               valueLabel={`${zoom.toFixed(2)}x`}
             >
-              <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={(event) => setZoom(Number(event.target.value))} className="w-full" />
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.01}
+                value={zoom}
+                onChange={(event) => {
+                  setZoom(Number(event.target.value));
+                  setLocalError(null);
+                }}
+                className="w-full"
+              />
             </SliderField>
 
-            <SliderField
-              icon={<MoveHorizontal className="h-4 w-4" />}
-              label={t('settings.avatarHorizontal')}
-              valueLabel={`${offsetX}%`}
-            >
-              <input type="range" min={-100} max={100} step={1} value={offsetX} onChange={(event) => setOffsetX(Number(event.target.value))} className="w-full" />
-            </SliderField>
-
-            <SliderField
-              icon={<MoveVertical className="h-4 w-4" />}
-              label={t('settings.avatarVertical')}
-              valueLabel={`${offsetY}%`}
-            >
-              <input type="range" min={-100} max={100} step={1} value={offsetY} onChange={(event) => setOffsetY(Number(event.target.value))} className="w-full" />
-            </SliderField>
-
-            {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div> : null}
+            {localError || error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">{localError || error}</div> : null}
           </div>
         </div>
 
@@ -193,6 +248,13 @@ function getCropMetrics(width: number, height: number, squareSize: number, zoom:
     maxOffsetX: Math.max(0, (renderedWidth - squareSize) / 2),
     maxOffsetY: Math.max(0, (renderedHeight - squareSize) / 2),
   };
+}
+
+function clampOffsetPercentage(baseOffset: number, deltaPixels: number, maxOffset: number) {
+  if (maxOffset <= 0) {
+    return 0;
+  }
+  return Math.max(-100, Math.min(100, baseOffset + (deltaPixels / maxOffset) * 100));
 }
 
 async function cropToBlob(
