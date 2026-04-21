@@ -148,6 +148,19 @@ const messages = {
       approveUnit: 'Mark audited',
       currentDocument: 'Current document',
       allDocuments: 'All documents',
+      searchPlaceholder: 'Search',
+      advanced: 'Filters',
+      searchScope: {
+        sourceAll: 'Source',
+        target: 'Target',
+        sourceAndTarget: 'Source + Target',
+        primarySource: 'Source: {value}',
+      },
+      operators: {
+        contains: 'Contains',
+        equals: 'Equals',
+        startsWith: 'Starts with',
+      },
       backToFiles: 'Back to Files',
       status: {
         untranslated: 'Untranslated',
@@ -321,6 +334,19 @@ const messages = {
       approveUnit: '标记为已审核',
       currentDocument: '当前文件',
       allDocuments: '全部文件',
+      searchPlaceholder: '进行搜索',
+      advanced: '筛选',
+      searchScope: {
+        sourceAll: '原文',
+        target: '目标语言',
+        sourceAndTarget: '原文 + 目标语言',
+        primarySource: '原文：{value}',
+      },
+      operators: {
+        contains: '包含',
+        equals: '等于',
+        startsWith: '开头是',
+      },
       backToFiles: '返回文件列表',
       status: {
         untranslated: '未翻译',

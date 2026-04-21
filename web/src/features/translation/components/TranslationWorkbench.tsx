@@ -73,6 +73,7 @@ type AdvancedCondition = {
   operator: string;
   value: string;
 };
+type SearchMode = 'source_all' | 'target' | 'source_and_target';
 
 export default function TranslationWorkbench({ projectId, documentId: propDocumentId }: Props) {
   const { t } = useTranslation();
@@ -82,6 +83,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
   const [draftText, setDraftText] = useState('');
   const [searchText, setSearchText] = useState('');
+  const [searchMode, setSearchMode] = useState<SearchMode>('source_and_target');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [scope, setScope] = useState<'current_document' | 'all_documents'>('current_document');
   const [onlyQuestioned, setOnlyQuestioned] = useState(false);
@@ -105,8 +107,12 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
     params.set('scope', scope);
     if (searchText.trim()) {
       params.set('q', searchText.trim());
-      params.set('sourceText', searchText.trim());
-      params.set('targetText', searchText.trim());
+      if (searchMode === 'source_all' || searchMode === 'source_and_target') {
+        params.set('sourceText', searchText.trim());
+      }
+      if (searchMode === 'target' || searchMode === 'source_and_target') {
+        params.set('targetText', searchText.trim());
+      }
       params.set('key', searchText.trim());
     }
     statusFilters.forEach((item) => params.append('statuses', item));
@@ -116,7 +122,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
       params.set('advanced', JSON.stringify(advancedConditions.filter((item) => item.value.trim())));
     }
     return params.toString();
-  }, [scope, selectedDocId, searchText, statusFilters, onlyQuestioned, onlyLocked, showAdvanced, advancedConditions]);
+  }, [scope, selectedDocId, searchText, searchMode, statusFilters, onlyQuestioned, onlyLocked, showAdvanced, advancedConditions]);
 
   const { data: unitsData, isLoading: isLoadingUnits } = useQuery({
     queryKey: ['workbench-units', projectId, unitsQuery],
@@ -199,68 +205,84 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
             </div>
             <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-3 py-2">
               <div className="flex items-center gap-2">
+                <select
+                  value={searchMode}
+                  onChange={(e) => setSearchMode(e.target.value as SearchMode)}
+                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600"
+                >
+                  <option value="source_and_target">{t('workbench.searchScope.sourceAndTarget')}</option>
+                  <option value="source_all">{t('workbench.searchScope.sourceAll')}</option>
+                  <option value="target">{t('workbench.searchScope.target')}</option>
+                </select>
                 <Search className="h-4 w-4 text-slate-400" />
                 <input
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
-                  placeholder={t('documents.selectToTranslate')}
+                  placeholder={t('workbench.searchPlaceholder')}
                   className="w-full bg-transparent text-sm outline-none"
                 />
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {quickStatuses.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => setStatusFilters((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item])}
-                    className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', statusFilters.includes(item) ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500')}
-                  >
-                    {t(`workbench.status.${item}`)}
-                  </button>
-                ))}
                 <button
                   type="button"
-                  onClick={() => setOnlyQuestioned((v) => !v)}
-                  className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyQuestioned ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500')}
+                  onClick={() => setShowAdvanced((v) => !v)}
+                  className={cn(
+                    'inline-flex h-9 w-9 items-center justify-center rounded-xl transition',
+                    showAdvanced ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
+                  )}
+                  title={t('workbench.advanced')}
                 >
-                  {t('workbench.status.questioned')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOnlyLocked((v) => !v)}
-                  className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyLocked ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-500')}
-                >
-                  {t('workbench.status.locked')}
-                </button>
-              </div>
-              <div className="mt-3 flex gap-2 text-xs">
-                <button type="button" onClick={() => setScope('current_document')} className={cn('rounded-full px-3 py-1', scope === 'current_document' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500')}>
-                  {t('workbench.currentDocument')}
-                </button>
-                <button type="button" onClick={() => setScope('all_documents')} className={cn('rounded-full px-3 py-1', scope === 'all_documents' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500')}>
-                  {t('workbench.allDocuments')}
-                </button>
-                <button type="button" onClick={() => setShowAdvanced((v) => !v)} className={cn('inline-flex items-center gap-1 rounded-full px-3 py-1', showAdvanced ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500')}>
-                  <SlidersHorizontal className="h-3 w-3" />
-                  {t('workbench.advanced')}
+                  <SlidersHorizontal className="h-4 w-4" />
                 </button>
               </div>
               {showAdvanced ? (
                 <div className="mt-3 space-y-2 rounded-2xl bg-slate-50 p-3">
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <button type="button" onClick={() => setScope('current_document')} className={cn('rounded-xl px-3 py-2 text-xs font-medium', scope === 'current_document' ? 'bg-blue-50 text-blue-600' : 'bg-white text-slate-500 border border-slate-200')}>
+                      {t('workbench.currentDocument')}
+                    </button>
+                    <button type="button" onClick={() => setScope('all_documents')} className={cn('rounded-xl px-3 py-2 text-xs font-medium', scope === 'all_documents' ? 'bg-blue-50 text-blue-600' : 'bg-white text-slate-500 border border-slate-200')}>
+                      {t('workbench.allDocuments')}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {quickStatuses.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => setStatusFilters((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item])}
+                        className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', statusFilters.includes(item) ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200')}
+                      >
+                        {t(`workbench.status.${item}`)}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setOnlyQuestioned((v) => !v)}
+                      className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyQuestioned ? 'bg-amber-500 text-white' : 'bg-white text-slate-500 border border-slate-200')}
+                    >
+                      {t('workbench.status.questioned')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOnlyLocked((v) => !v)}
+                      className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyLocked ? 'bg-rose-500 text-white' : 'bg-white text-slate-500 border border-slate-200')}
+                    >
+                      {t('workbench.status.locked')}
+                    </button>
+                  </div>
                   {advancedConditions.map((condition, index) => (
                     <div key={index} className="grid gap-2 md:grid-cols-[1.1fr_1fr_1.4fr_auto]">
                       <select value={condition.field} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, field: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs">
-                        <option value="target">target</option>
+                        <option value="target">{t('workbench.searchScope.target')}</option>
                         <option value="key">key</option>
-                        <option value={`source:${preferredSource}`}>source:{preferredSource}</option>
+                        <option value={`source:${preferredSource}`}>{`${t('workbench.searchScope.sourceAll')}: ${preferredSource}`}</option>
                         <option value="source:en">source:en</option>
                         <option value="source:ja">source:ja</option>
                         <option value="source:ko">source:ko</option>
                       </select>
                       <select value={condition.operator} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, operator: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs">
-                        <option value="contains">contains</option>
-                        <option value="equals">equals</option>
-                        <option value="starts_with">starts_with</option>
+                        <option value="contains">{t('workbench.operators.contains')}</option>
+                        <option value="equals">{t('workbench.operators.equals')}</option>
+                        <option value="starts_with">{t('workbench.operators.startsWith')}</option>
                       </select>
                       <input value={condition.value} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, value: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs" />
                       <button type="button" onClick={() => setAdvancedConditions((items) => items.length === 1 ? items : items.filter((_, i) => i !== index))} className="rounded-xl bg-slate-200 px-3 py-2 text-xs text-slate-600">×</button>
