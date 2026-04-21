@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -201,6 +202,11 @@ func UploadMyAvatar(appRuntime *runtime.Runtime) http.HandlerFunc {
 		}
 
 		if err := os.MkdirAll(appRuntime.Config.Upload.Dir, 0o755); err != nil {
+			log.Printf("avatar upload mkdir failed: dir=%s err=%v", appRuntime.Config.Upload.Dir, err)
+			if os.IsPermission(err) {
+				platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "上传目录无写权限，请检查 UPLOAD_DIR")
+				return
+			}
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "创建上传目录失败")
 			return
 		}
@@ -209,12 +215,22 @@ func UploadMyAvatar(appRuntime *runtime.Runtime) http.HandlerFunc {
 		fullPath := filepath.Join(appRuntime.Config.Upload.Dir, fileName)
 		dst, err := os.OpenFile(fullPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
+			log.Printf("avatar upload open failed: path=%s err=%v", fullPath, err)
+			if os.IsPermission(err) {
+				platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "上传目录无写权限，请检查 UPLOAD_DIR")
+				return
+			}
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "保存头像失败")
 			return
 		}
 		defer dst.Close()
 
 		if _, err := dst.Write(data); err != nil {
+			log.Printf("avatar upload write failed: path=%s err=%v", fullPath, err)
+			if os.IsPermission(err) {
+				platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "上传目录无写权限，请检查 UPLOAD_DIR")
+				return
+			}
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "写入头像失败")
 			return
 		}

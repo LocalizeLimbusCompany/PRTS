@@ -137,6 +137,13 @@ export APP_IMAGE
 export WEB_IMAGE
 export APP_IMAGE_TAG="$IMAGE_TAG"
 export EDGE_PORT
+export APP_UID="$(id -u)"
+export APP_GID="$(id -g)"
+
+mkdir -p /opt/prts-translation-system/exports
+mkdir -p /opt/prts-translation-system/uploads
+chmod 0775 /opt/prts-translation-system/exports
+chmod 0775 /opt/prts-translation-system/uploads
 
 docker compose -f "$COMPOSE_FILE" up -d postgres redis
 

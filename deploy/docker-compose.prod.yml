@@ -17,6 +17,7 @@ services:
   api:
     image: ${APP_IMAGE:-prts-backend-local}:${APP_IMAGE_TAG:-latest}
     command: ["prts-api"]
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
     restart: unless-stopped
     env_file:
       - ../.env
@@ -30,6 +31,7 @@ services:
   worker:
     image: ${APP_IMAGE:-prts-backend-local}:${APP_IMAGE_TAG:-latest}
     command: ["prts-worker"]
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
     restart: unless-stopped
     env_file:
       - ../.env

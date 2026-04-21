@@ -187,6 +187,13 @@ chmod +x ./deploy/local-deploy.sh
 sh ./deploy/local-deploy.sh
 ```
 
+如果你之前已经部署过旧版本，并且上传头像时报“保存头像失败”或“上传目录无写权限”，先执行一次：
+
+```bash
+mkdir -p /opt/prts-translation-system/uploads /opt/prts-translation-system/exports
+sudo chown -R $USER:$USER /opt/prts-translation-system/uploads /opt/prts-translation-system/exports
+```
+
 脚本会交互询问：
 
 - 后端镜像名
