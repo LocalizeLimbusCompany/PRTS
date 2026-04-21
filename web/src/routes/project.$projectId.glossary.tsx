@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { LoaderCircle, Plus, Trash2, Edit2, BookA, Save } from 'lucide-react';
 import { getGlossaryTerms, createGlossaryTerm, updateGlossaryTerm, deleteGlossaryTerm, GlossaryTerm } from '@/api/glossary';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export const Route = createFileRoute('/project/$projectId/glossary')({
   beforeLoad: () => {
@@ -16,6 +17,7 @@ export const Route = createFileRoute('/project/$projectId/glossary')({
 function GlossaryPage() {
   const { projectId } = Route.useParams();
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -98,9 +100,9 @@ function GlossaryPage() {
           <div>
             <h1 className="text-3xl font-bold text-slate-900 flex items-center">
               <BookA className="w-8 h-8 mr-3 text-blue-600" />
-              Project Glossary
+              Glossary
             </h1>
-            <p className="mt-2 text-slate-500">Manage terminology to ensure consistent translation across the project.</p>
+            <p className="mt-2 text-slate-500">{t('projects.subtitle')}</p>
           </div>
           {!isAdding && !editingId && (
             <button

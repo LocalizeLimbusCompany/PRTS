@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { AlertCircle, CheckCheck, EyeOff, FileText, LoaderCircle, Lock, Save, Search, ShieldCheck, ArrowLeft, CircleHelp, SlidersHorizontal } from 'lucide-react';
+import { AlertCircle, CheckCheck, EyeOff, FileText, LoaderCircle, Lock, Save, Search, ShieldCheck, ArrowLeft, CircleHelp, SlidersHorizontal, X } from 'lucide-react';
 
 import { api } from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -107,13 +107,6 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
     params.set('scope', scope);
     if (searchText.trim()) {
       params.set('q', searchText.trim());
-      if (searchMode === 'source_all' || searchMode === 'source_and_target') {
-        params.set('sourceText', searchText.trim());
-      }
-      if (searchMode === 'target' || searchMode === 'source_and_target') {
-        params.set('targetText', searchText.trim());
-      }
-      params.set('key', searchText.trim());
     }
     statusFilters.forEach((item) => params.append('statuses', item));
     if (onlyQuestioned) params.set('isQuestioned', 'true');
@@ -233,66 +226,6 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                   <SlidersHorizontal className="h-4 w-4" />
                 </button>
               </div>
-              {showAdvanced ? (
-                <div className="mt-3 space-y-2 rounded-2xl bg-slate-50 p-3">
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <button type="button" onClick={() => setScope('current_document')} className={cn('rounded-xl px-3 py-2 text-xs font-medium', scope === 'current_document' ? 'bg-blue-50 text-blue-600' : 'bg-white text-slate-500 border border-slate-200')}>
-                      {t('workbench.currentDocument')}
-                    </button>
-                    <button type="button" onClick={() => setScope('all_documents')} className={cn('rounded-xl px-3 py-2 text-xs font-medium', scope === 'all_documents' ? 'bg-blue-50 text-blue-600' : 'bg-white text-slate-500 border border-slate-200')}>
-                      {t('workbench.allDocuments')}
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {quickStatuses.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => setStatusFilters((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item])}
-                        className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', statusFilters.includes(item) ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200')}
-                      >
-                        {t(`workbench.status.${item}`)}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setOnlyQuestioned((v) => !v)}
-                      className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyQuestioned ? 'bg-amber-500 text-white' : 'bg-white text-slate-500 border border-slate-200')}
-                    >
-                      {t('workbench.status.questioned')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOnlyLocked((v) => !v)}
-                      className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyLocked ? 'bg-rose-500 text-white' : 'bg-white text-slate-500 border border-slate-200')}
-                    >
-                      {t('workbench.status.locked')}
-                    </button>
-                  </div>
-                  {advancedConditions.map((condition, index) => (
-                    <div key={index} className="grid gap-2 md:grid-cols-[1.1fr_1fr_1.4fr_auto]">
-                      <select value={condition.field} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, field: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs">
-                        <option value="target">{t('workbench.searchScope.target')}</option>
-                        <option value="key">key</option>
-                        <option value={`source:${preferredSource}`}>{`${t('workbench.searchScope.sourceAll')}: ${preferredSource}`}</option>
-                        <option value="source:en">source:en</option>
-                        <option value="source:ja">source:ja</option>
-                        <option value="source:ko">source:ko</option>
-                      </select>
-                      <select value={condition.operator} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, operator: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs">
-                        <option value="contains">{t('workbench.operators.contains')}</option>
-                        <option value="equals">{t('workbench.operators.equals')}</option>
-                        <option value="starts_with">{t('workbench.operators.startsWith')}</option>
-                      </select>
-                      <input value={condition.value} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, value: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs" />
-                      <button type="button" onClick={() => setAdvancedConditions((items) => items.length === 1 ? items : items.filter((_, i) => i !== index))} className="rounded-xl bg-slate-200 px-3 py-2 text-xs text-slate-600">×</button>
-                    </div>
-                  ))}
-                  <button type="button" onClick={() => setAdvancedConditions((items) => [...items, { field: 'target', operator: 'contains', value: '' }])} className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white">
-                    + {t('workbench.advanced')}
-                  </button>
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -466,6 +399,79 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
           <ContextSidebar projectId={projectId} unitId={activeUnitId} />
         </aside>
       </main>
+
+      {showAdvanced ? (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-6">
+          <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+              <div>
+                <div className="text-lg font-semibold text-slate-900">{t('workbench.advanced')}</div>
+                <div className="mt-1 text-sm text-slate-500">{t('workbench.advancedDesc')}</div>
+              </div>
+              <button type="button" onClick={() => setShowAdvanced(false)} className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-6">
+              <div className="grid gap-4 md:grid-cols-3">
+                <label className="space-y-2 text-sm font-medium text-slate-700">
+                  <span>{t('workbench.advancedSearchInCurrent')}</span>
+                  <button type="button" onClick={() => setScope((value) => value === 'current_document' ? 'all_documents' : 'current_document')} className={cn('flex h-11 items-center justify-between rounded-2xl border px-4', scope === 'current_document' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-slate-50 text-slate-500')}>
+                    <span>{scope === 'current_document' ? t('common.save') : t('common.cancel')}</span>
+                    <span>{scope === 'current_document' ? t('workbench.currentDocument') : t('workbench.allDocuments')}</span>
+                  </button>
+                </label>
+                <label className="space-y-2 text-sm font-medium text-slate-700">
+                  <span>{t('documents.title')}</span>
+                  <input disabled={scope === 'current_document'} value={scope === 'current_document' ? (selectedDocument?.path || '') : ''} placeholder={selectedDocument?.path || ''} className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-500 outline-none disabled:opacity-100" />
+                </label>
+                <label className="space-y-2 text-sm font-medium text-slate-700">
+                  <span>{t('history.allStatuses')}</span>
+                  <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    {quickStatuses.map((item) => (
+                      <button key={item} type="button" onClick={() => setStatusFilters((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item])} className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', statusFilters.includes(item) ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200')}>
+                        {t(`workbench.status.${item}`)}
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => setOnlyQuestioned((v) => !v)} className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyQuestioned ? 'bg-amber-500 text-white' : 'bg-white text-slate-500 border border-slate-200')}>
+                      {t('workbench.status.questioned')}
+                    </button>
+                    <button type="button" onClick={() => setOnlyLocked((v) => !v)} className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyLocked ? 'bg-rose-500 text-white' : 'bg-white text-slate-500 border border-slate-200')}>
+                      {t('workbench.status.locked')}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                {advancedConditions.map((condition, index) => (
+                  <div key={index} className="grid gap-3 md:grid-cols-[1.1fr_1fr_1.6fr_auto]">
+                    <select value={condition.field} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, field: e.target.value } : item))} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm">
+                      <option value="target">{t('workbench.searchScope.target')}</option>
+                      <option value="key">key</option>
+                      <option value={`source:${preferredSource}`}>{`${t('workbench.searchScope.sourceAll')}: ${preferredSource}`}</option>
+                      <option value="source:en">source:en</option>
+                      <option value="source:ja">source:ja</option>
+                      <option value="source:ko">source:ko</option>
+                    </select>
+                    <select value={condition.operator} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, operator: e.target.value } : item))} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm">
+                      <option value="contains">{t('workbench.operators.contains')}</option>
+                      <option value="equals">{t('workbench.operators.equals')}</option>
+                      <option value="starts_with">{t('workbench.operators.startsWith')}</option>
+                    </select>
+                    <input value={condition.value} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, value: e.target.value } : item))} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" />
+                    <button type="button" onClick={() => setAdvancedConditions((items) => items.length === 1 ? items : items.filter((_, i) => i !== index))} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-600">×</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setAdvancedConditions((items) => [...items, { field: 'target', operator: 'contains', value: '' }])} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white">
+                  + {t('workbench.advanced')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

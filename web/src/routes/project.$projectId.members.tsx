@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { LoaderCircle, UserPlus, Trash2, Shield } from 'lucide-react';
 import { getProjectMembers, upsertProjectMember, deleteProjectMember, getProjectRoles } from '@/api/members';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export const Route = createFileRoute('/project/$projectId/members')({
   beforeLoad: () => {
@@ -16,6 +17,7 @@ export const Route = createFileRoute('/project/$projectId/members')({
 function Members() {
   const { projectId } = Route.useParams();
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   const [newUserId, setNewUserId] = useState('');
   const [newRoleCode, setNewRoleCode] = useState('translator');
@@ -65,13 +67,13 @@ function Members() {
     <div className="p-8 h-full overflow-y-auto bg-slate-50">
       <div className="max-w-5xl mx-auto space-y-8">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Members & Permissions</h1>
-          <p className="mt-2 text-slate-500">Manage who has access to this project and their roles.</p>
+          <h1 className="text-3xl font-bold text-slate-900">{t('admin.usersTitle')}</h1>
+          <p className="mt-2 text-slate-500">{t('projects.subtitle')}</p>
         </div>
 
         {/* Add Member Form */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">Add Member</h2>
+          <h2 className="text-lg font-semibold text-slate-900 mb-4">{t('common.save')}</h2>
           <div className="flex gap-4 items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-slate-700 mb-1">User ID</label>
@@ -105,7 +107,7 @@ function Members() {
             </button>
           </div>
           {addMemberMutation.isError && (
-            <p className="text-red-500 mt-2 text-sm">Failed to add member. Check if the User ID is correct.</p>
+            <p className="text-red-500 mt-2 text-sm">Failed to add member.</p>
           )}
         </div>
 

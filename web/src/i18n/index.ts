@@ -150,6 +150,8 @@ const messages = {
       allDocuments: 'All documents',
       searchPlaceholder: 'Search',
       advanced: 'Filters',
+      advancedDesc: 'Build multiple conditions, choose file scope, and combine status filters in one place.',
+      advancedSearchInCurrent: 'Search in current file',
       searchScope: {
         sourceAll: 'Source',
         target: 'Target',
@@ -336,6 +338,8 @@ const messages = {
       allDocuments: '全部文件',
       searchPlaceholder: '进行搜索',
       advanced: '筛选',
+      advancedDesc: '在一个弹窗里设置多条筛选条件、所在文件范围和状态组合。',
+      advancedSearchInCurrent: '在当前文件内搜索',
       searchScope: {
         sourceAll: '原文',
         target: '目标语言',
