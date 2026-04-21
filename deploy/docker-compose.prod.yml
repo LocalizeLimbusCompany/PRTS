@@ -22,6 +22,7 @@ services:
       - ../.env
     volumes:
       - /opt/prts-translation-system/exports:/app/exports
+      - /opt/prts-translation-system/uploads:/app/uploads
     depends_on:
       - postgres
       - redis
@@ -34,6 +35,7 @@ services:
       - ../.env
     volumes:
       - /opt/prts-translation-system/exports:/app/exports
+      - /opt/prts-translation-system/uploads:/app/uploads
     depends_on:
       - postgres
       - redis

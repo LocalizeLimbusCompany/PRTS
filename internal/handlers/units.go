@@ -215,3 +215,34 @@ func ListTranslationUnitHistory(dataStore *store.Store) http.HandlerFunc {
 		})
 	}
 }
+
+func ListProjectHistory(dataStore *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		projectID := chi.URLParam(r, "projectId")
+		page := platform.NormalizePage(platform.QueryInt(r, "page", 1))
+		pageSize := platform.NormalizePageSize(platform.QueryInt(r, "pageSize", 50))
+
+		items, total, err := dataStore.ListProjectHistory(r.Context(), store.ProjectHistoryFilter{
+			ProjectID:  projectID,
+			DocumentID: r.URL.Query().Get("documentId"),
+			Key:        r.URL.Query().Get("key"),
+			Status:     r.URL.Query().Get("status"),
+			Page:       page,
+			PageSize:   pageSize,
+		})
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "获取项目历史失败")
+			return
+		}
+		if items == nil {
+			items = []store.ProjectHistoryItem{}
+		}
+
+		platform.WriteSuccess(w, r, http.StatusOK, map[string]any{
+			"items":    items,
+			"total":    total,
+			"page":     page,
+			"pageSize": pageSize,
+		})
+	}
+}

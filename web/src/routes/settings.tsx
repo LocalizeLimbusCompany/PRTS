@@ -1,10 +1,12 @@
 import { createFileRoute, redirect } from '@tanstack/react-router';
 import { useState } from 'react';
 
-import { updateMyPreferences, updateMyProfile } from '@/api/me';
+import { updateMyPreferences, updateMyProfile, uploadMyAvatar } from '@/api/me';
 import { normalizeLocale, translate } from '@/i18n';
 import { useAuthStore } from '@/store/auth';
 import { usePreferencesStore } from '@/store/preferences';
+import { COMMON_LANGUAGE_OPTIONS } from '@/lib/languages';
+import { AppShell } from '@/components/AppShell';
 
 export const Route = createFileRoute('/settings')({
   beforeLoad: () => {
@@ -23,7 +25,9 @@ function UserSettings() {
   const locale = normalizeLocale(user?.preferredLocale || uiLocale);
 
   const [displayName, setDisplayName] = useState(user?.displayName || '');
+  const [avatarUrl, setAvatarUrl] = useState(user?.avatarUrl || '');
   const [preferredLocale, setPreferredLocale] = useState(locale);
+  const [preferredSourceLanguage, setPreferredSourceLanguage] = useState(user?.preferredSourceLanguage || 'en');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -39,15 +43,16 @@ function UserSettings() {
 
     try {
       const [updatedProfile, updatedPreferences] = await Promise.all([
-        updateMyProfile({ displayName }),
+        updateMyProfile({ displayName, avatarUrl }),
         updateMyPreferences({
           preferredLocale,
-          preferredSourceLanguage: user.preferredSourceLanguage || '',
+          preferredSourceLanguage,
         }),
       ]);
 
       updateUser({
         displayName: updatedProfile.displayName,
+        avatarUrl: updatedProfile.avatarUrl,
         preferredLocale: updatedPreferences.preferredLocale,
         preferredSourceLanguage: updatedPreferences.preferredSourceLanguage,
       });
@@ -62,10 +67,8 @@ function UserSettings() {
   };
 
   return (
-    <div className="p-6 h-full overflow-y-auto bg-slate-50">
-      <div className="max-w-3xl mx-auto rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-3xl font-semibold text-slate-900">{t('settings.title')}</h1>
-        <p className="mt-2 text-slate-500">{t('settings.subtitle')}</p>
+    <AppShell title={t('settings.title')} subtitle={t('settings.subtitle')}>
+      <div className="max-w-4xl rounded-[30px] border border-slate-200 bg-white p-8 shadow-[0_30px_70px_-45px_rgba(15,23,42,0.35)]">
 
         <div className="mt-8 space-y-6">
           <div>
@@ -76,6 +79,35 @@ function UserSettings() {
               className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500"
             />
             <p className="mt-2 text-sm text-slate-500">{t('settings.nicknameHint')}</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">{t('settings.avatarLabel')}</label>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-[22px] bg-slate-100 text-slate-400">
+                {avatarUrl ? <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" /> : displayName.slice(0, 1)}
+              </div>
+              <div className="flex-1 space-y-3">
+                <input
+                  value={avatarUrl}
+                  onChange={(event) => setAvatarUrl(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500"
+                  placeholder="/uploads/avatar-xxx.png"
+                />
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    const uploaded = await uploadMyAvatar(file);
+                    setAvatarUrl(uploaded.avatarUrl || '');
+                    updateUser({ avatarUrl: uploaded.avatarUrl });
+                  }}
+                  className="block w-full text-sm text-slate-500 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                />
+              </div>
+            </div>
           </div>
 
           <div>
@@ -94,6 +126,20 @@ function UserSettings() {
             </select>
             <p className="mt-2 text-sm text-slate-500">{t('settings.languageHint')}</p>
           </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-2">{t('settings.sourceLanguageLabel')}</label>
+            <select
+              value={preferredSourceLanguage}
+              onChange={(event) => setPreferredSourceLanguage(event.target.value)}
+              className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500"
+            >
+              {COMMON_LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.code} value={option.code}>{option.label}</option>
+              ))}
+            </select>
+            <p className="mt-2 text-sm text-slate-500">{t('settings.sourceLanguageHint')}</p>
+          </div>
         </div>
 
         <div className="mt-8 flex items-center gap-4">
@@ -108,6 +154,6 @@ function UserSettings() {
           {message && <span className="text-sm text-slate-500">{message}</span>}
         </div>
       </div>
-    </div>
+    </AppShell>
   );
 }

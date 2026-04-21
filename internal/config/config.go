@@ -12,6 +12,7 @@ type Config struct {
 	DB     DBConfig
 	Redis  RedisConfig
 	Export ExportConfig
+	Upload UploadConfig
 }
 
 type AppConfig struct {
@@ -37,6 +38,10 @@ type ExportConfig struct {
 	CleanupInterval time.Duration
 }
 
+type UploadConfig struct {
+	Dir string
+}
+
 func Load() Config {
 	return Config{
 		App: AppConfig{
@@ -53,9 +58,12 @@ func Load() Config {
 			URL: getEnv("REDIS_URL", "redis://localhost:16379/0"),
 		},
 		Export: ExportConfig{
-			Dir:             getEnv("EXPORT_DIR", "exports"),
+			Dir:             getEnv("EXPORT_DIR", "/app/exports"),
 			Retention:       getEnvDuration("EXPORT_RETENTION", 24*time.Hour),
 			CleanupInterval: getEnvDuration("EXPORT_CLEANUP_INTERVAL", time.Hour),
+		},
+		Upload: UploadConfig{
+			Dir: getEnv("UPLOAD_DIR", "/app/uploads"),
 		},
 	}
 }

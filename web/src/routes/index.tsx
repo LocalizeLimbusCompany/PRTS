@@ -2,23 +2,19 @@ import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 
-import { api } from '@/api/client';
+import { getOrganizations } from '@/api/organizations';
 import { OrganizationsPage } from '@/components/OrganizationsPage';
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
 });
 
-interface Organization {
-  id: string;
-}
-
 function IndexPage() {
   const navigate = useNavigate();
 
   const { data: orgs, isLoading } = useQuery({
     queryKey: ['organizations'],
-    queryFn: () => api.get<{ items: Organization[] }>('/organizations'),
+    queryFn: getOrganizations,
   });
 
   useEffect(() => {

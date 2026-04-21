@@ -1,134 +1,96 @@
 import { Link } from '@tanstack/react-router';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Building2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowRight, Lock, Plus, Sparkles } from 'lucide-react';
 
-import { api } from '@/api/client';
-import { normalizeLocale, translate } from '@/i18n';
+import { AppShell } from '@/components/AppShell';
+import { getOrganizations } from '@/api/organizations';
 import { useAuthStore } from '@/store/auth';
-import { usePreferencesStore } from '@/store/preferences';
-
-interface Organization {
-  id: string;
-  name: string;
-  slug: string;
-  createdBy?: string;
-}
+import { useTranslation } from '@/hooks/useTranslation';
 
 export function OrganizationsPage() {
-  const queryClient = useQueryClient();
-  const { data: orgs, isLoading, error } = useQuery({
-    queryKey: ['organizations'],
-    queryFn: () => api.get<{ items: Organization[] }>('/organizations'),
-  });
-
+  const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
-  const logout = useAuthStore((s) => s.logout);
-  const uiLocale = usePreferencesStore((s) => s.uiLocale);
-  const locale = normalizeLocale(user?.preferredLocale || uiLocale);
-  const t = (key: string) => translate(locale, key);
-  const [form, setForm] = useState({
-    name: '',
-    slug: '',
-    description: '',
-    visibility: 'public',
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['organizations'],
+    queryFn: getOrganizations,
   });
-  const [message, setMessage] = useState<string | null>(null);
 
-  const createOrganization = useMutation({
-    mutationFn: () =>
-      api.post('/organizations', {
-        name: form.name,
-        slug: form.slug,
-        description: form.description,
-        visibility: form.visibility,
-        createdBy: user?.id || '',
-      }),
-    onSuccess: () => {
-      setForm({ name: '', slug: '', description: '', visibility: 'public' });
-      setMessage(t('organizations.createSuccess'));
-      void queryClient.invalidateQueries({ queryKey: ['organizations'] });
-    },
-  });
+  const organizations = data?.items ?? [];
+  const canCreateOrganization = Boolean(user && (user.platformRole === 'owner' || user.platformRole === 'admin'));
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col p-4">
-      <header className="flex justify-end mb-8 w-full max-w-4xl mx-auto">
-        {user ? (
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-slate-600">{user.displayName}</span>
-            <button onClick={() => logout()} className="text-sm text-slate-400 hover:text-red-500">{t('common.logout')}</button>
-          </div>
-        ) : (
-          <Link to="/login" className="text-sm font-medium text-blue-600 hover:underline">{t('common.login')}</Link>
-        )}
-      </header>
-      <div className="flex-1 flex items-center justify-center">
-        <div className="w-full max-w-6xl grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="bg-white p-8 rounded-lg shadow-sm border border-slate-200">
-          <h1 className="text-2xl font-semibold text-slate-900 mb-6 flex items-center">
-            <Building2 className="mr-2" />
-            {t('organizations.title')}
-          </h1>
+    <AppShell
+      title={t('organizations.title')}
+      subtitle={t('organizations.subtitle')}
+      actions={
+        canCreateOrganization ? (
+          <Link to={"/organizations/new" as any} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-slate-900/20">
+            <Plus className="h-4 w-4" />
+            {t('organizations.createAction')}
+          </Link>
+        ) : null
+      }
+    >
+      <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <section className="rounded-[28px] border border-slate-200 bg-white/95 p-6 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.3)]">
+          {isLoading ? <div className="text-sm text-slate-500">{t('organizations.loading')}</div> : null}
+          {error ? <div className="text-sm text-red-500">{t('organizations.failed')}</div> : null}
 
-          {isLoading && <div className="text-slate-500">{t('organizations.loading')}</div>}
-          {error && <div className="text-red-500">{t('organizations.failed')}</div>}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {orgs?.items?.map((org) => (
+          <div className="grid gap-4 md:grid-cols-2">
+            {organizations.map((org) => (
               <Link
                 key={org.id}
                 to="/$orgId/projects"
                 params={{ orgId: org.id }}
-                className="block p-6 border border-slate-200 rounded hover:border-blue-500 hover:shadow-sm transition-all"
+                className="group rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-5 transition hover:-translate-y-1 hover:border-slate-900 hover:shadow-xl"
               >
-                <h2 className="text-lg font-medium text-slate-900">{org.name}</h2>
-                <p className="text-sm text-slate-500 mt-1">{org.slug}</p>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-lg font-semibold text-slate-900">{org.name}</div>
+                    <div className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{org.slug}</div>
+                  </div>
+                  <ArrowRight className="h-5 w-5 text-slate-300 transition group-hover:text-slate-900" />
+                </div>
+                <p className="mt-4 line-clamp-3 text-sm leading-6 text-slate-500">{org.description || t('organizations.emptyDesc')}</p>
+                <div className="mt-5 flex items-center justify-between text-xs text-slate-400">
+                  <span>{org.visibility}</span>
+                  <span>{org.canCreateProject ? t('organizations.projectCreateOpen') : t('organizations.projectCreateRestricted')}</span>
+                </div>
               </Link>
             ))}
           </div>
-          {orgs?.items?.length === 0 && (
-            <div className="text-slate-500">{t('organizations.empty')}</div>
-          )}
-        </div>
-        <div className="bg-white p-8 rounded-lg shadow-sm border border-slate-200">
-          <h2 className="text-xl font-semibold text-slate-900">{t('organizations.createTitle')}</h2>
-          <p className="mt-2 text-sm text-slate-500">{t('organizations.createSubtitle')}</p>
 
-          <div className="mt-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t('organizations.name')}</label>
-              <input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2" />
+          {!isLoading && organizations.length === 0 ? (
+            <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 px-6 py-16 text-center text-sm text-slate-500">
+              {t('organizations.empty')}
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t('organizations.slug')}</label>
-              <input value={form.slug} onChange={(e) => setForm((prev) => ({ ...prev, slug: e.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t('organizations.description')}</label>
-              <textarea value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2 min-h-[100px]" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{t('organizations.visibility')}</label>
-              <select value={form.visibility} onChange={(e) => setForm((prev) => ({ ...prev, visibility: e.target.value }))} className="w-full rounded border border-slate-300 px-3 py-2">
-                <option value="public">public</option>
-                <option value="private">private</option>
-              </select>
-            </div>
-            <button
-              type="button"
-              disabled={!user || createOrganization.isPending || !form.name || !form.slug}
-              onClick={() => createOrganization.mutate()}
-              className="w-full rounded bg-blue-600 px-4 py-3 text-white font-medium disabled:opacity-50"
-            >
-              {createOrganization.isPending ? t('common.saving') : t('organizations.createAction')}
-            </button>
-            {!user && <p className="text-sm text-slate-500">{t('common.login')} required.</p>}
-            {message && <p className="text-sm text-green-600">{message}</p>}
+          ) : null}
+        </section>
+
+        <aside className="rounded-[28px] border border-slate-200 bg-slate-950 p-6 text-white shadow-[0_30px_70px_-45px_rgba(15,23,42,0.7)]">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200">
+            <Sparkles className="h-3.5 w-3.5" />
+            {t('organizations.governance')}
           </div>
-        </div>
-        </div>
+          <div className="mt-5 text-2xl font-semibold tracking-tight">{t('organizations.sideTitle')}</div>
+          <p className="mt-4 text-sm leading-7 text-slate-300">{t('organizations.sideBody')}</p>
+
+          {!canCreateOrganization ? (
+            <div className="mt-8 rounded-[24px] border border-amber-400/20 bg-amber-400/10 p-5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-amber-200">
+                <Lock className="h-4 w-4" />
+                {t('organizations.createRestricted')}
+              </div>
+              <p className="mt-3 text-sm leading-6 text-amber-100/85">{t('organizations.createRestrictedHint')}</p>
+            </div>
+          ) : (
+            <div className="mt-8 rounded-[24px] border border-emerald-400/20 bg-emerald-400/10 p-5">
+              <div className="text-sm font-semibold text-emerald-200">{t('organizations.createEnabled')}</div>
+              <p className="mt-3 text-sm leading-6 text-emerald-100/85">{t('organizations.createEnabledHint')}</p>
+            </div>
+          )}
+        </aside>
       </div>
-    </div>
+    </AppShell>
   );
 }

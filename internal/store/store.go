@@ -150,8 +150,76 @@ type AuthUser struct {
 	Email                   string `json:"email"`
 	Username                string `json:"username"`
 	DisplayName             string `json:"displayName"`
+	AvatarURL               string `json:"avatarUrl"`
+	PlatformRole            string `json:"platformRole"`
 	PreferredLocale         string `json:"preferredLocale"`
 	PreferredSourceLanguage string `json:"preferredSourceLanguage"`
+	Status                  string `json:"status"`
+}
+
+type PlatformSettings struct {
+	AllowUserCreateOrganization bool         `json:"allowUserCreateOrganization"`
+	AllowUserCreateProject      bool         `json:"allowUserCreateProject"`
+	UpdatedAt                   time.Time    `json:"updatedAt"`
+	UpdatedBy                   *UserSummary `json:"updatedBy,omitempty"`
+}
+
+type UpdatePlatformSettingsInput struct {
+	AllowUserCreateOrganization bool
+	AllowUserCreateProject      bool
+	UpdatedBy                   string
+}
+
+type UpdateUserProfileInput struct {
+	DisplayName string
+	AvatarURL   string
+}
+
+type UpdatePlatformUserInput struct {
+	PlatformRole string
+	Status       string
+}
+
+type PlatformOverview struct {
+	UserCount         int              `json:"userCount"`
+	OrganizationCount int              `json:"organizationCount"`
+	ProjectCount      int              `json:"projectCount"`
+	Settings          PlatformSettings `json:"settings"`
+}
+
+type ProjectCreationAccess struct {
+	CanCreateProject      bool   `json:"canCreateProject"`
+	CreateRestrictedReason string `json:"createRestrictedReason"`
+}
+
+type OrganizationWithAccess struct {
+	Organization
+	ProjectCreationAccess
+}
+
+type ProjectHistoryItem struct {
+	UnitID           string       `json:"unitId"`
+	Key              string       `json:"key"`
+	DocumentID       string       `json:"documentId"`
+	DocumentPath     string       `json:"documentPath"`
+	RevisionID       string       `json:"revisionId"`
+	RevisionNo       int          `json:"revisionNo"`
+	BeforeTargetText string       `json:"beforeTargetText"`
+	AfterTargetText  string       `json:"afterTargetText"`
+	BeforeStatus     string       `json:"beforeStatus"`
+	AfterStatus      string       `json:"afterStatus"`
+	ChangeNote       string       `json:"changeNote"`
+	ChangedAt        time.Time    `json:"changedAt"`
+	ChangedBy        *UserSummary `json:"changedBy,omitempty"`
+}
+
+type ProjectHistoryFilter struct {
+	ProjectID string
+	DocumentID string
+	Key       string
+	Status    string
+	Page      int
+	PageSize  int
 }
 
 type GlossaryTerm struct {
@@ -192,6 +260,7 @@ type ExportJob struct {
 	Status      string       `json:"status"`
 	FilePath    string       `json:"filePath"`
 	FileName    string       `json:"fileName"`
+	DownloadURL string       `json:"downloadUrl"`
 	FileSize    int64        `json:"fileSize"`
 	ExpiresAt   *time.Time   `json:"expiresAt,omitempty"`
 	CreatedAt   time.Time    `json:"createdAt"`
@@ -292,9 +361,11 @@ type Project struct {
 
 type ProjectOverview struct {
 	Project
-	DocumentCount       int            `json:"documentCount"`
-	TranslationUnitCount int           `json:"translationUnitCount"`
-	StatusCounts        map[string]int `json:"statusCounts"`
+	DocumentCount        int            `json:"documentCount"`
+	TranslationUnitCount int            `json:"translationUnitCount"`
+	StatusCounts         map[string]int `json:"statusCounts"`
+	CanManageMembers     bool           `json:"canManageMembers,omitempty"`
+	CanManageProject     bool           `json:"canManageProject,omitempty"`
 }
 
 type UserSummary struct {
@@ -418,7 +489,12 @@ func (s *Store) Close() {
 	}
 }
 
-func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
+func (s *Store) ListOrganizations(ctx context.Context, userID string) ([]OrganizationWithAccess, error) {
+	settings, err := s.GetPlatformSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.pool.Query(ctx, `
 		SELECT id::text, slug, name, description, visibility, COALESCE(created_by::text, ''), created_at, updated_at
 		FROM organizations
@@ -429,7 +505,7 @@ func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 	}
 	defer rows.Close()
 
-	var items []Organization
+	var items []OrganizationWithAccess
 	for rows.Next() {
 		var item Organization
 		if err := rows.Scan(
@@ -444,7 +520,19 @@ func (s *Store) ListOrganizations(ctx context.Context) ([]Organization, error) {
 		); err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+
+		canCreateProject, reason, err := s.CanCreateProjectInOrganization(ctx, item.ID, userID, settings)
+		if err != nil {
+			return nil, err
+		}
+
+		items = append(items, OrganizationWithAccess{
+			Organization: item,
+			ProjectCreationAccess: ProjectCreationAccess{
+				CanCreateProject:       canCreateProject,
+				CreateRestrictedReason: reason,
+			},
+		})
 	}
 
 	return items, rows.Err()
@@ -642,6 +730,31 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (ProjectOvervi
 	return item, nil
 }
 
+func (s *Store) GetOrganizationWithAccess(ctx context.Context, organizationID, userID string) (OrganizationWithAccess, error) {
+	item, err := s.GetOrganization(ctx, organizationID)
+	if err != nil {
+		return OrganizationWithAccess{}, err
+	}
+
+	settings, err := s.GetPlatformSettings(ctx)
+	if err != nil {
+		return OrganizationWithAccess{}, err
+	}
+
+	canCreateProject, reason, err := s.CanCreateProjectInOrganization(ctx, organizationID, userID, settings)
+	if err != nil {
+		return OrganizationWithAccess{}, err
+	}
+
+	return OrganizationWithAccess{
+		Organization: item,
+		ProjectCreationAccess: ProjectCreationAccess{
+			CanCreateProject:       canCreateProject,
+			CreateRestrictedReason: reason,
+		},
+	}, nil
+}
+
 func (s *Store) CreateProject(ctx context.Context, organizationID string, input CreateProjectInput) (ProjectOverview, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -686,24 +799,8 @@ func (s *Store) CreateProject(ctx context.Context, organizationID string, input 
 }
 
 func (s *Store) CanManageOrganizationProjects(ctx context.Context, organizationID, userID string) (bool, error) {
-	if userID == "" {
-		return false, nil
-	}
-
-	var createdBy string
-	err := s.pool.QueryRow(ctx, `
-		SELECT COALESCE(created_by::text, '')
-		FROM organizations
-		WHERE id = $1
-	`, organizationID).Scan(&createdBy)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, ErrNotFound
-	}
-	if err != nil {
-		return false, err
-	}
-
-	return createdBy != "" && createdBy == userID, nil
+	allowed, _, err := s.CanCreateProjectInOrganization(ctx, organizationID, userID, PlatformSettings{})
+	return allowed, err
 }
 
 func (s *Store) UpdateProject(ctx context.Context, projectID string, input UpdateProjectInput) (ProjectOverview, error) {
@@ -1332,6 +1429,99 @@ func (s *Store) ListTranslationUnitHistory(ctx context.Context, projectID, unitI
 	return items, rows.Err()
 }
 
+func (s *Store) ListProjectHistory(ctx context.Context, filter ProjectHistoryFilter) ([]ProjectHistoryItem, int, error) {
+	var args []any
+	var where []string
+
+	args = append(args, filter.ProjectID)
+	where = append(where, fmt.Sprintf("tu.project_id = $%d", len(args)))
+
+	if filter.DocumentID != "" {
+		args = append(args, filter.DocumentID)
+		where = append(where, fmt.Sprintf("tu.document_id = $%d::uuid", len(args)))
+	}
+	if filter.Key != "" {
+		args = append(args, "%"+filter.Key+"%")
+		where = append(where, fmt.Sprintf("tu.key ILIKE $%d", len(args)))
+	}
+	if filter.Status != "" {
+		args = append(args, filter.Status)
+		where = append(where, fmt.Sprintf("(tr.before_status = $%d OR tr.after_status = $%d)", len(args), len(args)))
+	}
+
+	baseWhere := "WHERE " + strings.Join(where, " AND ")
+
+	var total int
+	countQuery := `
+		SELECT COUNT(*)
+		FROM translation_revisions tr
+		JOIN translation_units tu ON tu.id = tr.translation_unit_id
+		JOIN documents d ON d.id = tu.document_id
+	` + baseWhere
+	if err := s.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	args = append(args, filter.PageSize, (filter.Page-1)*filter.PageSize)
+	query := `
+		SELECT
+			tu.id::text,
+			tu.key,
+			d.id::text,
+			d.path,
+			tr.id::text,
+			tr.revision_no,
+			tr.before_target_text,
+			tr.after_target_text,
+			tr.before_status,
+			tr.after_status,
+			tr.change_note,
+			tr.changed_at,
+			u.id::text,
+			u.display_name
+		FROM translation_revisions tr
+		JOIN translation_units tu ON tu.id = tr.translation_unit_id
+		JOIN documents d ON d.id = tu.document_id
+		LEFT JOIN users u ON u.id = tr.changed_by
+	` + baseWhere + `
+		ORDER BY tr.changed_at DESC, tr.revision_no DESC
+		LIMIT $` + fmt.Sprintf("%d", len(args)-1) + ` OFFSET $` + fmt.Sprintf("%d", len(args))
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var items []ProjectHistoryItem
+	for rows.Next() {
+		var item ProjectHistoryItem
+		var userID *string
+		var userName *string
+		if err := rows.Scan(
+			&item.UnitID,
+			&item.Key,
+			&item.DocumentID,
+			&item.DocumentPath,
+			&item.RevisionID,
+			&item.RevisionNo,
+			&item.BeforeTargetText,
+			&item.AfterTargetText,
+			&item.BeforeStatus,
+			&item.AfterStatus,
+			&item.ChangeNote,
+			&item.ChangedAt,
+			&userID,
+			&userName,
+		); err != nil {
+			return nil, 0, err
+		}
+		item.ChangedBy = userSummaryFromPointers(userID, userName)
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (s *Store) ListProjectMembers(ctx context.Context, projectID string) ([]ProjectMember, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT
@@ -1592,11 +1782,261 @@ func (s *Store) DeleteDocumentRule(ctx context.Context, projectID, ruleID string
 	return nil
 }
 
+func (s *Store) GetPlatformSettings(ctx context.Context) (PlatformSettings, error) {
+	var item PlatformSettings
+	var updatedByID *string
+	var updatedByName *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			ps.allow_user_create_organization,
+			ps.allow_user_create_project,
+			ps.updated_at,
+			u.id::text,
+			u.display_name
+		FROM platform_settings ps
+		LEFT JOIN users u ON u.id = ps.updated_by
+		WHERE ps.id = TRUE
+	`).Scan(
+		&item.AllowUserCreateOrganization,
+		&item.AllowUserCreateProject,
+		&item.UpdatedAt,
+		&updatedByID,
+		&updatedByName,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PlatformSettings{}, ErrNotFound
+	}
+	if err != nil {
+		return PlatformSettings{}, err
+	}
+	if updatedByID != nil && updatedByName != nil {
+		item.UpdatedBy = &UserSummary{ID: *updatedByID, Name: *updatedByName}
+	}
+	return item, nil
+}
+
+func (s *Store) UpdatePlatformSettings(ctx context.Context, input UpdatePlatformSettingsInput) (PlatformSettings, error) {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE platform_settings
+		SET allow_user_create_organization = $1,
+			allow_user_create_project = $2,
+			updated_by = NULLIF($3, '')::uuid,
+			updated_at = NOW()
+		WHERE id = TRUE
+	`, input.AllowUserCreateOrganization, input.AllowUserCreateProject, nullableUUID(input.UpdatedBy))
+	if err != nil {
+		return PlatformSettings{}, err
+	}
+	return s.GetPlatformSettings(ctx)
+}
+
+func (s *Store) CanCreateOrganization(ctx context.Context, userID string) (bool, error) {
+	if userID == "" {
+		return false, nil
+	}
+	user, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if user.PlatformRole == "owner" || user.PlatformRole == "admin" {
+		return true, nil
+	}
+
+	settings, err := s.GetPlatformSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+	return settings.AllowUserCreateOrganization, nil
+}
+
+func (s *Store) CanCreateProjectInOrganization(ctx context.Context, organizationID, userID string, settings PlatformSettings) (bool, string, error) {
+	if userID == "" {
+		return false, "login_required", nil
+	}
+
+	user, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		return false, "", err
+	}
+	if user.Status != "" && user.Status != "active" {
+		return false, "user_inactive", nil
+	}
+
+	if settings.UpdatedAt.IsZero() {
+		settings, err = s.GetPlatformSettings(ctx)
+		if err != nil {
+			return false, "", err
+		}
+	}
+
+	if user.PlatformRole == "owner" || user.PlatformRole == "admin" {
+		return true, "", nil
+	}
+
+	if !settings.AllowUserCreateProject {
+		return false, "project_creation_disabled", nil
+	}
+
+	var createdBy string
+	err = s.pool.QueryRow(ctx, `
+		SELECT COALESCE(created_by::text, '')
+		FROM organizations
+		WHERE id = $1
+	`, organizationID).Scan(&createdBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, "", ErrNotFound
+	}
+	if err != nil {
+		return false, "", err
+	}
+
+	if createdBy != "" && createdBy == userID {
+		return true, "", nil
+	}
+
+	return false, "organization_permission_required", nil
+}
+
+func (s *Store) GetUserByID(ctx context.Context, userID string) (AuthUser, error) {
+	var user AuthUser
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			id::text,
+			email,
+			username,
+			display_name,
+			avatar_url,
+			platform_role,
+			preferred_locale,
+			COALESCE(preferred_source_language, ''),
+			status
+		FROM users
+		WHERE id = $1::uuid
+	`, userID).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Username,
+		&user.DisplayName,
+		&user.AvatarURL,
+		&user.PlatformRole,
+		&user.PreferredLocale,
+		&user.PreferredSourceLanguage,
+		&user.Status,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AuthUser{}, ErrNotFound
+	}
+	return user, err
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]AuthUser, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT
+			id::text,
+			email,
+			username,
+			display_name,
+			avatar_url,
+			platform_role,
+			preferred_locale,
+			COALESCE(preferred_source_language, ''),
+			status
+		FROM users
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []AuthUser
+	for rows.Next() {
+		var item AuthUser
+		if err := rows.Scan(
+			&item.ID,
+			&item.Email,
+			&item.Username,
+			&item.DisplayName,
+			&item.AvatarURL,
+			&item.PlatformRole,
+			&item.PreferredLocale,
+			&item.PreferredSourceLanguage,
+			&item.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) UpdatePlatformUser(ctx context.Context, userID string, input UpdatePlatformUserInput) (AuthUser, error) {
+	var user AuthUser
+	err := s.pool.QueryRow(ctx, `
+		UPDATE users
+		SET platform_role = $2,
+			status = $3,
+			updated_at = NOW()
+		WHERE id = $1::uuid
+		RETURNING
+			id::text,
+			email,
+			username,
+			display_name,
+			avatar_url,
+			platform_role,
+			preferred_locale,
+			COALESCE(preferred_source_language, ''),
+			status
+	`, userID, input.PlatformRole, input.Status).Scan(
+		&user.ID,
+		&user.Email,
+		&user.Username,
+		&user.DisplayName,
+		&user.AvatarURL,
+		&user.PlatformRole,
+		&user.PreferredLocale,
+		&user.PreferredSourceLanguage,
+		&user.Status,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AuthUser{}, ErrNotFound
+	}
+	return user, err
+}
+
+func (s *Store) GetPlatformOverview(ctx context.Context) (PlatformOverview, error) {
+	settings, err := s.GetPlatformSettings(ctx)
+	if err != nil {
+		return PlatformOverview{}, err
+	}
+
+	var overview PlatformOverview
+	overview.Settings = settings
+	err = s.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM users),
+			(SELECT COUNT(*) FROM organizations),
+			(SELECT COUNT(*) FROM projects)
+	`).Scan(&overview.UserCount, &overview.OrganizationCount, &overview.ProjectCount)
+	return overview, err
+}
+
 func (s *Store) Login(ctx context.Context, email, password string) (string, AuthUser, error) {
 	var user AuthUser
 	var passwordHash string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, email, username, password_hash, display_name, preferred_locale, COALESCE(preferred_source_language, '')
+		SELECT
+			id::text,
+			email,
+			username,
+			password_hash,
+			display_name,
+			avatar_url,
+			platform_role,
+			preferred_locale,
+			COALESCE(preferred_source_language, ''),
+			status
 		FROM users
 		WHERE email = $1
 	`, email).Scan(
@@ -1605,8 +2045,11 @@ func (s *Store) Login(ctx context.Context, email, password string) (string, Auth
 		&user.Username,
 		&passwordHash,
 		&user.DisplayName,
+		&user.AvatarURL,
+		&user.PlatformRole,
 		&user.PreferredLocale,
 		&user.PreferredSourceLanguage,
+		&user.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", AuthUser{}, ErrNotFound
@@ -1650,8 +2093,11 @@ func (s *Store) GetUserByToken(ctx context.Context, token string) (AuthUser, err
 			u.email,
 			u.username,
 			u.display_name,
+			u.avatar_url,
+			u.platform_role,
 			u.preferred_locale,
-			COALESCE(u.preferred_source_language, '')
+			COALESCE(u.preferred_source_language, ''),
+			u.status
 		FROM user_sessions us
 		JOIN users u ON u.id = us.user_id
 		WHERE us.token = $1
@@ -1661,8 +2107,11 @@ func (s *Store) GetUserByToken(ctx context.Context, token string) (AuthUser, err
 		&user.Email,
 		&user.Username,
 		&user.DisplayName,
+		&user.AvatarURL,
+		&user.PlatformRole,
 		&user.PreferredLocale,
 		&user.PreferredSourceLanguage,
+		&user.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AuthUser{}, ErrNotFound
@@ -1678,14 +2127,17 @@ func (s *Store) UpdateUserPreferences(ctx context.Context, userID, preferredLoca
 			preferred_source_language = NULLIF($3, ''),
 			updated_at = NOW()
 		WHERE id = $1::uuid
-		RETURNING id::text, email, username, display_name, preferred_locale, COALESCE(preferred_source_language, '')
+		RETURNING id::text, email, username, display_name, avatar_url, platform_role, preferred_locale, COALESCE(preferred_source_language, ''), status
 	`, userID, preferredLocale, preferredSourceLanguage).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Username,
 		&user.DisplayName,
+		&user.AvatarURL,
+		&user.PlatformRole,
 		&user.PreferredLocale,
 		&user.PreferredSourceLanguage,
+		&user.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AuthUser{}, ErrNotFound
@@ -1693,21 +2145,25 @@ func (s *Store) UpdateUserPreferences(ctx context.Context, userID, preferredLoca
 	return user, err
 }
 
-func (s *Store) UpdateUserDisplayName(ctx context.Context, userID, displayName string) (AuthUser, error) {
+func (s *Store) UpdateUserProfile(ctx context.Context, userID string, input UpdateUserProfileInput) (AuthUser, error) {
 	var user AuthUser
 	err := s.pool.QueryRow(ctx, `
 		UPDATE users
 		SET display_name = $2,
+			avatar_url = $3,
 			updated_at = NOW()
 		WHERE id = $1::uuid
-		RETURNING id::text, email, username, display_name, preferred_locale, COALESCE(preferred_source_language, '')
-	`, userID, displayName).Scan(
+		RETURNING id::text, email, username, display_name, avatar_url, platform_role, preferred_locale, COALESCE(preferred_source_language, ''), status
+	`, userID, input.DisplayName, input.AvatarURL).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Username,
 		&user.DisplayName,
+		&user.AvatarURL,
+		&user.PlatformRole,
 		&user.PreferredLocale,
 		&user.PreferredSourceLanguage,
+		&user.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AuthUser{}, ErrNotFound
@@ -2307,6 +2763,7 @@ func (s *Store) ListExportJobs(ctx context.Context, projectID string) ([]ExportJ
 			return nil, err
 		}
 		item.FileName = fileNameFromPath(item.FilePath)
+		item.DownloadURL = exportDownloadURL(projectID, item.ID)
 		item.RequestedBy = userSummaryFromPointers(userID, userName)
 		items = append(items, item)
 	}
@@ -2314,7 +2771,7 @@ func (s *Store) ListExportJobs(ctx context.Context, projectID string) ([]ExportJ
 }
 
 func (s *Store) CreateExportJob(ctx context.Context, projectID, userID string) (ExportJob, error) {
-	filePath := fmt.Sprintf("/exports/%s-%d.zip", projectID, time.Now().Unix())
+	filePath := fmt.Sprintf("%s-%d.zip", projectID, time.Now().Unix())
 	var item ExportJob
 	var requestedByID *string
 	var requestedByName *string
@@ -2338,6 +2795,7 @@ func (s *Store) CreateExportJob(ctx context.Context, projectID, userID string) (
 		return ExportJob{}, err
 	}
 	item.FileName = fileNameFromPath(item.FilePath)
+	item.DownloadURL = exportDownloadURL(projectID, item.ID)
 	item.RequestedBy = userSummaryFromPointers(requestedByID, requestedByName)
 	return item, nil
 }
@@ -2380,6 +2838,7 @@ func (s *Store) GetExportJob(ctx context.Context, projectID, exportJobID string)
 		return ExportJob{}, err
 	}
 	item.FileName = fileNameFromPath(item.FilePath)
+	item.DownloadURL = exportDownloadURL(projectID, item.ID)
 	item.RequestedBy = userSummaryFromPointers(requestedByID, requestedByName)
 	return item, nil
 }
@@ -2800,10 +3259,15 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(buffer), nil
 }
 
+func exportDownloadURL(projectID, exportJobID string) string {
+	return fmt.Sprintf("/api/v1/projects/%s/exports/%s/download", projectID, exportJobID)
+}
+
 func fileNameFromPath(path string) string {
 	if path == "" {
 		return ""
 	}
+	path = strings.ReplaceAll(path, "\\", "/")
 	parts := strings.Split(path, "/")
 	return parts[len(parts)-1]
 }

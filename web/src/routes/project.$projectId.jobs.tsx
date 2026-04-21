@@ -57,8 +57,8 @@ function Jobs() {
     reader.readAsText(file);
   };
 
-  const handleDownload = (jobId: string) => {
-    window.location.href = `/api/v1/projects/${projectId}/exports/${jobId}/download`;
+  const handleDownload = (downloadUrl: string) => {
+    window.location.href = downloadUrl;
   };
 
   return (
@@ -130,9 +130,9 @@ function Jobs() {
                         <span>{job.fileName || `Export ${job.id.substring(0,6)}`}</span>
                         <span className="capitalize font-semibold">{job.status}</span>
                       </div>
-                      {job.status === 'finished' && job.id && (
+                      {job.status === 'finished' && job.downloadUrl && (
                         <button 
-                          onClick={() => handleDownload(job.id)}
+                          onClick={() => handleDownload(job.downloadUrl)}
                           className="text-blue-600 text-left mt-1 hover:underline"
                         >
                           {t('jobs.exportDownload')}

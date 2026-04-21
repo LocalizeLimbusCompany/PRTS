@@ -2,7 +2,7 @@ import { createFileRoute, Outlet, Link } from '@tanstack/react-router';
 import { normalizeLocale, translate } from '@/i18n';
 import { useAuthStore } from '@/store/auth';
 import { usePreferencesStore } from '@/store/preferences';
-import { Settings, LogOut, FileText, Activity, LayoutDashboard, Globe } from 'lucide-react';
+import { Settings, LogOut, FileText, Activity, LayoutDashboard, Globe, Shield } from 'lucide-react';
 
 export const Route = createFileRoute('/project/$projectId')({
   component: ProjectLayout,
@@ -37,6 +37,12 @@ function ProjectLayout() {
         </div>
 
         <div className="flex items-center space-x-4">
+          {(user?.platformRole === 'owner' || user?.platformRole === 'admin') && (
+            <Link to={"/admin" as any} className="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center">
+              <Shield size={14} className="mr-1.5" />
+              {t('admin.title')}
+            </Link>
+          )}
           {user ? (
             <>
               <div className="text-sm font-medium text-slate-600 flex items-center">

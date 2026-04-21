@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -279,11 +280,11 @@ func CreateExportJob(runtime *runtime.Runtime) http.HandlerFunc {
 	}
 }
 
-func DownloadExportJob(dataStore *store.Store) http.HandlerFunc {
+func DownloadExportJob(appRuntime *runtime.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectId")
 		exportJobID := chi.URLParam(r, "exportJobId")
-		item, err := dataStore.GetExportJob(r.Context(), projectID, exportJobID)
+		item, err := appRuntime.Store.GetExportJob(r.Context(), projectID, exportJobID)
 		if errors.Is(err, store.ErrNotFound) {
 			platform.WriteError(w, r, http.StatusNotFound, "not_found", "导出任务不存在")
 			return
@@ -296,7 +297,13 @@ func DownloadExportJob(dataStore *store.Store) http.HandlerFunc {
 			platform.WriteError(w, r, http.StatusNotFound, "not_found", "导出文件尚未生成")
 			return
 		}
-		http.ServeFile(w, r, item.FilePath)
+		resolvedPath := resolveExportFilePath(appRuntime.Config.Export.Dir, item.FilePath)
+		if _, err := os.Stat(resolvedPath); err != nil {
+			platform.WriteError(w, r, http.StatusNotFound, "not_found", "导出文件不存在或已过期")
+			return
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", item.FileName))
+		http.ServeFile(w, r, resolvedPath)
 	}
 }
 
@@ -350,4 +357,18 @@ func writeExportZip(exportDir, projectID, exportJobID string, docs []store.Expor
 		return "", 0, err
 	}
 	return filePath, info.Size(), nil
+}
+
+func resolveExportFilePath(exportDir, value string) string {
+	if value == "" {
+		return ""
+	}
+	if filepath.IsAbs(value) {
+		return value
+	}
+
+	cleaned := strings.ReplaceAll(value, "\\", "/")
+	cleaned = strings.TrimPrefix(cleaned, "/exports/")
+	cleaned = strings.TrimPrefix(cleaned, "exports/")
+	return filepath.Join(exportDir, cleaned)
 }

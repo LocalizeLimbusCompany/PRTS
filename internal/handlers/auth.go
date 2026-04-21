@@ -2,9 +2,15 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"prts-translation-system/internal/platform"
+	"prts-translation-system/internal/runtime"
 	"prts-translation-system/internal/store"
 )
 
@@ -20,6 +26,7 @@ type updatePreferencesRequest struct {
 
 type updateProfileRequest struct {
 	DisplayName string `json:"displayName"`
+	AvatarURL   string `json:"avatarUrl"`
 }
 
 func Login(dataStore *store.Store) http.HandlerFunc {
@@ -125,10 +132,77 @@ func UpdateMyProfile(dataStore *store.Store) http.HandlerFunc {
 		if displayName == "" {
 			displayName = authUser.DisplayName
 		}
+		avatarURL := platform.NormalizeText(req.AvatarURL)
+		if avatarURL == "" {
+			avatarURL = authUser.AvatarURL
+		}
 
-		user, err := dataStore.UpdateUserDisplayName(r.Context(), authUser.ID, displayName)
+		user, err := dataStore.UpdateUserProfile(r.Context(), authUser.ID, store.UpdateUserProfileInput{
+			DisplayName: displayName,
+			AvatarURL:   avatarURL,
+		})
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "更新用户资料失败")
+			return
+		}
+
+		platform.WriteSuccess(w, r, http.StatusOK, user)
+	}
+}
+
+func UploadMyAvatar(appRuntime *runtime.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authUser, ok := platform.AuthUserFromContext(r.Context())
+		if !ok {
+			platform.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "请先登录")
+			return
+		}
+
+		if err := r.ParseMultipartForm(5 << 20); err != nil {
+			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "头像上传表单解析失败")
+			return
+		}
+
+		file, header, err := r.FormFile("avatar")
+		if err != nil {
+			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "缺少头像文件")
+			return
+		}
+		defer file.Close()
+
+		contentType := header.Header.Get("Content-Type")
+		ext := avatarExtension(contentType, header.Filename)
+		if ext == "" {
+			platform.WriteError(w, r, http.StatusBadRequest, "validation_error", "仅支持 PNG、JPG、WEBP、GIF")
+			return
+		}
+
+		if err := os.MkdirAll(appRuntime.Config.Upload.Dir, 0o755); err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "创建上传目录失败")
+			return
+		}
+
+		fileName := fmt.Sprintf("avatar-%s%s", authUser.ID, ext)
+		fullPath := filepath.Join(appRuntime.Config.Upload.Dir, fileName)
+		dst, err := os.Create(fullPath)
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "保存头像失败")
+			return
+		}
+		defer dst.Close()
+
+		if _, err := io.Copy(dst, file); err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "写入头像失败")
+			return
+		}
+
+		avatarURL := "/uploads/" + fileName
+		user, err := appRuntime.Store.UpdateUserProfile(r.Context(), authUser.ID, store.UpdateUserProfileInput{
+			DisplayName: authUser.DisplayName,
+			AvatarURL:   avatarURL,
+		})
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "更新头像资料失败")
 			return
 		}
 
@@ -145,4 +219,28 @@ func middlewareToken(value string) string {
 		return value[len(prefix):]
 	}
 	return value
+}
+
+func avatarExtension(contentType string, originalName string) string {
+	switch strings.ToLower(contentType) {
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	}
+
+	ext := strings.ToLower(filepath.Ext(originalName))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		if ext == ".jpeg" {
+			return ".jpg"
+		}
+		return ext
+	default:
+		return ""
+	}
 }

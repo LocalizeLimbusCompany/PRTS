@@ -26,7 +26,8 @@ type updateOrganizationRequest struct {
 
 func ListOrganizations(dataStore *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := dataStore.ListOrganizations(r.Context())
+		authUser, _ := platform.AuthUserFromContext(r.Context())
+		items, err := dataStore.ListOrganizations(r.Context(), authUser.ID)
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "获取组织列表失败")
 			return
@@ -42,7 +43,8 @@ func ListOrganizations(dataStore *store.Store) http.HandlerFunc {
 func GetOrganization(dataStore *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		organizationID := chi.URLParam(r, "organizationId")
-		item, err := dataStore.GetOrganization(r.Context(), organizationID)
+		authUser, _ := platform.AuthUserFromContext(r.Context())
+		item, err := dataStore.GetOrganizationWithAccess(r.Context(), organizationID, authUser.ID)
 		if errors.Is(err, store.ErrNotFound) {
 			platform.WriteError(w, r, http.StatusNotFound, "not_found", "组织不存在")
 			return
@@ -61,6 +63,16 @@ func CreateOrganization(dataStore *store.Store) http.HandlerFunc {
 		authUser, ok := platform.AuthUserFromContext(r.Context())
 		if !ok || authUser.ID == "" {
 			platform.WriteError(w, r, http.StatusUnauthorized, "unauthorized", "请先登录")
+			return
+		}
+
+		allowed, err := dataStore.CanCreateOrganization(r.Context(), authUser.ID)
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "校验组织创建权限失败")
+			return
+		}
+		if !allowed {
+			platform.WriteError(w, r, http.StatusForbidden, "forbidden", "当前用户无权创建组织")
 			return
 		}
 

@@ -3,9 +3,14 @@ import { persist } from 'zustand/middleware';
 
 export interface User {
   id: string;
+  email?: string;
+  username?: string;
   displayName: string;
+  avatarUrl?: string;
+  platformRole?: string;
   preferredLocale: string;
   preferredSourceLanguage: string;
+  status?: string;
 }
 
 interface AuthState {

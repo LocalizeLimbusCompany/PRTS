@@ -72,7 +72,13 @@ func CreateProject(dataStore *store.Store) http.HandlerFunc {
 			return
 		}
 
-		allowed, err := dataStore.CanManageOrganizationProjects(r.Context(), organizationID, authUser.ID)
+		settings, err := dataStore.GetPlatformSettings(r.Context())
+		if err != nil {
+			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "读取平台设置失败")
+			return
+		}
+
+		allowed, _, err := dataStore.CanCreateProjectInOrganization(r.Context(), organizationID, authUser.ID, settings)
 		if errors.Is(err, store.ErrNotFound) {
 			platform.WriteError(w, r, http.StatusNotFound, "not_found", "组织不存在")
 			return

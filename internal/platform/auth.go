@@ -11,8 +11,11 @@ type AuthContextUser struct {
 	Email                   string `json:"email"`
 	Username                string `json:"username"`
 	DisplayName             string `json:"displayName"`
+	AvatarURL               string `json:"avatarUrl"`
+	PlatformRole            string `json:"platformRole"`
 	PreferredLocale         string `json:"preferredLocale"`
 	PreferredSourceLanguage string `json:"preferredSourceLanguage"`
+	Status                  string `json:"status"`
 }
 
 func WithAuthUser(ctx context.Context, user AuthContextUser) context.Context {

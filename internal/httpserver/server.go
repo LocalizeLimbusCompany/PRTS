@@ -29,6 +29,7 @@ func New(cfg config.Config, runtime *runtime.Runtime) *Server {
 
 	r.Get("/healthz", handlers.Health)
 	r.Get("/readyz", handlers.Ready)
+	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir(cfg.Upload.Dir))))
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Get("/", handlers.APIIndex(cfg))
@@ -38,6 +39,12 @@ func New(cfg config.Config, runtime *runtime.Runtime) *Server {
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Get("/me", handlers.Me())
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Patch("/me", handlers.UpdateMyProfile(runtime.Store))
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Patch("/me/preferences", handlers.UpdateMyPreferences(runtime.Store))
+		api.With(custommiddleware.RequireAuth(runtime.Store)).Post("/me/avatar", handlers.UploadMyAvatar(runtime))
+		api.With(custommiddleware.RequireAuth(runtime.Store)).Get("/admin/overview", handlers.GetPlatformOverview(runtime.Store))
+		api.With(custommiddleware.RequireAuth(runtime.Store)).Get("/admin/settings", handlers.GetPlatformSettings(runtime.Store))
+		api.With(custommiddleware.RequireAuth(runtime.Store)).Patch("/admin/settings", handlers.UpdatePlatformSettings(runtime.Store))
+		api.With(custommiddleware.RequireAuth(runtime.Store)).Get("/admin/users", handlers.ListPlatformUsers(runtime.Store))
+		api.With(custommiddleware.RequireAuth(runtime.Store)).Patch("/admin/users/{userId}", handlers.UpdatePlatformUser(runtime.Store))
 		api.Get("/organizations", handlers.ListOrganizations(runtime.Store))
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Post("/organizations", handlers.CreateOrganization(runtime.Store))
 		api.Get("/organizations/{organizationId}", handlers.GetOrganization(runtime.Store))
@@ -65,6 +72,7 @@ func New(cfg config.Config, runtime *runtime.Runtime) *Server {
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Post("/projects/{projectId}/documents/{documentId}/tags", handlers.BindTagToDocument(runtime.Store))
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Delete("/projects/{projectId}/documents/{documentId}/tags/{tagId}", handlers.UnbindTagFromDocument(runtime.Store))
 		api.Get("/projects/{projectId}/documents/{documentId}/versions", handlers.ListDocumentVersions(runtime.Store))
+		api.Get("/projects/{projectId}/history", handlers.ListProjectHistory(runtime.Store))
 		api.Get("/projects/{projectId}/units", handlers.ListTranslationUnits(runtime.Store))
 		api.Get("/projects/{projectId}/units/{unitId}", handlers.GetTranslationUnit(runtime.Store))
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Patch("/projects/{projectId}/units/{unitId}", handlers.UpdateTranslationUnit(runtime.Store))
@@ -83,7 +91,7 @@ func New(cfg config.Config, runtime *runtime.Runtime) *Server {
 		api.Get("/projects/{projectId}/imports", handlers.ListImportJobs(runtime.Store))
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Post("/projects/{projectId}/exports", handlers.CreateExportJob(runtime))
 		api.Get("/projects/{projectId}/exports", handlers.ListExportJobs(runtime.Store))
-		api.Get("/projects/{projectId}/exports/{exportJobId}/download", handlers.DownloadExportJob(runtime.Store))
+		api.Get("/projects/{projectId}/exports/{exportJobId}/download", handlers.DownloadExportJob(runtime))
 		api.Get("/projects/{projectId}/audit-logs", handlers.ListAuditLogs(runtime.Store))
 	})
 

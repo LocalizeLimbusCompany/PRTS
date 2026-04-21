@@ -28,8 +28,11 @@ func OptionalAuth(dataStore *store.Store) func(http.Handler) http.Handler {
 				Email:                   user.Email,
 				Username:                user.Username,
 				DisplayName:             user.DisplayName,
+				AvatarURL:               user.AvatarURL,
+				PlatformRole:            user.PlatformRole,
 				PreferredLocale:         user.PreferredLocale,
 				PreferredSourceLanguage: user.PreferredSourceLanguage,
+				Status:                  user.Status,
 			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -56,8 +59,11 @@ func RequireAuth(dataStore *store.Store) func(http.Handler) http.Handler {
 				Email:                   user.Email,
 				Username:                user.Username,
 				DisplayName:             user.DisplayName,
+				AvatarURL:               user.AvatarURL,
+				PlatformRole:            user.PlatformRole,
 				PreferredLocale:         user.PreferredLocale,
 				PreferredSourceLanguage: user.PreferredSourceLanguage,
+				Status:                  user.Status,
 			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
