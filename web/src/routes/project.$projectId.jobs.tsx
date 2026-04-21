@@ -57,8 +57,45 @@ function Jobs() {
     reader.readAsText(file);
   };
 
-  const handleDownload = (downloadUrl: string) => {
-    window.location.href = downloadUrl;
+  const getExportStateMessage = (downloadState?: string) => {
+    switch (downloadState) {
+      case 'pending':
+        return t('jobs.exportPending');
+      case 'expired':
+        return t('jobs.exportExpired');
+      case 'missing':
+        return t('jobs.exportMissing');
+      default:
+        return t('jobs.exportUnavailable');
+    }
+  };
+
+  const handleDownload = async (downloadUrl: string, fallbackFileName: string) => {
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        let message = t('jobs.exportDownloadFailed');
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const body = await response.json();
+          message = body?.error?.message || message;
+        }
+        alert(message);
+        return;
+      }
+
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fallbackFileName || 'export.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      alert(t('jobs.exportDownloadFailed'));
+    }
   };
 
   return (
@@ -130,13 +167,18 @@ function Jobs() {
                         <span>{job.fileName || `Export ${job.id.substring(0,6)}`}</span>
                         <span className="capitalize font-semibold">{job.status}</span>
                       </div>
-                      {job.status === 'finished' && job.downloadUrl && (
+                      {job.downloadState === 'ready' && job.downloadUrl && (
                         <button 
-                          onClick={() => handleDownload(job.downloadUrl)}
+                          onClick={() => handleDownload(job.downloadUrl, job.fileName)}
                           className="text-blue-600 text-left mt-1 hover:underline"
                         >
                           {t('jobs.exportDownload')}
                         </button>
+                      )}
+                      {job.downloadState !== 'ready' && !job.downloadUrl && (
+                        <span className="mt-1 text-xs text-slate-500">
+                          {getExportStateMessage(job.downloadState)}
+                        </span>
                       )}
                     </li>
                   ))}

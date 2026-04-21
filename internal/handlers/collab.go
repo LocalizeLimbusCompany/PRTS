@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -232,13 +233,16 @@ func CreateImportJob(dataStore *store.Store) http.HandlerFunc {
 	}
 }
 
-func ListExportJobs(dataStore *store.Store) http.HandlerFunc {
+func ListExportJobs(runtime *runtime.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		projectID := chi.URLParam(r, "projectId")
-		items, err := dataStore.ListExportJobs(r.Context(), projectID)
+		items, err := runtime.Store.ListExportJobs(r.Context(), projectID)
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "获取导出任务失败")
 			return
+		}
+		for i := range items {
+			applyExportJobDownloadState(runtime.Config.Export.Dir, &items[i], time.Now())
 		}
 		platform.WriteSuccess(w, r, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 	}
@@ -293,13 +297,17 @@ func DownloadExportJob(appRuntime *runtime.Runtime) http.HandlerFunc {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "获取导出任务失败")
 			return
 		}
-		if item.FilePath == "" {
+
+		state, resolvedPath := exportJobDownloadState(appRuntime.Config.Export.Dir, item, time.Now())
+		switch state {
+		case "pending":
 			platform.WriteError(w, r, http.StatusNotFound, "not_found", "导出文件尚未生成")
 			return
-		}
-		resolvedPath := resolveExportFilePath(appRuntime.Config.Export.Dir, item.FilePath)
-		if _, err := os.Stat(resolvedPath); err != nil {
-			platform.WriteError(w, r, http.StatusNotFound, "not_found", "导出文件不存在或已过期")
+		case "expired":
+			platform.WriteError(w, r, http.StatusGone, "gone", "导出文件已过期，请重新导出")
+			return
+		case "missing":
+			platform.WriteError(w, r, http.StatusNotFound, "not_found", "导出文件不存在，请重新导出")
 			return
 		}
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", item.FileName))
@@ -371,4 +379,27 @@ func resolveExportFilePath(exportDir, value string) string {
 	cleaned = strings.TrimPrefix(cleaned, "/exports/")
 	cleaned = strings.TrimPrefix(cleaned, "exports/")
 	return filepath.Join(exportDir, cleaned)
+}
+
+func applyExportJobDownloadState(exportDir string, item *store.ExportJob, now time.Time) {
+	state, _ := exportJobDownloadState(exportDir, *item, now)
+	item.DownloadState = state
+	if state != "ready" {
+		item.DownloadURL = ""
+	}
+}
+
+func exportJobDownloadState(exportDir string, item store.ExportJob, now time.Time) (string, string) {
+	if item.FilePath == "" {
+		return "pending", ""
+	}
+	if item.ExpiresAt != nil && !item.ExpiresAt.After(now) {
+		return "expired", ""
+	}
+
+	resolvedPath := resolveExportFilePath(exportDir, item.FilePath)
+	if _, err := os.Stat(resolvedPath); err != nil {
+		return "missing", resolvedPath
+	}
+	return "ready", resolvedPath
 }

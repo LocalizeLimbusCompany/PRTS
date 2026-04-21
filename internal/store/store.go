@@ -3,10 +3,10 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"encoding/hex"
 	"strings"
 	"time"
 
@@ -22,11 +22,11 @@ type Store struct {
 }
 
 type UpdateTranslationUnitInput struct {
-	TargetText string
-	Status     string
-	Comment    string
-	ActorID    string
-	ChangeNote string
+	TargetText   string
+	Status       string
+	Comment      string
+	ActorID      string
+	ChangeNote   string
 	IsQuestioned *bool
 	IsLocked     *bool
 	IsHidden     *bool
@@ -91,10 +91,10 @@ type UpdateDocumentInput struct {
 }
 
 type ProjectMember struct {
-	ID          string       `json:"id"`
-	User        UserSummary  `json:"user"`
-	RoleCode    string       `json:"roleCode"`
-	CreatedAt   time.Time    `json:"createdAt"`
+	ID        string      `json:"id"`
+	User      UserSummary `json:"user"`
+	RoleCode  string      `json:"roleCode"`
+	CreatedAt time.Time   `json:"createdAt"`
 }
 
 type PermissionNode struct {
@@ -191,7 +191,7 @@ type PlatformOverview struct {
 }
 
 type ProjectCreationAccess struct {
-	CanCreateProject      bool   `json:"canCreateProject"`
+	CanCreateProject       bool   `json:"canCreateProject"`
 	CreateRestrictedReason string `json:"createRestrictedReason"`
 }
 
@@ -217,12 +217,12 @@ type ProjectHistoryItem struct {
 }
 
 type ProjectHistoryFilter struct {
-	ProjectID string
+	ProjectID  string
 	DocumentID string
-	Key       string
-	Status    string
-	Page      int
-	PageSize  int
+	Key        string
+	Status     string
+	Page       int
+	PageSize   int
 }
 
 type GlossaryTerm struct {
@@ -237,39 +237,40 @@ type GlossaryTerm struct {
 }
 
 type TranslationMemoryEntry struct {
-	ID              string    `json:"id"`
-	SourceLanguage  string    `json:"sourceLanguage"`
-	TargetLanguage  string    `json:"targetLanguage"`
-	SourceText      string    `json:"sourceText"`
-	TargetText      string    `json:"targetText"`
-	QualityScore    int       `json:"qualityScore"`
-	CreatedFromUnitID *string `json:"createdFromUnitId,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
+	ID                string    `json:"id"`
+	SourceLanguage    string    `json:"sourceLanguage"`
+	TargetLanguage    string    `json:"targetLanguage"`
+	SourceText        string    `json:"sourceText"`
+	TargetText        string    `json:"targetText"`
+	QualityScore      int       `json:"qualityScore"`
+	CreatedFromUnitID *string   `json:"createdFromUnitId,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
 }
 
 type ImportJob struct {
-	ID          string       `json:"id"`
-	DocumentPath string      `json:"documentPath"`
-	Status      string       `json:"status"`
-	ErrorMessage string      `json:"errorMessage"`
-	CreatedAt   time.Time    `json:"createdAt"`
-	StartedAt   *time.Time   `json:"startedAt,omitempty"`
-	FinishedAt  *time.Time   `json:"finishedAt,omitempty"`
-	UploadedBy  *UserSummary `json:"uploadedBy,omitempty"`
+	ID           string       `json:"id"`
+	DocumentPath string       `json:"documentPath"`
+	Status       string       `json:"status"`
+	ErrorMessage string       `json:"errorMessage"`
+	CreatedAt    time.Time    `json:"createdAt"`
+	StartedAt    *time.Time   `json:"startedAt,omitempty"`
+	FinishedAt   *time.Time   `json:"finishedAt,omitempty"`
+	UploadedBy   *UserSummary `json:"uploadedBy,omitempty"`
 }
 
 type ExportJob struct {
-	ID          string       `json:"id"`
-	Status      string       `json:"status"`
-	FilePath    string       `json:"filePath"`
-	FileName    string       `json:"fileName"`
-	DownloadURL string       `json:"downloadUrl"`
-	FileSize    int64        `json:"fileSize"`
-	ExpiresAt   *time.Time   `json:"expiresAt,omitempty"`
-	CreatedAt   time.Time    `json:"createdAt"`
-	StartedAt   *time.Time   `json:"startedAt,omitempty"`
-	FinishedAt  *time.Time   `json:"finishedAt,omitempty"`
-	RequestedBy *UserSummary `json:"requestedBy,omitempty"`
+	ID            string       `json:"id"`
+	Status        string       `json:"status"`
+	FilePath      string       `json:"filePath"`
+	FileName      string       `json:"fileName"`
+	DownloadURL   string       `json:"downloadUrl"`
+	DownloadState string       `json:"downloadState"`
+	FileSize      int64        `json:"fileSize"`
+	ExpiresAt     *time.Time   `json:"expiresAt,omitempty"`
+	CreatedAt     time.Time    `json:"createdAt"`
+	StartedAt     *time.Time   `json:"startedAt,omitempty"`
+	FinishedAt    *time.Time   `json:"finishedAt,omitempty"`
+	RequestedBy   *UserSummary `json:"requestedBy,omitempty"`
 }
 
 type AuditLog struct {
@@ -423,20 +424,20 @@ type DocumentRef struct {
 }
 
 type TranslationUnit struct {
-	ID         string            `json:"id"`
-	Key        string            `json:"key"`
-	Document   DocumentRef       `json:"document"`
-	Sources    map[string]string `json:"sources"`
-	Target     TranslationTarget `json:"target"`
-	Status     string            `json:"status"`
-	IsQuestioned bool            `json:"isQuestioned"`
-	IsLocked     bool            `json:"isLocked"`
-	IsHidden     bool            `json:"isHidden"`
-	Comment    string            `json:"comment"`
-	Version    int               `json:"version"`
-	UpdatedAt  time.Time         `json:"updatedAt"`
-	UpdatedBy  *UserSummary      `json:"updatedBy,omitempty"`
-	Permissions UnitPermissions  `json:"permissions"`
+	ID           string            `json:"id"`
+	Key          string            `json:"key"`
+	Document     DocumentRef       `json:"document"`
+	Sources      map[string]string `json:"sources"`
+	Target       TranslationTarget `json:"target"`
+	Status       string            `json:"status"`
+	IsQuestioned bool              `json:"isQuestioned"`
+	IsLocked     bool              `json:"isLocked"`
+	IsHidden     bool              `json:"isHidden"`
+	Comment      string            `json:"comment"`
+	Version      int               `json:"version"`
+	UpdatedAt    time.Time         `json:"updatedAt"`
+	UpdatedBy    *UserSummary      `json:"updatedBy,omitempty"`
+	Permissions  UnitPermissions   `json:"permissions"`
 }
 
 type TranslationRevision struct {
@@ -461,26 +462,26 @@ type DocumentListFilter struct {
 }
 
 type UnitListFilter struct {
-	ActorID      string
-	ProjectID    string
-	DocumentID   string
-	DocumentPath string
-	Scope        string
-	Tag          string
-	Key          string
-	Query        string
-	Status       string
-	Statuses     []string
-	SourceText   string
-	TargetText   string
-	UpdatedBy    string
-	IsQuestioned *bool
-	IsLocked     *bool
-	IsHidden     *bool
+	ActorID       string
+	ProjectID     string
+	DocumentID    string
+	DocumentPath  string
+	Scope         string
+	Tag           string
+	Key           string
+	Query         string
+	Status        string
+	Statuses      []string
+	SourceText    string
+	TargetText    string
+	UpdatedBy     string
+	IsQuestioned  *bool
+	IsLocked      *bool
+	IsHidden      *bool
 	IncludeHidden bool
-	Advanced     []UnitSearchCondition
-	Page         int
-	PageSize     int
+	Advanced      []UnitSearchCondition
+	Page          int
+	PageSize      int
 }
 
 type UnitSearchCondition struct {
@@ -3115,15 +3116,15 @@ func (s *Store) UpdateTranslationUnit(ctx context.Context, projectID, unitID str
 	defer tx.Rollback(ctx)
 
 	var unit struct {
-		ID             string
-		DocumentID     string
-		TargetText     string
-		Status         string
-		IsQuestioned   bool
-		IsLocked       bool
-		IsHidden       bool
-		VersionNo      int
-		CurrentMaxRev  int
+		ID            string
+		DocumentID    string
+		TargetText    string
+		Status        string
+		IsQuestioned  bool
+		IsLocked      bool
+		IsHidden      bool
+		VersionNo     int
+		CurrentMaxRev int
 	}
 
 	err = tx.QueryRow(ctx, `
@@ -3399,7 +3400,6 @@ func documentRuleMatches(document DocumentRef, matchType string, matchValue stri
 		return false
 	}
 }
-
 
 func randomToken() (string, error) {
 	buffer := make([]byte, 32)

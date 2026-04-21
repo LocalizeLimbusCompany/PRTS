@@ -90,7 +90,7 @@ func New(cfg config.Config, runtime *runtime.Runtime) *Server {
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Post("/projects/{projectId}/imports", handlers.CreateImportJob(runtime.Store))
 		api.Get("/projects/{projectId}/imports", handlers.ListImportJobs(runtime.Store))
 		api.With(custommiddleware.RequireAuth(runtime.Store)).Post("/projects/{projectId}/exports", handlers.CreateExportJob(runtime))
-		api.Get("/projects/{projectId}/exports", handlers.ListExportJobs(runtime.Store))
+		api.Get("/projects/{projectId}/exports", handlers.ListExportJobs(runtime))
 		api.Get("/projects/{projectId}/exports/{exportJobId}/download", handlers.DownloadExportJob(runtime))
 		api.Get("/projects/{projectId}/audit-logs", handlers.ListAuditLogs(runtime.Store))
 	})
