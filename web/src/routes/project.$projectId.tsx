@@ -25,7 +25,7 @@ function ProjectLayout() {
   return (
     <div className="h-screen flex flex-col bg-slate-50 text-slate-900 overflow-hidden">
       {/* Top Navbar */}
-      <header className="h-12 bg-white border-b border-slate-200 flex items-center px-4 justify-between shrink-0">
+      <header className="h-8 bg-white border-b border-slate-200 flex items-center px-2 justify-between shrink-0">
         <div className="flex items-center space-x-6">
           <Link to="/organizations" className="font-bold text-slate-800 tracking-tight">
             PRTS

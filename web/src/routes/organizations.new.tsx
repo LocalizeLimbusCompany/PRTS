@@ -35,7 +35,7 @@ function OrganizationCreatePage() {
   if (!user || (user.platformRole !== 'owner' && user.platformRole !== 'admin')) {
     return (
       <AppShell title={t('organizations.createTitle')} subtitle={t('organizations.createSubtitle')}>
-        <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-6 py-10 text-sm text-amber-700">
+        <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
           {t('organizations.createRestrictedHint')}
         </div>
       </AppShell>
@@ -44,35 +44,35 @@ function OrganizationCreatePage() {
 
   return (
     <AppShell title={t('organizations.createTitle')} subtitle={t('organizations.createSubtitle')}>
-      <div className="mx-auto max-w-3xl rounded-[30px] border border-slate-200 bg-white p-8 shadow-[0_30px_70px_-45px_rgba(15,23,42,0.35)]">
-        <div className="grid gap-5">
+      <div className="mx-auto max-w-3xl rounded-[30px] border border-slate-200 bg-white p-3 shadow-[0_30px_70px_-45px_rgba(15,23,42,0.35)]">
+        <div className="grid gap-2">
           <label className="grid gap-2 text-sm font-medium text-slate-700">
             <span>{t('organizations.name')}</span>
-            <input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} className="rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900" />
+            <input value={form.name} onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))} className="rounded-sm border border-slate-300 px-2 py-1.5 outline-none focus:border-slate-900" />
           </label>
           <label className="grid gap-2 text-sm font-medium text-slate-700">
             <span>{t('organizations.slug')}</span>
-            <input value={form.slug} onChange={(e) => setForm((prev) => ({ ...prev, slug: e.target.value }))} className="rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900" />
+            <input value={form.slug} onChange={(e) => setForm((prev) => ({ ...prev, slug: e.target.value }))} className="rounded-sm border border-slate-300 px-2 py-1.5 outline-none focus:border-slate-900" />
           </label>
           <label className="grid gap-2 text-sm font-medium text-slate-700">
             <span>{t('organizations.description')}</span>
-            <textarea value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} className="min-h-[140px] rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900" />
+            <textarea value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} className="min-h-[140px] rounded-sm border border-slate-300 px-2 py-1.5 outline-none focus:border-slate-900" />
           </label>
           <label className="grid gap-2 text-sm font-medium text-slate-700">
             <span>{t('organizations.visibility')}</span>
-            <select value={form.visibility} onChange={(e) => setForm((prev) => ({ ...prev, visibility: e.target.value }))} className="rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900">
+            <select value={form.visibility} onChange={(e) => setForm((prev) => ({ ...prev, visibility: e.target.value }))} className="rounded-sm border border-slate-300 px-2 py-1.5 outline-none focus:border-slate-900">
               <option value="public">public</option>
               <option value="private">private</option>
             </select>
           </label>
         </div>
 
-        <div className="mt-8 flex items-center gap-4">
+        <div className="mt-3 flex items-center gap-2">
           <button
             type="button"
             onClick={() => mutation.mutate()}
             disabled={mutation.isPending || !form.name || !form.slug}
-            className="rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+            className="rounded-full bg-slate-900 px-3 py-3 text-sm font-semibold text-white disabled:opacity-50"
           >
             {mutation.isPending ? t('common.saving') : t('organizations.createAction')}
           </button>

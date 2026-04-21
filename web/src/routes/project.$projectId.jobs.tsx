@@ -99,41 +99,41 @@ function Jobs() {
   };
 
   return (
-    <div className="p-6 h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto space-y-8">
+    <div className="p-1.5 h-full overflow-y-auto">
+      <div className="max-w-5xl mx-auto space-y-3">
         <h1 className="text-2xl font-bold">{t('jobs.title')}</h1>
         
         {!user && (
-          <div className="bg-blue-50 text-blue-700 p-3 rounded mb-4 text-sm">
+          <div className="bg-blue-50 text-blue-700 p-1.5 rounded mb-2 text-sm">
             {t('jobs.loginHint')}
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Import Section */}
-          <div className="bg-white p-6 rounded shadow-sm border border-slate-200">
-            <h2 className="text-lg font-semibold mb-4">{t('jobs.importTitle')}</h2>
-            <div className="space-y-4">
+          <div className="bg-white p-1.5 rounded shadow-sm border border-slate-200">
+            <h2 className="text-lg font-semibold mb-2">{t('jobs.importTitle')}</h2>
+            <div className="space-y-1">
               <input 
                 type="file" 
                 accept=".json"
                 disabled={!user}
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
-                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50"
+                className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-2 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50"
               />
               <button 
                 onClick={handleImport}
                 disabled={!file || createImport.isPending || !user}
-                className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50"
+                className="bg-blue-600 text-white px-2 py-2 rounded text-sm disabled:opacity-50"
               >
                   {createImport.isPending ? t('jobs.importLoading') : t('jobs.importAction')}
                 </button>
             </div>
 
-            <div className="mt-8">
+            <div className="mt-3">
               <h3 className="text-sm font-semibold text-slate-600 mb-2">{t('jobs.recentImports')}</h3>
               {isLoadingImports ? <div className="text-sm">{t('common.loading')}</div> : (
-                <ul className="space-y-2 text-sm text-slate-600">
+                <ul className="space-y-1 text-sm text-slate-600">
                   {importsData?.items?.map((job: any) => (
                     <li key={job.id} className="flex justify-between border-b pb-2">
                       <span>{new Date(job.createdAt).toLocaleString()}</span>
@@ -147,20 +147,20 @@ function Jobs() {
           </div>
 
           {/* Export Section */}
-          <div className="bg-white p-6 rounded shadow-sm border border-slate-200">
-            <h2 className="text-lg font-semibold mb-4">{t('jobs.exportTitle')}</h2>
+          <div className="bg-white p-1.5 rounded shadow-sm border border-slate-200">
+            <h2 className="text-lg font-semibold mb-2">{t('jobs.exportTitle')}</h2>
             <button 
               onClick={() => createExport.mutate()}
               disabled={createExport.isPending || !user}
-              className="bg-blue-600 text-white px-4 py-2 rounded text-sm disabled:opacity-50 mb-4"
+              className="bg-blue-600 text-white px-2 py-2 rounded text-sm disabled:opacity-50 mb-2"
             >
               {createExport.isPending ? t('jobs.exportLoading') : t('jobs.exportAction')}
             </button>
 
-            <div className="mt-8">
+            <div className="mt-3">
               <h3 className="text-sm font-semibold text-slate-600 mb-2">{t('jobs.recentExports')}</h3>
               {isLoadingExports ? <div className="text-sm">{t('common.loading')}</div> : (
-                <ul className="space-y-2 text-sm text-slate-600">
+                <ul className="space-y-1 text-sm text-slate-600">
                   {exportsData?.items?.map((job: any) => (
                     <li key={job.id} className="flex flex-col border-b pb-2">
                       <div className="flex justify-between">

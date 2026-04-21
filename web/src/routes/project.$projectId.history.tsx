@@ -33,18 +33,18 @@ function HistoryPage() {
   });
 
   return (
-    <div className="p-8 h-full overflow-y-auto bg-slate-50">
-      <div className="mx-auto max-w-6xl space-y-6">
+    <div className="p-3 h-full overflow-y-auto bg-slate-50">
+      <div className="mx-auto max-w-6xl space-y-1">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">{t('history.title')}</h1>
           <p className="mt-2 text-slate-500">{t('history.subtitle')}</p>
         </div>
 
-        <section className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="grid gap-4 md:grid-cols-3">
-            <input value={documentId} onChange={(e) => setDocumentId(e.target.value)} placeholder={t('history.documentFilter')} className="rounded-2xl border border-slate-300 px-4 py-3" />
-            <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={t('history.keyFilter')} className="rounded-2xl border border-slate-300 px-4 py-3" />
-            <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-2xl border border-slate-300 px-4 py-3">
+        <section className="rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm">
+          <div className="grid gap-2 md:grid-cols-3">
+            <input value={documentId} onChange={(e) => setDocumentId(e.target.value)} placeholder={t('history.documentFilter')} className="rounded-sm border border-slate-300 px-2 py-1.5" />
+            <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={t('history.keyFilter')} className="rounded-sm border border-slate-300 px-2 py-1.5" />
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-sm border border-slate-300 px-2 py-1.5">
               <option value="">{t('history.allStatuses')}</option>
               <option value="untranslated">{t('workbench.status.untranslated')}</option>
               <option value="translated">{t('workbench.status.translated')}</option>
@@ -54,16 +54,16 @@ function HistoryPage() {
           </div>
         </section>
 
-        <section className="space-y-3">
+        <section className="space-y-1">
           {isLoading ? <div className="text-sm text-slate-500">{t('common.loading')}</div> : null}
           {!isLoading && !(data?.items?.length) ? (
-            <div className="rounded-[24px] border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-500">
+            <div className="rounded-[24px] border border-dashed border-slate-300 bg-white px-3 py-16 text-center text-sm text-slate-500">
               {t('history.empty')}
             </div>
           ) : null}
           {data?.items?.map((item) => (
-            <article key={item.revisionId} className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-4">
+            <article key={item.revisionId} className="rounded-[24px] border border-slate-200 bg-white p-2 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{item.documentPath}</div>
                   <div className="mt-2 text-lg font-semibold text-slate-900">{item.key}</div>
@@ -77,7 +77,7 @@ function HistoryPage() {
                 <RevisionChange item={item} t={t} />
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+              <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-slate-500">
                 <span>{item.changedBy?.name || '-'}</span>
                 <span>{new Date(item.changedAt).toLocaleString()}</span>
                 {item.changeNote ? <span>{item.changeNote}</span> : null}

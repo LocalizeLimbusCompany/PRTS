@@ -17,7 +17,7 @@ function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="p-8 h-full bg-slate-50 flex items-center justify-center">
+      <div className="p-3 h-full bg-slate-50 flex items-center justify-center">
         <div className="text-slate-400">Loading project data...</div>
       </div>
     );
@@ -36,15 +36,15 @@ function Dashboard() {
   const approvedPct = totalUnits > 0 ? (statusCounts.approved / totalUnits) * 100 : 0;
 
   return (
-    <div className="p-8 h-full overflow-y-auto bg-slate-50">
-      <div className="max-w-6xl mx-auto space-y-8">
+    <div className="p-3 h-full overflow-y-auto bg-slate-50">
+      <div className="max-w-6xl mx-auto space-y-3">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">{project?.name || 'Project Dashboard'}</h1>
           <p className="mt-2 text-slate-500">{project?.description || 'Overview of translation progress and activity.'}</p>
         </div>
 
         {/* Top Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-1">
           <StatCard 
             icon={<FileText className="w-6 h-6 text-blue-600" />} 
             label="Documents" 
@@ -73,23 +73,23 @@ function Dashboard() {
           />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
           {/* Progress Section */}
-          <div className="lg:col-span-2 bg-white rounded-3xl p-8 border border-slate-200 shadow-sm">
-            <div className="flex items-center mb-6">
+          <div className="lg:col-span-2 bg-white rounded-3xl p-3 border border-slate-200 shadow-sm">
+            <div className="flex items-center mb-3">
               <BarChart3 className="w-6 h-6 text-slate-400 mr-3" />
               <h2 className="text-xl font-bold text-slate-900">Translation Progress</h2>
             </div>
             
             {/* Main Progress Bar */}
-            <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex mb-8">
+            <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex mb-3">
               <div style={{ width: `${approvedPct}%` }} className="bg-green-500 h-full transition-all duration-500" title={`Audited: ${statusCounts.approved}`}></div>
               <div style={{ width: `${reviewedPct}%` }} className="bg-blue-500 h-full transition-all duration-500" title={`Reviewed: ${statusCounts.reviewed}`}></div>
               <div style={{ width: `${translatedPct}%` }} className="bg-violet-400 h-full transition-all duration-500" title={`Translated: ${statusCounts.translated}`}></div>
             </div>
 
             {/* Legend & Details */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <ProgressStat dot="bg-slate-200" label="Untranslated" count={statusCounts.untranslated} />
               <ProgressStat dot="bg-slate-300" label="Translated" count={statusCounts.translated} />
               <ProgressStat dot="bg-blue-500" label="Reviewed" count={statusCounts.reviewed} />
@@ -98,16 +98,16 @@ function Dashboard() {
           </div>
 
           {/* Project Details Sidebar */}
-          <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm flex flex-col">
-            <div className="flex items-center mb-6">
+          <div className="bg-white rounded-3xl p-3 border border-slate-200 shadow-sm flex flex-col">
+            <div className="flex items-center mb-3">
               <Activity className="w-6 h-6 text-slate-400 mr-3" />
               <h2 className="text-xl font-bold text-slate-900">Project Details</h2>
             </div>
             
-            <div className="space-y-6 flex-1">
+            <div className="space-y-1 flex-1">
               <div>
                 <div className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-2">Identifier</div>
-                <div className="font-mono text-slate-700 bg-slate-50 px-3 py-2 rounded-lg text-sm border border-slate-100">{project?.slug}</div>
+                <div className="font-mono text-slate-700 bg-slate-50 px-3 py-2 rounded-sm text-sm border border-slate-100">{project?.slug}</div>
               </div>
               
               <div>
@@ -139,8 +139,8 @@ function StatCard({ icon, label, value, bg, isString = false }: { icon: React.Re
   const displayValue = isString ? value : Number(value ?? 0).toLocaleString();
 
   return (
-    <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex items-center gap-5">
-      <div className={`w-14 h-14 rounded-2xl ${bg} flex items-center justify-center shrink-0`}>
+    <div className="bg-white rounded-3xl p-1.5 border border-slate-200 shadow-sm flex items-center gap-2">
+      <div className={`w-14 h-10 rounded-sm ${bg} flex items-center justify-center shrink-0`}>
         {icon}
       </div>
       <div>

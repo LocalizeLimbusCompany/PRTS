@@ -18,7 +18,7 @@ interface Props {
 export default function DocumentSidebar({ documents, selectedDocId, onSelectDoc }: Props) {
   return (
     <div className="flex flex-col h-full">
-      <div className="p-4 border-b border-slate-200">
+      <div className="p-2 border-b border-slate-200">
         <h3 className="text-sm font-semibold text-slate-800">Documents</h3>
         <input 
           type="text" 

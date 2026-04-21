@@ -35,27 +35,27 @@ export default function ContextSidebar({ projectId, unitId }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="shrink-0 border-b border-slate-200 bg-white p-3">
+      <div className="shrink-0 border-b border-slate-200 bg-white p-1.5">
         <h3 className="flex items-center text-sm font-semibold text-slate-800">
           <History className="mr-2 h-4 w-4" />
           {t('history.title')}
         </h3>
       </div>
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto p-2">
         {!unitId ? (
           <Empty label={t('history.empty')} />
         ) : isLoading ? (
-          <div className="flex items-center justify-center py-10 text-sm text-slate-500">
+          <div className="flex items-center justify-center py-2 text-sm text-slate-500">
             <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
             {t('common.loading')}
           </div>
         ) : !(data?.items?.length) ? (
           <Empty label={t('history.empty')} />
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-1">
             {data.items.map((item) => (
-              <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between gap-3">
+              <article key={item.id} className="rounded-sm border border-slate-200 bg-white p-2 shadow-sm">
+                <div className="flex items-center justify-between gap-1">
                   <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">#{item.revisionNo}</div>
                   <div className="text-[11px] text-slate-400">{new Date(item.changedAt).toLocaleString()}</div>
                 </div>
@@ -65,7 +65,7 @@ export default function ContextSidebar({ projectId, unitId }: Props) {
                 <div className="mt-3 text-xs text-slate-500">
                   {item.changedBy?.name || '-'}
                 </div>
-                {item.changeNote ? <div className="mt-2 text-xs leading-6 text-slate-500">{item.changeNote}</div> : null}
+                {item.changeNote ? <div className="mt-2 text-xs leading-tight text-slate-500">{item.changeNote}</div> : null}
               </article>
             ))}
           </div>

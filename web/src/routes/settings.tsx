@@ -108,28 +108,28 @@ function UserSettings() {
 
   return (
     <AppShell title={t('settings.title')} subtitle={t('settings.subtitle')}>
-      <div className="max-w-4xl rounded-[30px] border border-slate-200 bg-white p-8 shadow-[0_30px_70px_-45px_rgba(15,23,42,0.35)]">
+      <div className="max-w-4xl rounded-[30px] border border-slate-200 bg-white p-3 shadow-[0_30px_70px_-45px_rgba(15,23,42,0.35)]">
 
-        <div className="mt-8 space-y-6">
+        <div className="mt-3 space-y-1">
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">{t('settings.nicknameLabel')}</label>
             <input
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
-              className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500"
+              className="w-full rounded-sm border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
             />
             <p className="mt-2 text-sm text-slate-500">{t('settings.nicknameHint')}</p>
           </div>
 
           <div>
             <label className="block text-sm font-semibold text-slate-700 mb-2">{t('settings.avatarLabel')}</label>
-            <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-5">
-              <div className="flex flex-wrap items-center gap-5">
+            <div className="rounded-[26px] border border-slate-200 bg-slate-50 p-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-[26px] bg-slate-200 text-2xl font-semibold text-slate-500">
                   {avatarUrl ? <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" /> : (displayName.slice(0, 1) || '?')}
                 </div>
-                <div className="flex-1 space-y-3">
-                  <div className="text-sm leading-6 text-slate-600">{t('settings.avatarHint')}</div>
+                <div className="flex-1 space-y-1">
+                  <div className="text-sm leading-tight text-slate-600">{t('settings.avatarHint')}</div>
                   <input
                     type="file"
                     accept="image/*"
@@ -138,7 +138,7 @@ function UserSettings() {
                       handleAvatarFileSelect(file);
                       event.currentTarget.value = '';
                     }}
-                    className="block w-full text-sm text-slate-500 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                    className="block w-full text-sm text-slate-500 file:mr-4 file:rounded-full file:border-0 file:bg-slate-900 file:px-2 file:py-2 file:text-sm file:font-semibold file:text-white"
                   />
                   {avatarError ? <div className="text-sm text-rose-600">{avatarError}</div> : null}
                 </div>
@@ -155,7 +155,7 @@ function UserSettings() {
                 setPreferredLocale(nextLocale);
                 setUiLocale(nextLocale);
               }}
-              className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500"
+              className="w-full rounded-sm border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
             >
               <option value="zh-CN">{t('settings.zhCN')}</option>
               <option value="en-US">{t('settings.enUS')}</option>
@@ -168,7 +168,7 @@ function UserSettings() {
             <select
               value={preferredSourceLanguage}
               onChange={(event) => setPreferredSourceLanguage(event.target.value)}
-              className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-blue-500"
+              className="w-full rounded-sm border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-blue-500"
             >
               {COMMON_LANGUAGE_OPTIONS.map((option) => (
                 <option key={option.code} value={option.code}>{option.label}</option>
@@ -178,12 +178,12 @@ function UserSettings() {
           </div>
         </div>
 
-        <div className="mt-8 flex items-center gap-4">
+        <div className="mt-3 flex items-center gap-2">
           <button
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className="rounded-2xl bg-blue-600 px-5 py-3 text-white font-semibold hover:bg-blue-700 disabled:opacity-50"
+            className="rounded-sm bg-blue-600 px-3 py-3 text-white font-semibold hover:bg-blue-700 disabled:opacity-50"
           >
             {saving ? t('common.saving') : t('common.save')}
           </button>

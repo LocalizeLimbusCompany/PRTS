@@ -49,8 +49,8 @@ export default function TranslationTable({ projectId, documentId, page, onPageCh
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['units', projectId, documentId, page] })
   });
 
-  if (isLoading) return <div className="p-4 text-slate-500">Loading units...</div>;
-  if (!data?.items || data.items.length === 0) return <div className="p-4 text-slate-500">No translation units found.</div>;
+  if (isLoading) return <div className="p-2 text-slate-500">Loading units...</div>;
+  if (!data?.items || data.items.length === 0) return <div className="p-2 text-slate-500">No translation units found.</div>;
 
   return (
     <div className="flex flex-col h-full">
@@ -58,10 +58,10 @@ export default function TranslationTable({ projectId, documentId, page, onPageCh
         <table className="w-full text-left border-collapse">
           <thead className="bg-slate-100 sticky top-0 z-10 shadow-sm">
             <tr>
-              <th className="w-8 p-2 border-b border-slate-200"></th>
-              <th className="w-1/3 p-2 font-medium text-xs text-slate-500 border-b border-slate-200 uppercase tracking-wider">Source ({preferredSource})</th>
-              <th className="w-1/2 p-2 font-medium text-xs text-slate-500 border-b border-slate-200 uppercase tracking-wider">Target</th>
-              <th className="w-32 p-2 font-medium text-xs text-slate-500 border-b border-slate-200 uppercase tracking-wider">Status</th>
+              <th className="w-8 px-2 py-1 border-b border-slate-200"></th>
+              <th className="w-1/3 px-2 py-1 font-medium text-xs text-slate-500 border-b border-slate-200 uppercase tracking-wider">Source ({preferredSource})</th>
+              <th className="w-1/2 px-2 py-1 font-medium text-xs text-slate-500 border-b border-slate-200 uppercase tracking-wider">Target</th>
+              <th className="w-32 px-2 py-1 font-medium text-xs text-slate-500 border-b border-slate-200 uppercase tracking-wider">Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 bg-white">
@@ -80,7 +80,7 @@ export default function TranslationTable({ projectId, documentId, page, onPageCh
       </div>
       
       {/* Pagination */}
-      <div className="p-3 border-t border-slate-200 bg-white flex justify-between items-center text-sm shrink-0">
+      <div className="p-1.5 border-t border-slate-200 bg-white flex justify-between items-center text-sm shrink-0">
         <div className="text-slate-500">
           Showing {(page - 1) * data.pageSize + 1} to {Math.min(page * data.pageSize, data.total)} of {data.total}
         </div>
@@ -139,7 +139,7 @@ function UnitRow({
 
   return (
     <tr className="hover:bg-slate-50/50 group align-top">
-      <td className="p-2 pl-3">
+      <td className="px-2 py-1 pl-3">
         {unit.status === 'approved' ? (
           <CheckCircle2 className="w-4 h-4 text-green-500" />
         ) : unit.status === 'translated' || unit.status === 'reviewed' ? (
@@ -148,7 +148,7 @@ function UnitRow({
           <CircleDashed className="w-4 h-4 text-slate-300" />
         )}
       </td>
-      <td className="p-2 border-r border-slate-100">
+      <td className="px-2 py-1 border-r border-slate-100">
         <div className="text-[10px] font-mono text-slate-400 mb-1 select-all">{unit.key}</div>
         <div className="text-sm text-slate-800 whitespace-pre-wrap">{prefText}</div>
         
@@ -163,7 +163,7 @@ function UnitRow({
             </button>
             
             {isExpanded && (
-              <div className="mt-2 space-y-2 pl-4 border-l-2 border-slate-100">
+              <div className="mt-2 space-y-1 pl-4 border-l-2 border-slate-100">
                 {otherLangs.map(lang => (
                   <div key={lang}>
                     <div className="text-[10px] font-bold text-slate-400 uppercase">{lang}</div>
@@ -203,7 +203,7 @@ function UnitRow({
           </div>
         )}
       </td>
-      <td className="p-2 text-xs">
+      <td className="px-2 py-1 text-xs">
         <span className={cn(
           "inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider mb-2",
           unit.status === 'approved' ? "bg-green-100 text-green-700" :

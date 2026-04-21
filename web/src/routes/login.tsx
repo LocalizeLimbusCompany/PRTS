@@ -46,18 +46,18 @@ function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="bg-white max-w-sm w-full p-8 rounded-lg shadow-sm border border-slate-200">
-        <h1 className="text-2xl font-semibold text-slate-900 mb-6 text-center">PRTS Translation</h1>
-        <h1 className="text-2xl font-semibold text-slate-900 mb-6 text-center">{t('loginPage.title')}</h1>
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-2">
+      <div className="bg-white max-w-sm w-full p-3 rounded-sm shadow-sm border border-slate-200">
+        <h1 className="text-2xl font-semibold text-slate-900 mb-3 text-center">PRTS Translation</h1>
+        <h1 className="text-2xl font-semibold text-slate-900 mb-3 text-center">{t('loginPage.title')}</h1>
         
         {error && (
-          <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-sm">
+          <div className="bg-red-50 text-red-600 p-1.5 rounded mb-2 text-sm">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-1">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">{t('loginPage.email')}</label>
             <input
@@ -81,7 +81,7 @@ function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-blue-600 text-white font-medium py-2 px-4 rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+            className="w-full bg-blue-600 text-white font-medium py-2 px-2 rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
           >
             {loading ? t('loginPage.loading') : t('loginPage.submit')}
           </button>

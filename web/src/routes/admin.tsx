@@ -45,7 +45,7 @@ function AdminPage() {
   if (currentUser?.platformRole !== 'owner' && currentUser?.platformRole !== 'admin') {
     return (
       <AppShell title={t('admin.title')} subtitle={t('admin.subtitle')}>
-        <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-6 py-10 text-sm text-amber-700">
+        <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
           {t('admin.forbidden')}
         </div>
       </AppShell>
@@ -54,16 +54,16 @@ function AdminPage() {
 
   return (
     <AppShell title={t('admin.title')} subtitle={t('admin.subtitle')}>
-      <div className="grid gap-6">
-        <section className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-1">
+        <section className="grid gap-2 md:grid-cols-3">
           <StatCard label={t('admin.userCount')} value={overview?.userCount ?? 0} />
           <StatCard label={t('admin.organizationCount')} value={overview?.organizationCount ?? 0} />
           <StatCard label={t('admin.projectCount')} value={overview?.projectCount ?? 0} />
         </section>
 
-        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.3)]">
+        <section className="rounded-[28px] border border-slate-200 bg-white p-1.5 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.3)]">
           <div className="text-lg font-semibold text-slate-900">{t('admin.settingsTitle')}</div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div className="mt-5 grid gap-2 md:grid-cols-2">
             <ToggleCard
               title={t('admin.allowCreateOrganization')}
               checked={overview?.settings.allowUserCreateOrganization ?? false}
@@ -87,16 +87,16 @@ function AdminPage() {
           </div>
         </section>
 
-        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.3)]">
+        <section className="rounded-[28px] border border-slate-200 bg-white p-1.5 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.3)]">
           <div className="text-lg font-semibold text-slate-900">{t('admin.usersTitle')}</div>
-          <div className="mt-5 space-y-3">
+          <div className="mt-5 space-y-1">
             {usersData?.items?.map((user) => (
-              <div key={user.id} className="flex flex-wrap items-center justify-between gap-4 rounded-[22px] border border-slate-200 px-5 py-4">
+              <div key={user.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[22px] border border-slate-200 px-2 py-1.5">
                 <div>
                   <div className="font-semibold text-slate-900">{user.displayName}</div>
                   <div className="text-sm text-slate-500">{user.email}</div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center gap-1">
                   <select
                     value={user.platformRole}
                     disabled={currentUser.platformRole !== 'owner' && user.platformRole === 'owner'}
@@ -107,7 +107,7 @@ function AdminPage() {
                         status: user.status || 'active',
                       })
                     }
-                    className="rounded-full border border-slate-300 px-4 py-2 text-sm"
+                    className="rounded-full border border-slate-300 px-2 py-2 text-sm"
                   >
                     <option value="owner">owner</option>
                     <option value="admin">admin</option>
@@ -122,7 +122,7 @@ function AdminPage() {
                         status: e.target.value,
                       })
                     }
-                    className="rounded-full border border-slate-300 px-4 py-2 text-sm"
+                    className="rounded-full border border-slate-300 px-2 py-2 text-sm"
                   >
                     <option value="active">active</option>
                     <option value="disabled">disabled</option>
@@ -139,7 +139,7 @@ function AdminPage() {
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.25)]">
+    <div className="rounded-[24px] border border-slate-200 bg-white p-1.5 shadow-[0_30px_60px_-40px_rgba(15,23,42,0.25)]">
       <div className="text-sm font-medium text-slate-500">{label}</div>
       <div className="mt-2 text-4xl font-semibold tracking-tight text-slate-950">{value.toLocaleString()}</div>
     </div>
@@ -148,8 +148,8 @@ function StatCard({ label, value }: { label: string; value: number }) {
 
 function ToggleCard({ title, checked, onChange }: { title: string; checked: boolean; onChange: (checked: boolean) => void }) {
   return (
-    <button type="button" onClick={() => onChange(!checked)} className={`rounded-[24px] border px-5 py-5 text-left transition ${checked ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
-      <div className="flex items-center justify-between gap-4">
+    <button type="button" onClick={() => onChange(!checked)} className={`rounded-[24px] border px-3 py-2 text-left transition ${checked ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
+      <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold text-slate-900">{title}</div>
         <div className={`h-7 w-12 rounded-full p-1 transition ${checked ? 'bg-emerald-500' : 'bg-slate-300'}`}>
           <div className={`h-5 w-5 rounded-full bg-white transition ${checked ? 'translate-x-5' : ''}`} />

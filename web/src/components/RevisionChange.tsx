@@ -24,7 +24,7 @@ export function RevisionChange({
   const diff = buildTextDiff(beforeText, afterText);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <StatusChip status={item.beforeStatus} t={t} tone="before" />
         <ArrowRight className="h-3.5 w-3.5 text-slate-300" />
@@ -32,7 +32,7 @@ export function RevisionChange({
       </div>
 
       {hasTextChange ? (
-        <div className={cn('grid gap-3', compact ? 'grid-cols-1' : 'md:grid-cols-2')}>
+        <div className={cn('grid gap-1', compact ? 'grid-cols-1' : 'md:grid-cols-2')}>
           <DiffPanel
             label={t('history.before')}
             tone="before"
@@ -65,7 +65,7 @@ function DiffPanel({
   return (
     <div
       className={cn(
-        'rounded-2xl p-4',
+        'rounded-sm p-2',
         compact
           ? tone === 'before'
             ? 'bg-slate-50'
@@ -83,7 +83,7 @@ function DiffPanel({
       >
         {label}
       </div>
-      <div className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+      <div className="mt-3 whitespace-pre-wrap text-sm leading-tight text-slate-700">
         {segments.length > 0 ? (
           segments.map((segment, index) => (
             <span

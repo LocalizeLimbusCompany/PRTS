@@ -39,11 +39,11 @@ function DocumentsRoute() {
     : documents;
 
   return (
-    <div className="p-8 max-w-7xl mx-auto w-full">
-      <div className="mb-8">
+    <div className="p-3 max-w-7xl mx-auto w-full">
+      <div className="mb-3">
         <h1 className="text-3xl font-bold text-slate-900">{t('documents.title')}</h1>
         <p className="mt-2 text-slate-500">{t('documents.subtitle')}</p>
-        <div className="mt-4 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div className="mt-2 flex items-center gap-2 rounded-sm border border-slate-200 bg-white px-2 py-1.5 shadow-sm">
           <Search className="h-4 w-4 text-slate-400" />
           <input
             value={search}
@@ -60,11 +60,11 @@ function DocumentsRoute() {
           <span>{t('documents.loading')}</span>
         </div>
       ) : filteredDocuments.length === 0 ? (
-        <div className="text-center py-20 border border-dashed border-slate-300 rounded-2xl bg-slate-50">
+        <div className="text-center py-20 border border-dashed border-slate-300 rounded-sm bg-slate-50">
           <p className="text-slate-500">{t('documents.empty')}</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1">
           {filteredDocuments.map((doc) => (
             <Link
               key={doc.id}
@@ -72,16 +72,16 @@ function DocumentsRoute() {
               params={{ projectId }}
               search={{ documentId: doc.id }}
               className={cn(
-                "group relative flex flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all",
+                "group relative flex flex-col rounded-sm border border-slate-200 bg-white p-1.5 shadow-sm transition-all",
                 "hover:border-blue-500 hover:shadow-md hover:-translate-y-1"
               )}
             >
               <div className="flex items-start justify-between">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                <div className="flex h-7 w-10 items-center justify-center rounded-sm bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
                   <FileText className="h-5 w-5" />
                 </div>
               </div>
-              <div className="mt-4 flex-1">
+              <div className="mt-2 flex-1">
                 <h3 className="font-semibold text-slate-900 line-clamp-1" title={doc.title || doc.path}>
                   {doc.title || doc.path.split('/').pop()}
                 </h3>
@@ -91,7 +91,7 @@ function DocumentsRoute() {
               </div>
               
               {doc.tags && doc.tags.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-2">
                   {doc.tags.map((tag) => (
                     <span
                       key={tag.code}
@@ -104,7 +104,7 @@ function DocumentsRoute() {
                 </div>
               )}
               
-              <div className="mt-6 flex items-center text-sm font-medium text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="mt-3 flex items-center text-sm font-medium text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
                 {t('documents.selectToTranslate')} &rarr;
               </div>
             </Link>

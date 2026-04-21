@@ -64,17 +64,17 @@ function Members() {
   ];
 
   return (
-    <div className="p-8 h-full overflow-y-auto bg-slate-50">
-      <div className="max-w-5xl mx-auto space-y-8">
+    <div className="p-3 h-full overflow-y-auto bg-slate-50">
+      <div className="max-w-5xl mx-auto space-y-3">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">{t('admin.usersTitle')}</h1>
           <p className="mt-2 text-slate-500">{t('projects.subtitle')}</p>
         </div>
 
         {/* Add Member Form */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">{t('common.save')}</h2>
-          <div className="flex gap-4 items-end">
+        <div className="bg-white p-1.5 rounded-sm border border-slate-200 shadow-sm">
+          <h2 className="text-lg font-semibold text-slate-900 mb-2">{t('common.save')}</h2>
+          <div className="flex gap-2 items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-slate-700 mb-1">User ID</label>
               <input
@@ -82,7 +82,7 @@ function Members() {
                 placeholder="UUID of the user"
                 value={newUserId}
                 onChange={(e) => setNewUserId(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 outline-none focus:border-blue-500 transition-colors"
+                className="w-full rounded-sm border border-slate-300 px-2 py-2 outline-none focus:border-blue-500 transition-colors"
               />
             </div>
             <div className="w-48">
@@ -90,7 +90,7 @@ function Members() {
               <select
                 value={newRoleCode}
                 onChange={(e) => setNewRoleCode(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-4 py-2 outline-none focus:border-blue-500 transition-colors bg-white"
+                className="w-full rounded-sm border border-slate-300 px-2 py-2 outline-none focus:border-blue-500 transition-colors bg-white"
               >
                 {roles.map(role => (
                   <option key={role.code} value={role.code}>{role.name}</option>
@@ -100,7 +100,7 @@ function Members() {
             <button
               onClick={() => addMemberMutation.mutate()}
               disabled={!newUserId || addMemberMutation.isPending}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center h-[42px]"
+              className="px-3 py-2 bg-blue-600 text-white rounded-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center h-[42px]"
             >
               {addMemberMutation.isPending ? <LoaderCircle className="w-5 h-5 animate-spin" /> : <UserPlus className="w-5 h-5 mr-2" />}
               Add
@@ -112,8 +112,8 @@ function Members() {
         </div>
 
         {/* Member List */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+        <div className="bg-white rounded-sm border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
             <h2 className="text-lg font-semibold text-slate-900 flex items-center">
               <Shield className="w-5 h-5 mr-2 text-blue-600" />
               Project Members
@@ -135,17 +135,17 @@ function Members() {
           ) : (
             <div className="divide-y divide-slate-100">
               {members.map(member => (
-                <div key={member.id} className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                <div key={member.id} className="p-1.5 flex items-center justify-between hover:bg-slate-50 transition-colors">
                   <div>
                     <div className="font-semibold text-slate-900">{member.user.name}</div>
                     <div className="text-sm text-slate-500 mt-1 font-mono">{member.user.id}</div>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
                     <select
                       value={member.roleCode}
                       onChange={(e) => updateRoleMutation.mutate({ userId: member.user.id, roleCode: e.target.value })}
                       disabled={updateRoleMutation.isPending && updateRoleMutation.variables?.userId === member.user.id}
-                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-blue-500 transition-colors bg-white"
+                      className="rounded-sm border border-slate-200 px-3 py-1.5 text-sm outline-none focus:border-blue-500 transition-colors bg-white"
                     >
                       {roles.map(role => (
                         <option key={role.code} value={role.code}>{role.name}</option>
@@ -158,7 +158,7 @@ function Members() {
                         }
                       }}
                       disabled={removeMemberMutation.isPending && removeMemberMutation.variables === member.user.id}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-sm transition-colors"
                       title="Remove Member"
                     >
                       <Trash2 className="w-5 h-5" />

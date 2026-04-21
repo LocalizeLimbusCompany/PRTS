@@ -359,8 +359,8 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
   return (
     <div className="flex h-full overflow-hidden bg-slate-100">
       <main className="flex min-w-0 flex-1 bg-slate-50">
-        <section className="flex w-[24rem] shrink-0 flex-col border-r border-slate-200 bg-white">
-          <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+        <section className="flex w-[18rem] shrink-0 flex-col border-r border-slate-200 bg-white">
+          <div className="border-b border-slate-200 bg-slate-50 px-2 py-1.5">
             <Link
               to="/project/$projectId/documents"
               params={{ projectId }}
@@ -370,15 +370,15 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
               {t('workbench.backToFiles')}
             </Link>
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{t('workbench.currentFile')}</div>
-            <div className="mt-2 truncate text-base font-semibold text-slate-900">
+            <div className="mt-2 truncate text-sm font-semibold text-slate-900">
               {currentFileLabel}
             </div>
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+            <div className="mt-2 rounded-sm border border-slate-200 bg-white px-3 py-2">
               <div className="flex items-center gap-2">
                 <select
                   value={draftSearchMode}
                   onChange={(e) => setDraftSearchMode(e.target.value as SearchMode)}
-                  className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600"
+                  className="rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600"
                 >
                   <option value="source_and_target">{t('workbench.searchScope.sourceAndTarget')}</option>
                   <option value="source_all">{t('workbench.searchScope.sourceAll')}</option>
@@ -402,7 +402,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                     openAdvanced();
                   }}
                   className={cn(
-                    'inline-flex h-9 w-9 items-center justify-center rounded-xl transition',
+                    'inline-flex h-9 w-9 items-center justify-center rounded-sm transition',
                     hasAppliedAdvancedFilters
                       ? 'bg-blue-600 text-white shadow-sm ring-4 ring-blue-100'
                       : showAdvanced
@@ -417,7 +417,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div className="flex-1 overflow-y-auto p-1.5 space-y-1">
             {isLoadingDocs || ((selectedDocId || appliedScope === 'all_documents') && isLoadingUnits) ? (
               <LoadingState label={t('workbench.loadingUnits')} />
             ) : !selectedDocId && appliedScope === 'current_document' ? (
@@ -434,13 +434,13 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                     type="button"
                     onClick={() => setActiveUnitId(unit.id)}
                     className={cn(
-                      'w-full rounded-xl border p-4 text-left transition-all',
+                      'w-full rounded-sm border p-2 text-left transition-all',
                       unit.id === activeUnitId
                         ? 'border-blue-500 bg-blue-50 shadow-sm'
                         : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
                     )}
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start justify-between gap-1">
                       <div>
                         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                           {t('workbench.unit')} {(page - 1) * effectivePageSize + index + 1}
@@ -451,7 +451,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                       </div>
                       <StatusBadge unit={unit} t={t} />
                     </div>
-                    <div className="mt-3 line-clamp-3 text-sm leading-6 text-slate-700 whitespace-pre-wrap">
+                    <div className="mt-3 line-clamp-3 text-sm leading-tight text-slate-700 whitespace-pre-wrap">
                       {primary?.[1] || t('workbench.noSource')}
                     </div>
                   </button>
@@ -460,13 +460,13 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
             )}
           </div>
 
-          <div className="border-t border-slate-200 bg-slate-50 px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="border-t border-slate-200 bg-slate-50 px-2 py-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-1">
               <div className="text-xs font-medium text-slate-500">
                 {totalUnits > 0 ? `${currentRangeStart}-${currentRangeEnd} / ${totalUnits}` : '0 / 0'}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                <label className="flex items-center gap-2 rounded-sm border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
                   <span>{t('workbench.itemsPerPage')}</span>
                   <select
                     value={pageSize}
@@ -485,18 +485,18 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                   type="button"
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
                   disabled={page <= 1}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-sm border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {t('workbench.prevPage')}
                 </button>
-                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
+                <div className="rounded-sm border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
                   {page} / {totalPages}
                 </div>
                 <button
                   type="button"
                   onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
                   disabled={page >= totalPages}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-sm border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {t('workbench.nextPage')}
                 </button>
@@ -506,8 +506,8 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
         </section>
 
         <section className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
-            <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between border-b border-slate-200 bg-white px-3 py-2">
+            <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-slate-500">
                 {activeUnit ? activeUnit.key : t('workbench.selectUnit')}
               </span>
@@ -515,19 +515,19 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
             {activeUnit && <StatusBadge unit={activeUnit} large t={t} />}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex-1 overflow-y-auto p-1.5">
             {!selectedDocId && appliedScope === 'current_document' ? (
               <EditorPlaceholder title={t('workbench.chooseFileFirst')} description={t('workbench.chooseFileFirstDesc')} />
             ) : !activeUnit ? (
               <EditorPlaceholder title={t('workbench.selectUnit')} description={t('workbench.chooseUnitDesc')} />
             ) : (
-              <div className="mx-auto max-w-5xl space-y-6">
-                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <div className="mx-auto max-w-5xl space-y-1">
+                <section className="rounded-sm border border-slate-200 bg-white p-1.5 shadow-sm">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
                     <FileText className="h-4 w-4 text-blue-600" />
                     {t('workbench.sourceText')}
                   </div>
-                  <div className="grid gap-4">
+                  <div className="grid gap-2">
                     {orderSources(activeUnit.sources, preferredSource).map(([language, text], index) => (
                       <SourceBlock
                         key={language}
@@ -541,8 +541,8 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <div className="mb-4 flex items-center justify-between gap-4">
+                <section className="rounded-sm border border-slate-200 bg-white p-1.5 shadow-sm">
+                  <div className="mb-2 flex items-center justify-between gap-2">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">{t('workbench.targetTranslation')}</div>
                     </div>
@@ -559,7 +559,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                     disabled={!activeUnit.permissions?.canEdit || isBusy || activeUnit.isLocked}
                     onChange={(event) => setDraftText(event.target.value)}
                     className={cn(
-                      'min-h-[240px] w-full rounded-xl border px-5 py-4 text-base leading-7 outline-none transition-colors resize-y',
+                      'min-h-[120px] w-full rounded-sm border px-2 py-1.5 text-sm leading-tight outline-none transition-colors resize-y',
                       activeUnit.permissions?.canEdit && !activeUnit.isLocked
                         ? 'border-slate-300 bg-slate-50 focus:border-blue-500 focus:bg-white'
                         : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500',
@@ -567,8 +567,8 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                     placeholder={activeUnit.permissions?.canEdit ? t('workbench.placeholder') : t('workbench.noPermission')}
                   />
 
-                  <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex flex-wrap gap-3">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-1">
+                    <div className="flex flex-wrap gap-1">
                       {(user?.platformRole === 'owner' || user?.platformRole === 'admin') ? (
                         <>
                           <ActionButton
@@ -615,15 +615,15 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
           </div>
         </section>
 
-        <aside className="w-80 shrink-0 border-l border-slate-200 bg-slate-50">
+        <aside className="w-64 shrink-0 border-l border-slate-200 bg-slate-50">
           <ContextSidebar projectId={projectId} unitId={activeUnitId} />
         </aside>
       </main>
 
       {showAdvanced ? (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-6">
-          <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/45 p-1.5">
+          <div className="w-full max-w-4xl rounded-[28px] border border-slate-200 bg-white shadow-md">
+            <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
               <div>
                 <div className="text-lg font-semibold text-slate-900">{t('workbench.advanced')}</div>
                 <div className="mt-1 text-sm text-slate-500">{t('workbench.advancedDesc')}</div>
@@ -633,19 +633,19 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
               </button>
             </div>
 
-            <div className="space-y-5 px-6 py-6">
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2 text-sm font-medium text-slate-700">
+            <div className="space-y-1 px-3 py-2">
+              <div className="grid gap-2 md:grid-cols-2">
+                <label className="space-y-1 text-sm font-medium text-slate-700">
                   <span>{t('documents.title')}</span>
                   <input
                     readOnly
                     value={draftScope === 'current_document' ? (selectedDocument?.path || t('workbench.selectFile')) : t('workbench.allDocuments')}
-                    className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-500 outline-none"
+                    className="h-8 w-full rounded-sm border border-slate-200 bg-slate-50 px-2 text-sm text-slate-500 outline-none"
                   />
                 </label>
-                <label className="space-y-2 text-sm font-medium text-slate-700">
+                <label className="space-y-1 text-sm font-medium text-slate-700">
                   <span>{t('history.allStatuses')}</span>
-                  <div className="flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex flex-wrap gap-2 rounded-sm border border-slate-200 bg-slate-50 p-1.5">
                     {quickStatuses.map((item) => (
                       <button key={item} type="button" onClick={() => setDraftStatusFilters((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item])} className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', draftStatusFilters.includes(item) ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-200')}>
                         {t(`workbench.status.${item}`)}
@@ -661,10 +661,10 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                 </label>
               </div>
 
-              <div className="space-y-3">
+              <div className="space-y-1">
                 {draftAdvancedConditions.map((condition, index) => (
-                  <div key={index} className="grid gap-3 md:grid-cols-[1.1fr_1fr_1.6fr_auto]">
-                    <select value={condition.field} onChange={(e) => setDraftAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, field: e.target.value } : item))} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm">
+                  <div key={index} className="grid gap-1 md:grid-cols-[1.1fr_1fr_1.6fr_auto]">
+                    <select value={condition.field} onChange={(e) => setDraftAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, field: e.target.value } : item))} className="rounded-sm border border-slate-300 px-2 py-1.5 text-sm">
                       <option value="target">{t('workbench.searchScope.target')}</option>
                       <option value="key">key</option>
                       <option value={`source:${preferredSource}`}>{`${t('workbench.searchScope.sourceAll')}: ${preferredSource}`}</option>
@@ -672,23 +672,23 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                       <option value="source:ja">source:ja</option>
                       <option value="source:ko">source:ko</option>
                     </select>
-                    <select value={condition.operator} onChange={(e) => setDraftAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, operator: e.target.value } : item))} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm">
+                    <select value={condition.operator} onChange={(e) => setDraftAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, operator: e.target.value } : item))} className="rounded-sm border border-slate-300 px-2 py-1.5 text-sm">
                       <option value="contains">{t('workbench.operators.contains')}</option>
                       <option value="equals">{t('workbench.operators.equals')}</option>
                       <option value="starts_with">{t('workbench.operators.startsWith')}</option>
                     </select>
-                    <input value={condition.value} onChange={(e) => setDraftAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, value: e.target.value } : item))} className="rounded-2xl border border-slate-300 px-4 py-3 text-sm" />
-                    <button type="button" onClick={() => setDraftAdvancedConditions((items) => items.length === 1 ? items : items.filter((_, i) => i !== index))} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm text-slate-600">×</button>
+                    <input value={condition.value} onChange={(e) => setDraftAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, value: e.target.value } : item))} className="rounded-sm border border-slate-300 px-2 py-1.5 text-sm" />
+                    <button type="button" onClick={() => setDraftAdvancedConditions((items) => items.length === 1 ? items : items.filter((_, i) => i !== index))} className="rounded-sm bg-slate-100 px-2 py-1.5 text-sm text-slate-600">×</button>
                   </div>
                 ))}
-                <button type="button" onClick={() => setDraftAdvancedConditions((items) => [...items, createAdvancedCondition()])} className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white">
+                <button type="button" onClick={() => setDraftAdvancedConditions((items) => [...items, createAdvancedCondition()])} className="rounded-full bg-slate-900 px-2 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-white">
                   + {t('workbench.advanced')}
                 </button>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-6 py-4">
-              <label className={cn('inline-flex items-center gap-3 text-sm font-medium text-slate-700', !selectedDocId && 'opacity-50')}>
+            <div className="flex flex-wrap items-center justify-between gap-1 border-t border-slate-200 px-3 py-2">
+              <label className={cn('inline-flex items-center gap-1 text-sm font-medium text-slate-700', !selectedDocId && 'opacity-50')}>
                 <input
                   type="checkbox"
                   checked={draftScope === 'current_document'}
@@ -698,18 +698,18 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                 />
                 <span>{t('workbench.advancedSearchInCurrent')}</span>
               </label>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => setShowAdvanced(false)}
-                  className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+                  className="rounded-sm border border-slate-300 bg-white px-2 py-1 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
                 >
                   {t('common.cancel')}
                 </button>
                 <button
                   type="button"
                   onClick={applyAdvancedSearch}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                  className="inline-flex items-center gap-2 rounded-sm bg-blue-600 px-2 py-1 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
                 >
                   <Search className="h-4 w-4" />
                   {t('workbench.searchAction')}
@@ -749,12 +749,12 @@ function SourceBlock({ language, text, emphasized = false, collapsed = false, em
   const [open, setOpen] = useState(!collapsed);
 
   return (
-    <div className={cn('rounded-xl border p-4', emphasized ? 'border-blue-200 bg-blue-50/70' : 'border-slate-200 bg-slate-50')}>
+    <div className={cn('rounded-sm border p-2', emphasized ? 'border-blue-200 bg-blue-50/70' : 'border-slate-200 bg-slate-50')}>
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between text-left">
         <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">{language}</div>
         {!emphasized ? <span className="text-[10px] text-slate-400">{open ? '−' : '+'}</span> : null}
       </button>
-      {open ? <div className="mt-3 whitespace-pre-wrap text-base leading-7 text-slate-800">{text || emptyText}</div> : null}
+      {open ? <div className="mt-3 whitespace-pre-wrap text-sm leading-tight text-slate-800">{text || emptyText}</div> : null}
     </div>
   );
 }
@@ -831,7 +831,7 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        'inline-flex min-w-[140px] items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex min-w-[140px] items-center justify-center rounded-sm px-2 py-1 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
         tone === 'primary' && 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm',
         tone === 'secondary' && 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm',
         tone === 'success' && 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm',
@@ -845,7 +845,7 @@ function ActionButton({
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex h-full min-h-[160px] items-center justify-center text-sm text-slate-500">
+    <div className="flex h-full min-h-[80px] items-center justify-center text-sm text-slate-500">
       <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
       {label}
     </div>
@@ -854,9 +854,9 @@ function LoadingState({ label }: { label: string }) {
 
 function EmptyState({ title, description }: { title: string; description: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center">
+    <div className="rounded-sm border border-dashed border-slate-200 bg-slate-50 px-2 py-2 text-center">
       <div className="text-sm font-semibold text-slate-700">{title}</div>
-      <p className="mt-2 text-xs leading-6 text-slate-500">{description}</p>
+      <p className="mt-2 text-xs leading-tight text-slate-500">{description}</p>
     </div>
   );
 }
@@ -864,9 +864,9 @@ function EmptyState({ title, description }: { title: string; description: string
 function EditorPlaceholder({ title, description }: { title: string; description: string }) {
   return (
     <div className="flex h-full items-center justify-center">
-      <div className="max-w-md rounded-2xl border border-dashed border-slate-300 bg-white px-8 py-10 text-center shadow-sm">
+      <div className="max-w-md rounded-sm border border-dashed border-slate-300 bg-white px-2 py-2 text-center shadow-sm">
         <div className="text-lg font-semibold text-slate-900">{title}</div>
-        <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
+        <p className="mt-2 text-sm leading-tight text-slate-500">{description}</p>
       </div>
     </div>
   );
