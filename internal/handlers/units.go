@@ -206,7 +206,7 @@ func ListTranslationUnitHistory(dataStore *store.Store) http.HandlerFunc {
 			return
 		}
 		if items == nil {
-			items = []store.TranslationUnitHistoryEntry{}
+			items = []store.TranslationRevision{}
 		}
 
 		platform.WriteSuccess(w, r, http.StatusOK, map[string]any{
