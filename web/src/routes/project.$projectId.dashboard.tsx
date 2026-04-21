@@ -66,7 +66,7 @@ function Dashboard() {
           />
           <StatCard 
             icon={<CheckCircle className="w-6 h-6 text-amber-600" />} 
-            label="Progress (Approved)" 
+            label="Progress (Audited)" 
             value={`${approvedPct.toFixed(1)}%`} 
             bg="bg-amber-50"
             isString
@@ -83,9 +83,9 @@ function Dashboard() {
             
             {/* Main Progress Bar */}
             <div className="h-4 w-full bg-slate-100 rounded-full overflow-hidden flex mb-8">
-              <div style={{ width: `${approvedPct}%` }} className="bg-green-500 h-full transition-all duration-500" title={`Approved: ${statusCounts.approved}`}></div>
+              <div style={{ width: `${approvedPct}%` }} className="bg-green-500 h-full transition-all duration-500" title={`Audited: ${statusCounts.approved}`}></div>
               <div style={{ width: `${reviewedPct}%` }} className="bg-blue-500 h-full transition-all duration-500" title={`Reviewed: ${statusCounts.reviewed}`}></div>
-              <div style={{ width: `${translatedPct}%` }} className="bg-slate-300 h-full transition-all duration-500" title={`Translated: ${statusCounts.translated}`}></div>
+              <div style={{ width: `${translatedPct}%` }} className="bg-violet-400 h-full transition-all duration-500" title={`Translated: ${statusCounts.translated}`}></div>
             </div>
 
             {/* Legend & Details */}
@@ -93,7 +93,7 @@ function Dashboard() {
               <ProgressStat dot="bg-slate-200" label="Untranslated" count={statusCounts.untranslated} />
               <ProgressStat dot="bg-slate-300" label="Translated" count={statusCounts.translated} />
               <ProgressStat dot="bg-blue-500" label="Reviewed" count={statusCounts.reviewed} />
-              <ProgressStat dot="bg-green-500" label="Approved" count={statusCounts.approved} />
+              <ProgressStat dot="bg-green-500" label="Audited" count={statusCounts.approved} />
             </div>
           </div>
 

@@ -27,6 +27,9 @@ type UpdateTranslationUnitInput struct {
 	Comment    string
 	ActorID    string
 	ChangeNote string
+	IsQuestioned *bool
+	IsLocked     *bool
+	IsHidden     *bool
 }
 
 type CreateTagInput struct {
@@ -426,6 +429,9 @@ type TranslationUnit struct {
 	Sources    map[string]string `json:"sources"`
 	Target     TranslationTarget `json:"target"`
 	Status     string            `json:"status"`
+	IsQuestioned bool            `json:"isQuestioned"`
+	IsLocked     bool            `json:"isLocked"`
+	IsHidden     bool            `json:"isHidden"`
 	Comment    string            `json:"comment"`
 	Version    int               `json:"version"`
 	UpdatedAt  time.Time         `json:"updatedAt"`
@@ -459,14 +465,28 @@ type UnitListFilter struct {
 	ProjectID    string
 	DocumentID   string
 	DocumentPath string
+	Scope        string
 	Tag          string
 	Key          string
+	Query        string
 	Status       string
+	Statuses     []string
 	SourceText   string
 	TargetText   string
 	UpdatedBy    string
+	IsQuestioned *bool
+	IsLocked     *bool
+	IsHidden     *bool
+	IncludeHidden bool
+	Advanced     []UnitSearchCondition
 	Page         int
 	PageSize     int
+}
+
+type UnitSearchCondition struct {
+	Field    string `json:"field"`
+	Operator string `json:"operator"`
+	Value    string `json:"value"`
 }
 
 func New(ctx context.Context, databaseURL string) (*Store, error) {
@@ -1176,7 +1196,7 @@ func (s *Store) ListTranslationUnits(ctx context.Context, filter UnitListFilter)
 	args = append(args, filter.ProjectID)
 	where = append(where, fmt.Sprintf("tu.project_id = $%d", len(args)))
 
-	if filter.DocumentID != "" {
+	if filter.DocumentID != "" && filter.Scope != "all_documents" {
 		args = append(args, filter.DocumentID)
 		where = append(where, fmt.Sprintf("tu.document_id = $%d", len(args)))
 	}
@@ -1200,9 +1220,44 @@ func (s *Store) ListTranslationUnits(ctx context.Context, filter UnitListFilter)
 		args = append(args, "%"+filter.Key+"%")
 		where = append(where, fmt.Sprintf("tu.key ILIKE $%d", len(args)))
 	}
-	if filter.Status != "" {
+	if len(filter.Statuses) > 0 {
+		parts := make([]string, 0, len(filter.Statuses))
+		for _, status := range filter.Statuses {
+			args = append(args, status)
+			parts = append(parts, fmt.Sprintf("tu.status = $%d", len(args)))
+		}
+		where = append(where, "("+strings.Join(parts, " OR ")+")")
+	} else if filter.Status != "" {
 		args = append(args, filter.Status)
 		where = append(where, fmt.Sprintf("tu.status = $%d", len(args)))
+	}
+	if filter.Query != "" {
+		args = append(args, "%"+filter.Query+"%")
+		where = append(where, fmt.Sprintf(`(
+			tu.key ILIKE $%d
+			OR tu.target_text ILIKE $%d
+			OR EXISTS (
+				SELECT 1
+				FROM translation_unit_sources tusq
+				WHERE tusq.translation_unit_id = tu.id
+				  AND tusq.text ILIKE $%d
+			)
+		)`, len(args), len(args), len(args)))
+	}
+	if filter.IsQuestioned != nil {
+		args = append(args, *filter.IsQuestioned)
+		where = append(where, fmt.Sprintf("tu.is_questioned = $%d", len(args)))
+	}
+	if filter.IsLocked != nil {
+		args = append(args, *filter.IsLocked)
+		where = append(where, fmt.Sprintf("tu.is_locked = $%d", len(args)))
+	}
+	if filter.IsHidden != nil {
+		args = append(args, *filter.IsHidden)
+		where = append(where, fmt.Sprintf("tu.is_hidden = $%d", len(args)))
+	}
+	if !filter.IncludeHidden {
+		where = append(where, "tu.is_hidden = FALSE")
 	}
 	if filter.SourceText != "" {
 		args = append(args, "%"+filter.SourceText+"%")
@@ -1222,6 +1277,57 @@ func (s *Store) ListTranslationUnits(ctx context.Context, filter UnitListFilter)
 	if filter.UpdatedBy != "" {
 		args = append(args, filter.UpdatedBy)
 		where = append(where, fmt.Sprintf("tu.updated_by::text = $%d", len(args)))
+	}
+	for _, condition := range filter.Advanced {
+		field := strings.TrimSpace(condition.Field)
+		operator := strings.TrimSpace(condition.Operator)
+		value := strings.TrimSpace(condition.Value)
+		if field == "" || operator == "" || value == "" {
+			continue
+		}
+		pattern := value
+		switch operator {
+		case "contains":
+			pattern = "%" + value + "%"
+		case "starts_with":
+			pattern = value + "%"
+		case "equals":
+			pattern = value
+		default:
+			continue
+		}
+		args = append(args, pattern)
+		index := len(args)
+
+		switch {
+		case field == "key":
+			if operator == "equals" {
+				where = append(where, fmt.Sprintf("tu.key = $%d", index))
+			} else {
+				where = append(where, fmt.Sprintf("tu.key ILIKE $%d", index))
+			}
+		case field == "target":
+			if operator == "equals" {
+				where = append(where, fmt.Sprintf("tu.target_text = $%d", index))
+			} else {
+				where = append(where, fmt.Sprintf("tu.target_text ILIKE $%d", index))
+			}
+		case strings.HasPrefix(field, "source:"):
+			lang := platform.NormalizeIdentifier(strings.TrimPrefix(field, "source:"))
+			args = append(args, lang)
+			langIndex := len(args)
+			comparison := "ILIKE"
+			if operator == "equals" {
+				comparison = "="
+			}
+			where = append(where, fmt.Sprintf(`EXISTS (
+				SELECT 1
+				FROM translation_unit_sources tusc
+				WHERE tusc.translation_unit_id = tu.id
+				  AND tusc.language_code = $%d
+				  AND tusc.text %s $%d
+			)`, langIndex, comparison, index))
+		}
 	}
 
 	baseWhere := "WHERE " + strings.Join(where, " AND ")
@@ -1263,6 +1369,9 @@ func (s *Store) ListTranslationUnits(ctx context.Context, filter UnitListFilter)
 			tu.target_language,
 			tu.target_text,
 			tu.status,
+			tu.is_questioned,
+			tu.is_locked,
+			tu.is_hidden,
 			tu.comment,
 			tu.version_no,
 			tu.updated_at,
@@ -1341,6 +1450,9 @@ func (s *Store) GetTranslationUnit(ctx context.Context, projectID, unitID, actor
 			tu.target_language,
 			tu.target_text,
 			tu.status,
+			tu.is_questioned,
+			tu.is_locked,
+			tu.is_hidden,
 			tu.comment,
 			tu.version_no,
 			tu.updated_at,
@@ -2980,6 +3092,17 @@ func (s *Store) resolveUnitPermissions(ctx context.Context, tx pgx.Tx, projectID
 	permissions.CanEdit = rolePermissions["translation.edit"] && allowWrite && !denyWrite
 	permissions.CanReview = rolePermissions["translation.review"] && allowWrite && !denyWrite
 	permissions.CanApprove = rolePermissions["translation.approve"] && allowWrite && !denyWrite
+	if unit.IsLocked && !rolePermissions["project.edit"] && !rolePermissions["project.member.manage"] {
+		permissions.CanEdit = false
+		permissions.CanReview = false
+		permissions.CanApprove = false
+	}
+	if unit.IsHidden && !rolePermissions["project.edit"] && !rolePermissions["project.member.manage"] {
+		permissions.CanView = false
+		permissions.CanEdit = false
+		permissions.CanReview = false
+		permissions.CanApprove = false
+	}
 
 	return permissions, nil
 }
@@ -2996,6 +3119,9 @@ func (s *Store) UpdateTranslationUnit(ctx context.Context, projectID, unitID str
 		DocumentID     string
 		TargetText     string
 		Status         string
+		IsQuestioned   bool
+		IsLocked       bool
+		IsHidden       bool
 		VersionNo      int
 		CurrentMaxRev  int
 	}
@@ -3006,6 +3132,9 @@ func (s *Store) UpdateTranslationUnit(ctx context.Context, projectID, unitID str
 			tu.document_id::text,
 			tu.target_text,
 			tu.status,
+			tu.is_questioned,
+			tu.is_locked,
+			tu.is_hidden,
 			tu.version_no,
 			COALESCE((SELECT MAX(tr.revision_no) FROM translation_revisions tr WHERE tr.translation_unit_id = tu.id), 0)
 		FROM translation_units tu
@@ -3016,6 +3145,9 @@ func (s *Store) UpdateTranslationUnit(ctx context.Context, projectID, unitID str
 		&unit.DocumentID,
 		&unit.TargetText,
 		&unit.Status,
+		&unit.IsQuestioned,
+		&unit.IsLocked,
+		&unit.IsHidden,
 		&unit.VersionNo,
 		&unit.CurrentMaxRev,
 	)
@@ -3027,16 +3159,31 @@ func (s *Store) UpdateTranslationUnit(ctx context.Context, projectID, unitID str
 	}
 
 	newVersion := unit.VersionNo + 1
+	nextQuestioned := unit.IsQuestioned
+	nextLocked := unit.IsLocked
+	nextHidden := unit.IsHidden
+	if input.IsQuestioned != nil {
+		nextQuestioned = *input.IsQuestioned
+	}
+	if input.IsLocked != nil {
+		nextLocked = *input.IsLocked
+	}
+	if input.IsHidden != nil {
+		nextHidden = *input.IsHidden
+	}
 	_, err = tx.Exec(ctx, `
 		UPDATE translation_units
 		SET target_text = $3,
 			status = $4,
-			comment = $5,
-			version_no = $6,
-			updated_by = NULLIF($7, '')::uuid,
+			is_questioned = $5,
+			is_locked = $6,
+			is_hidden = $7,
+			comment = $8,
+			version_no = $9,
+			updated_by = NULLIF($10, '')::uuid,
 			updated_at = NOW()
 		WHERE project_id = $1 AND id = $2
-	`, projectID, unitID, input.TargetText, input.Status, input.Comment, newVersion, nullableUUID(input.ActorID))
+	`, projectID, unitID, input.TargetText, input.Status, nextQuestioned, nextLocked, nextHidden, input.Comment, newVersion, nullableUUID(input.ActorID))
 	if err != nil {
 		return TranslationUnit{}, err
 	}
@@ -3177,6 +3324,9 @@ func scanTranslationUnit(row scanner) (TranslationUnit, error) {
 		&item.Target.Language,
 		&item.Target.Text,
 		&item.Status,
+		&item.IsQuestioned,
+		&item.IsLocked,
+		&item.IsHidden,
 		&item.Comment,
 		&item.Version,
 		&item.UpdatedAt,

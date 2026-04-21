@@ -10,11 +10,14 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as AdminRouteImport } from './routes/admin'
 import { Route as OrganizationsRouteImport } from './routes/organizations'
+import { Route as OrganizationsNewRouteImport } from './routes/organizations.new'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ProjectProjectIdRouteImport } from './routes/project.$projectId'
 import { Route as OrgIdProjectsRouteImport } from './routes/$orgId.projects'
+import { Route as OrgIdProjectsNewRouteImport } from './routes/$orgId.projects.new'
 import { Route as ProjectProjectIdWorkbenchRouteImport } from './routes/project.$projectId.workbench'
 import { Route as ProjectProjectIdTmRouteImport } from './routes/project.$projectId.tm'
 import { Route as ProjectProjectIdSettingsRouteImport } from './routes/project.$projectId.settings'
@@ -30,9 +33,19 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OrganizationsRoute = OrganizationsRouteImport.update({
   id: '/organizations',
   path: '/organizations',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrganizationsNewRoute = OrganizationsNewRouteImport.update({
+  id: '/organizations/new',
+  path: '/organizations/new',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -53,6 +66,11 @@ const ProjectProjectIdRoute = ProjectProjectIdRouteImport.update({
 const OrgIdProjectsRoute = OrgIdProjectsRouteImport.update({
   id: '/$orgId/projects',
   path: '/$orgId/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrgIdProjectsNewRoute = OrgIdProjectsNewRouteImport.update({
+  id: '/$orgId/projects/new',
+  path: '/$orgId/projects/new',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectProjectIdWorkbenchRoute =
@@ -108,10 +126,13 @@ const ProjectProjectIdDashboardRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/login': typeof LoginRoute
   '/organizations': typeof OrganizationsRoute
+  '/organizations/new': typeof OrganizationsNewRoute
   '/settings': typeof SettingsRoute
   '/$orgId/projects': typeof OrgIdProjectsRoute
+  '/$orgId/projects/new': typeof OrgIdProjectsNewRoute
   '/project/$projectId': typeof ProjectProjectIdRouteWithChildren
   '/project/$projectId/dashboard': typeof ProjectProjectIdDashboardRoute
   '/project/$projectId/documents': typeof ProjectProjectIdDocumentsRoute
@@ -125,10 +146,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/login': typeof LoginRoute
   '/organizations': typeof OrganizationsRoute
+  '/organizations/new': typeof OrganizationsNewRoute
   '/settings': typeof SettingsRoute
   '/$orgId/projects': typeof OrgIdProjectsRoute
+  '/$orgId/projects/new': typeof OrgIdProjectsNewRoute
   '/project/$projectId': typeof ProjectProjectIdRouteWithChildren
   '/project/$projectId/dashboard': typeof ProjectProjectIdDashboardRoute
   '/project/$projectId/documents': typeof ProjectProjectIdDocumentsRoute
@@ -143,10 +167,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
   '/login': typeof LoginRoute
   '/organizations': typeof OrganizationsRoute
+  '/organizations/new': typeof OrganizationsNewRoute
   '/settings': typeof SettingsRoute
   '/$orgId/projects': typeof OrgIdProjectsRoute
+  '/$orgId/projects/new': typeof OrgIdProjectsNewRoute
   '/project/$projectId': typeof ProjectProjectIdRouteWithChildren
   '/project/$projectId/dashboard': typeof ProjectProjectIdDashboardRoute
   '/project/$projectId/documents': typeof ProjectProjectIdDocumentsRoute
@@ -162,10 +189,13 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/admin'
     | '/login'
     | '/organizations'
+    | '/organizations/new'
     | '/settings'
     | '/$orgId/projects'
+    | '/$orgId/projects/new'
     | '/project/$projectId'
     | '/project/$projectId/dashboard'
     | '/project/$projectId/documents'
@@ -179,10 +209,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/admin'
     | '/login'
     | '/organizations'
+    | '/organizations/new'
     | '/settings'
     | '/$orgId/projects'
+    | '/$orgId/projects/new'
     | '/project/$projectId'
     | '/project/$projectId/dashboard'
     | '/project/$projectId/documents'
@@ -196,10 +229,13 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/admin'
     | '/login'
     | '/organizations'
+    | '/organizations/new'
     | '/settings'
     | '/$orgId/projects'
+    | '/$orgId/projects/new'
     | '/project/$projectId'
     | '/project/$projectId/dashboard'
     | '/project/$projectId/documents'
@@ -214,10 +250,13 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
   LoginRoute: typeof LoginRoute
   OrganizationsRoute: typeof OrganizationsRoute
+  OrganizationsNewRoute: typeof OrganizationsNewRoute
   SettingsRoute: typeof SettingsRoute
   OrgIdProjectsRoute: typeof OrgIdProjectsRoute
+  OrgIdProjectsNewRoute: typeof OrgIdProjectsNewRoute
   ProjectProjectIdRoute: typeof ProjectProjectIdRouteWithChildren
 }
 
@@ -230,11 +269,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/organizations': {
       id: '/organizations'
       path: '/organizations'
       fullPath: '/organizations'
       preLoaderRoute: typeof OrganizationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/organizations/new': {
+      id: '/organizations/new'
+      path: '/organizations/new'
+      fullPath: '/organizations/new'
+      preLoaderRoute: typeof OrganizationsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -263,6 +316,13 @@ declare module '@tanstack/react-router' {
       path: '/$orgId/projects'
       fullPath: '/$orgId/projects'
       preLoaderRoute: typeof OrgIdProjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$orgId/projects/new': {
+      id: '/$orgId/projects/new'
+      path: '/$orgId/projects/new'
+      fullPath: '/$orgId/projects/new'
+      preLoaderRoute: typeof OrgIdProjectsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/project/$projectId/workbench': {
@@ -360,10 +420,13 @@ const ProjectProjectIdRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
   LoginRoute: LoginRoute,
   OrganizationsRoute: OrganizationsRoute,
+  OrganizationsNewRoute: OrganizationsNewRoute,
   SettingsRoute: SettingsRoute,
   OrgIdProjectsRoute: OrgIdProjectsRoute,
+  OrgIdProjectsNewRoute: OrgIdProjectsNewRoute,
   ProjectProjectIdRoute: ProjectProjectIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport

@@ -6,7 +6,7 @@ import { getPlatformOverview, getPlatformUsers, updatePlatformSettings, updatePl
 import { useTranslation } from '@/hooks/useTranslation';
 import { useAuthStore } from '@/store/auth';
 
-export const Route = createFileRoute('/admin' as any)({
+export const Route = createFileRoute('/admin')({
   beforeLoad: () => {
     const authStorage = JSON.parse(localStorage.getItem('auth-storage') || '{}');
     if (!authStorage.state?.token) {

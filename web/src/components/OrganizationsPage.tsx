@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Lock, Plus, Sparkles } from 'lucide-react';
+import { ArrowRight, Lock, Plus } from 'lucide-react';
 
 import { AppShell } from '@/components/AppShell';
 import { getOrganizations } from '@/api/organizations';
@@ -24,7 +24,7 @@ export function OrganizationsPage() {
       subtitle={t('organizations.subtitle')}
       actions={
         canCreateOrganization ? (
-          <Link to={"/organizations/new" as any} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-slate-900/20">
+          <Link to="/organizations/new" className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-slate-900/20">
             <Plus className="h-4 w-4" />
             {t('organizations.createAction')}
           </Link>
@@ -68,10 +68,6 @@ export function OrganizationsPage() {
         </section>
 
         <aside className="rounded-[28px] border border-slate-200 bg-slate-950 p-6 text-white shadow-[0_30px_70px_-45px_rgba(15,23,42,0.7)]">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200">
-            <Sparkles className="h-3.5 w-3.5" />
-            {t('organizations.governance')}
-          </div>
           <div className="mt-5 text-2xl font-semibold tracking-tight">{t('organizations.sideTitle')}</div>
           <p className="mt-4 text-sm leading-7 text-slate-300">{t('organizations.sideBody')}</p>
 

@@ -35,7 +35,7 @@ export function AppShell({
 
           <div className="flex items-center gap-3">
             {user?.platformRole === 'owner' || user?.platformRole === 'admin' ? (
-              <Link to={"/admin" as any} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300">
+              <Link to="/admin" className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300">
                 <Shield className="h-4 w-4" />
                 {t('admin.title')}
               </Link>

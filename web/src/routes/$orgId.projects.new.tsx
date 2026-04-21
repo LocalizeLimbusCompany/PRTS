@@ -8,7 +8,7 @@ import { createProject } from '@/api/projects';
 import { useTranslation } from '@/hooks/useTranslation';
 import { COMMON_LANGUAGE_OPTIONS } from '@/lib/languages';
 
-export const Route = createFileRoute('/$orgId/projects/new' as any)({
+export const Route = createFileRoute('/$orgId/projects/new')({
   beforeLoad: () => {
     const authStorage = JSON.parse(localStorage.getItem('auth-storage') || '{}');
     if (!authStorage.state?.token) {
@@ -19,7 +19,7 @@ export const Route = createFileRoute('/$orgId/projects/new' as any)({
 });
 
 function CreateProjectPage() {
-  const { orgId } = Route.useParams() as { orgId: string };
+  const { orgId } = Route.useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { t } = useTranslation();

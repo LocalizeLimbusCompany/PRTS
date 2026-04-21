@@ -38,7 +38,7 @@ function ProjectLayout() {
 
         <div className="flex items-center space-x-4">
           {(user?.platformRole === 'owner' || user?.platformRole === 'admin') && (
-            <Link to={"/admin" as any} className="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center">
+            <Link to="/admin" className="text-sm font-medium text-slate-600 hover:text-slate-900 flex items-center">
               <Shield size={14} className="mr-1.5" />
               {t('admin.title')}
             </Link>

@@ -5,7 +5,14 @@ import "strings"
 func NormalizeIdentifier(value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
 	value = strings.ReplaceAll(value, " ", "-")
-	return value
+	switch value {
+	case "jp":
+		return "ja"
+	case "cn":
+		return "zh-cn"
+	default:
+		return value
+	}
 }
 
 func NormalizeText(value string) string {

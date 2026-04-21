@@ -1,6 +1,6 @@
 INSERT INTO users (id, email, username, password_hash, display_name, preferred_locale, preferred_source_language)
 VALUES
-    ('11111111-1111-1111-1111-111111111111', 'admin@example.com', 'admin', '$2a$10$VRt8Z35mWSN.dCJNSj3f8OQ2XE/mSsZ/rVg4oHdtsZu6zfckxNfXa', 'Amiya', 'zh-CN', 'jp'),
+    ('11111111-1111-1111-1111-111111111111', 'admin@example.com', 'admin', '$2a$10$VRt8Z35mWSN.dCJNSj3f8OQ2XE/mSsZ/rVg4oHdtsZu6zfckxNfXa', 'Amiya', 'zh-CN', 'ja'),
     ('22222222-2222-2222-2222-222222222222', 'reviewer@example.com', 'reviewer', '$2a$10$tm/ecu/2Co4MMCbOjpPzQOARuvMGwnmtXHv9QAAPg27Ea5dBrO1a6', 'Kal''tsit', 'zh-CN', 'en')
 ON CONFLICT (email) DO UPDATE SET
     password_hash = EXCLUDED.password_hash,
@@ -21,7 +21,7 @@ ON CONFLICT (organization_id, slug) DO NOTHING;
 INSERT INTO project_source_languages (project_id, language_code, sort_order)
 VALUES
     ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'en', 1),
-    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'jp', 2),
+    ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'ja', 2),
     ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'kr', 3)
 ON CONFLICT (project_id, language_code) DO NOTHING;
 
@@ -60,13 +60,13 @@ ON CONFLICT (document_id, key) DO NOTHING;
 INSERT INTO translation_unit_sources (translation_unit_id, language_code, text)
 VALUES
     ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'en', 'Doctor, wake up.'),
-    ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'jp', 'ドクター、起きてください。'),
+    ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'ja', 'ドクター、起きてください。'),
     ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1', 'kr', '박사님, 일어나세요.'),
     ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'en', 'Amiya is waiting for you.'),
-    ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'jp', 'アーミヤが待っています。'),
+    ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'ja', 'アーミヤが待っています。'),
     ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee2', 'kr', '아미야가 기다리고 있어요.'),
     ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'en', 'The operation is about to begin.'),
-    ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'jp', '作戦がまもなく始まります。'),
+    ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'ja', '作戦がまもなく始まります。'),
     ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee3', 'kr', '작전이 곧 시작됩니다.')
 ON CONFLICT (translation_unit_id, language_code) DO NOTHING;
 

@@ -159,7 +159,7 @@ function UnitRow({
               className="text-xs text-slate-400 hover:text-blue-500 flex items-center transition-colors"
             >
               {isExpanded ? <ChevronDown className="w-3 h-3 mr-1" /> : <ChevronRight className="w-3 h-3 mr-1" />}
-              {otherLangs.length} other languages
+              {otherLangs.length} more sources
             </button>
             
             {isExpanded && (
@@ -222,7 +222,7 @@ function UnitRow({
                onClick={onReview}
                className="px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 text-left transition-colors"
              >
-               Mark as Reviewed
+               Mark as reviewed
              </button>
           )}
           {canApprove && unit.status !== 'approved' && (
@@ -230,7 +230,7 @@ function UnitRow({
                onClick={onApprove}
                className="px-2 py-1 bg-green-50 text-green-600 rounded hover:bg-green-100 text-left transition-colors"
              >
-               Approve
+               Mark audited
              </button>
           )}
         </div>

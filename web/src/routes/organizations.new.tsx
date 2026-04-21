@@ -7,7 +7,7 @@ import { createOrganization } from '@/api/organizations';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useAuthStore } from '@/store/auth';
 
-export const Route = createFileRoute('/organizations/new' as any)({
+export const Route = createFileRoute('/organizations/new')({
   beforeLoad: () => {
     const authStorage = JSON.parse(localStorage.getItem('auth-storage') || '{}');
     if (!authStorage.state?.token) {

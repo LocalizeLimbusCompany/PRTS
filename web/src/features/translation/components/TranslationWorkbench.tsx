@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { AlertCircle, CheckCheck, FileText, LoaderCircle, Save, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { AlertCircle, CheckCheck, EyeOff, FileText, LoaderCircle, Lock, Save, Search, ShieldCheck, ArrowLeft, CircleHelp, SlidersHorizontal } from 'lucide-react';
 
 import { api } from '@/api/client';
 import { cn } from '@/lib/utils';
@@ -53,6 +53,9 @@ interface TranslationUnit {
     text: string;
   };
   status: string;
+  isQuestioned?: boolean;
+  isLocked?: boolean;
+  isHidden?: boolean;
   comment: string;
   updatedAt: string;
   updatedBy?: UserSummary;
@@ -64,13 +67,27 @@ interface UnitsResponse {
   total: number;
 }
 
+const quickStatuses = ['untranslated', 'translated', 'reviewed', 'approved'] as const;
+type AdvancedCondition = {
+  field: string;
+  operator: string;
+  value: string;
+};
+
 export default function TranslationWorkbench({ projectId, documentId: propDocumentId }: Props) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
-  const preferredSource = user?.preferredSourceLanguage || 'en';
+  const preferredSource = normalizePreferredSource(user?.preferredSourceLanguage || 'en');
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
   const [draftText, setDraftText] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [scope, setScope] = useState<'current_document' | 'all_documents'>('current_document');
+  const [onlyQuestioned, setOnlyQuestioned] = useState(false);
+  const [onlyLocked, setOnlyLocked] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [advancedConditions, setAdvancedConditions] = useState<AdvancedCondition[]>([{ field: 'target', operator: 'contains', value: '' }]);
 
   const selectedDocId = propDocumentId;
 
@@ -82,25 +99,40 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
   const documents = Array.isArray(docsData?.items) ? docsData.items : [];
   const selectedDocument = documents.find((doc) => doc.id === selectedDocId) ?? null;
 
+  const unitsQuery = useMemo(() => {
+    const params = new URLSearchParams({ page: '1', pageSize: '200' });
+    if (scope === 'current_document' && selectedDocId) params.set('documentId', selectedDocId);
+    params.set('scope', scope);
+    if (searchText.trim()) {
+      params.set('q', searchText.trim());
+      params.set('sourceText', searchText.trim());
+      params.set('targetText', searchText.trim());
+      params.set('key', searchText.trim());
+    }
+    statusFilters.forEach((item) => params.append('statuses', item));
+    if (onlyQuestioned) params.set('isQuestioned', 'true');
+    if (onlyLocked) params.set('isLocked', 'true');
+    if (showAdvanced) {
+      params.set('advanced', JSON.stringify(advancedConditions.filter((item) => item.value.trim())));
+    }
+    return params.toString();
+  }, [scope, selectedDocId, searchText, statusFilters, onlyQuestioned, onlyLocked, showAdvanced, advancedConditions]);
+
   const { data: unitsData, isLoading: isLoadingUnits } = useQuery({
-    queryKey: ['workbench-units', projectId, selectedDocId],
-    enabled: Boolean(selectedDocId),
-    queryFn: () => api.get<UnitsResponse>(`/projects/${projectId}/units?documentId=${selectedDocId}&page=1&pageSize=1000`),
+    queryKey: ['workbench-units', projectId, unitsQuery],
+    enabled: scope === 'all_documents' || Boolean(selectedDocId),
+    queryFn: () => api.get<UnitsResponse>(`/projects/${projectId}/units?${unitsQuery}`),
   });
 
   const units = Array.isArray(unitsData?.items) ? unitsData.items : [];
 
   useEffect(() => {
-    if (!selectedDocId) {
-      setActiveUnitId(null);
-      return;
-    }
     if (!units.length) {
       setActiveUnitId(null);
       return;
     }
     setActiveUnitId((current) => (current && units.some((unit) => unit.id === current) ? current : units[0].id));
-  }, [selectedDocId, units]);
+  }, [units]);
 
   const activeUnit = useMemo(
     () => units.find((unit) => unit.id === activeUnitId) ?? null,
@@ -112,7 +144,10 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
   }, [activeUnit]);
 
   const refreshUnits = () => {
-    void queryClient.invalidateQueries({ queryKey: ['workbench-units', projectId, selectedDocId] });
+    void queryClient.invalidateQueries({ queryKey: ['workbench-units', projectId] });
+    if (activeUnitId) {
+      void queryClient.invalidateQueries({ queryKey: ['unit-history', projectId, activeUnitId] });
+    }
   };
 
   const saveMutation = useMutation({
@@ -146,35 +181,110 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
   };
 
   return (
-    <div className="h-full flex overflow-hidden bg-slate-100">
-      <main className="flex-1 min-w-0 flex bg-slate-50">
-        
-        <section className="w-80 shrink-0 border-r border-slate-200 bg-white flex flex-col">
-          <div className="px-5 py-4 border-b border-slate-200 bg-slate-50">
+    <div className="flex h-full overflow-hidden bg-slate-100">
+      <main className="flex min-w-0 flex-1 bg-slate-50">
+        <section className="flex w-[24rem] shrink-0 flex-col border-r border-slate-200 bg-white">
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
             <Link
               to="/project/$projectId/documents"
               params={{ projectId }}
-              className="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-700 mb-3"
+              className="mb-3 inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-700"
             >
-              <ArrowLeft className="w-4 h-4 mr-1" />
+              <ArrowLeft className="mr-1 h-4 w-4" />
               {t('workbench.backToFiles')}
             </Link>
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">{t('workbench.currentFile')}</div>
-            <div className="mt-2 text-base font-semibold text-slate-900 truncate">
+            <div className="mt-2 truncate text-base font-semibold text-slate-900">
               {selectedDocument ? selectedDocument.title || selectedDocument.path : (isLoadingDocs ? t('workbench.loadingUnits') : t('workbench.selectFile'))}
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-3 py-2">
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 text-slate-400" />
+                <input
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                  placeholder={t('documents.selectToTranslate')}
+                  className="w-full bg-transparent text-sm outline-none"
+                />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {quickStatuses.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setStatusFilters((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item])}
+                    className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', statusFilters.includes(item) ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500')}
+                  >
+                    {t(`workbench.status.${item}`)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setOnlyQuestioned((v) => !v)}
+                  className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyQuestioned ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500')}
+                >
+                  {t('workbench.status.questioned')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOnlyLocked((v) => !v)}
+                  className={cn('rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]', onlyLocked ? 'bg-rose-500 text-white' : 'bg-slate-100 text-slate-500')}
+                >
+                  {t('workbench.status.locked')}
+                </button>
+              </div>
+              <div className="mt-3 flex gap-2 text-xs">
+                <button type="button" onClick={() => setScope('current_document')} className={cn('rounded-full px-3 py-1', scope === 'current_document' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500')}>
+                  {t('workbench.currentDocument')}
+                </button>
+                <button type="button" onClick={() => setScope('all_documents')} className={cn('rounded-full px-3 py-1', scope === 'all_documents' ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500')}>
+                  {t('workbench.allDocuments')}
+                </button>
+                <button type="button" onClick={() => setShowAdvanced((v) => !v)} className={cn('inline-flex items-center gap-1 rounded-full px-3 py-1', showAdvanced ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500')}>
+                  <SlidersHorizontal className="h-3 w-3" />
+                  {t('workbench.advanced')}
+                </button>
+              </div>
+              {showAdvanced ? (
+                <div className="mt-3 space-y-2 rounded-2xl bg-slate-50 p-3">
+                  {advancedConditions.map((condition, index) => (
+                    <div key={index} className="grid gap-2 md:grid-cols-[1.1fr_1fr_1.4fr_auto]">
+                      <select value={condition.field} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, field: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs">
+                        <option value="target">target</option>
+                        <option value="key">key</option>
+                        <option value={`source:${preferredSource}`}>source:{preferredSource}</option>
+                        <option value="source:en">source:en</option>
+                        <option value="source:ja">source:ja</option>
+                        <option value="source:ko">source:ko</option>
+                      </select>
+                      <select value={condition.operator} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, operator: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs">
+                        <option value="contains">contains</option>
+                        <option value="equals">equals</option>
+                        <option value="starts_with">starts_with</option>
+                      </select>
+                      <input value={condition.value} onChange={(e) => setAdvancedConditions((items) => items.map((item, i) => i === index ? { ...item, value: e.target.value } : item))} className="rounded-xl border border-slate-300 px-3 py-2 text-xs" />
+                      <button type="button" onClick={() => setAdvancedConditions((items) => items.length === 1 ? items : items.filter((_, i) => i !== index))} className="rounded-xl bg-slate-200 px-3 py-2 text-xs text-slate-600">×</button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setAdvancedConditions((items) => [...items, { field: 'target', operator: 'contains', value: '' }])} className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white">
+                    + {t('workbench.advanced')}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {isLoadingDocs || (selectedDocId && isLoadingUnits) ? (
+            {isLoadingDocs || ((selectedDocId || scope === 'all_documents') && isLoadingUnits) ? (
               <LoadingState label={t('workbench.loadingUnits')} />
-            ) : !selectedDocId ? (
+            ) : !selectedDocId && scope === 'current_document' ? (
               <EmptyState title={t('workbench.selectFile')} description={t('workbench.selectFileDesc')} />
             ) : units.length === 0 ? (
               <EmptyState title={t('workbench.noUnits')} description={t('workbench.noUnitsDesc')} />
             ) : (
               units.map((unit, index) => {
-                const primarySource = unit.sources[preferredSource] || Object.values(unit.sources)[0] || '';
+                const orderedSources = orderSources(unit.sources, preferredSource);
+                const primary = orderedSources[0];
                 return (
                   <button
                     key={unit.id}
@@ -192,11 +302,14 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                         <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                           {t('workbench.unit')} {index + 1}
                         </div>
+                        {scope === 'all_documents' ? (
+                          <div className="mt-1 text-[10px] uppercase tracking-[0.16em] text-slate-400">{unit.document.path}</div>
+                        ) : null}
                       </div>
-                      <StatusBadge status={unit.status} t={t} />
+                      <StatusBadge unit={unit} t={t} />
                     </div>
                     <div className="mt-3 line-clamp-3 text-sm leading-6 text-slate-700 whitespace-pre-wrap">
-                      {primarySource || t('workbench.noSource')}
+                      {primary?.[1] || t('workbench.noSource')}
                     </div>
                   </button>
                 );
@@ -205,48 +318,44 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
           </div>
         </section>
 
-        <section className="flex-1 min-w-0 flex flex-col">
-          <div className="border-b border-slate-200 bg-white px-6 py-4 flex items-center justify-between">
+        <section className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
             <div className="flex items-center gap-4">
               <span className="text-sm font-medium text-slate-500">
                 {activeUnit ? activeUnit.key : t('workbench.selectUnit')}
               </span>
             </div>
-            {activeUnit && <StatusBadge status={activeUnit.status} large t={t} />}
+            {activeUnit && <StatusBadge unit={activeUnit} large t={t} />}
           </div>
 
           <div className="flex-1 overflow-y-auto p-6">
-            {!selectedDocId ? (
+            {!selectedDocId && scope === 'current_document' ? (
               <EditorPlaceholder title={t('workbench.chooseFileFirst')} description={t('workbench.chooseFileFirstDesc')} />
             ) : !activeUnit ? (
               <EditorPlaceholder title={t('workbench.selectUnit')} description={t('workbench.chooseUnitDesc')} />
             ) : (
               <div className="mx-auto max-w-5xl space-y-6">
-                
                 <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 mb-4">
+                  <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-900">
                     <FileText className="h-4 w-4 text-blue-600" />
                     {t('workbench.sourceText')}
                   </div>
-                  <div className="grid gap-4 xl:grid-cols-2">
-                    <SourceBlock
-                      language={preferredSource}
-                      text={activeUnit.sources[preferredSource] || Object.values(activeUnit.sources)[0] || ''}
-                      emphasized
-                      emptyText={t('workbench.noSourceAvailable')}
-                    />
-                    <div className="grid gap-4">
-                      {Object.entries(activeUnit.sources)
-                        .filter(([language]) => language !== preferredSource)
-                        .map(([language, text]) => (
-                          <SourceBlock key={language} language={language} text={text} emptyText={t('workbench.noSourceAvailable')} />
-                        ))}
-                    </div>
+                  <div className="grid gap-4">
+                    {orderSources(activeUnit.sources, preferredSource).map(([language, text], index) => (
+                      <SourceBlock
+                        key={language}
+                        language={language}
+                        text={text}
+                        emphasized={index === 0}
+                        collapsed={index > 0}
+                        emptyText={t('workbench.noSourceAvailable')}
+                      />
+                    ))}
                   </div>
                 </section>
 
                 <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                  <div className="flex items-center justify-between gap-4 mb-4">
+                  <div className="mb-4 flex items-center justify-between gap-4">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">{t('workbench.targetTranslation')}</div>
                     </div>
@@ -260,11 +369,11 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
 
                   <textarea
                     value={draftText}
-                    disabled={!activeUnit.permissions?.canEdit || isBusy}
+                    disabled={!activeUnit.permissions?.canEdit || isBusy || activeUnit.isLocked}
                     onChange={(event) => setDraftText(event.target.value)}
                     className={cn(
                       'min-h-[240px] w-full rounded-xl border px-5 py-4 text-base leading-7 outline-none transition-colors resize-y',
-                      activeUnit.permissions?.canEdit
+                      activeUnit.permissions?.canEdit && !activeUnit.isLocked
                         ? 'border-slate-300 bg-slate-50 focus:border-blue-500 focus:bg-white'
                         : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500',
                     )}
@@ -274,7 +383,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                   <div className="mt-6 flex flex-wrap gap-3">
                     <ActionButton
                       onClick={handleSave}
-                      disabled={!activeUnit.permissions?.canEdit || !isDirty || isBusy}
+                      disabled={!activeUnit.permissions?.canEdit || !isDirty || isBusy || Boolean(activeUnit.isLocked)}
                       busy={saveMutation.isPending}
                       icon={<Save className="h-4 w-4" />}
                       label={t('workbench.saveTranslation')}
@@ -296,6 +405,34 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
                       label={t('workbench.approveUnit')}
                       tone="success"
                     />
+                    {(user?.platformRole === 'owner' || user?.platformRole === 'admin') ? (
+                      <>
+                        <ActionButton
+                          onClick={() => api.patch(`/projects/${projectId}/units/${activeUnit.id}`, { isQuestioned: !activeUnit.isQuestioned, targetText: activeUnit.target.text, status: activeUnit.status, comment: activeUnit.comment })}
+                          disabled={isBusy}
+                          busy={false}
+                          icon={<CircleHelp className="h-4 w-4" />}
+                          label={activeUnit.isQuestioned ? t('common.cancel') : t('workbench.status.questioned')}
+                          tone="secondary"
+                        />
+                        <ActionButton
+                          onClick={() => api.patch(`/projects/${projectId}/units/${activeUnit.id}`, { isLocked: !activeUnit.isLocked, targetText: activeUnit.target.text, status: activeUnit.status, comment: activeUnit.comment })}
+                          disabled={isBusy}
+                          busy={false}
+                          icon={<Lock className="h-4 w-4" />}
+                          label={activeUnit.isLocked ? t('common.cancel') : t('workbench.status.locked')}
+                          tone="secondary"
+                        />
+                        <ActionButton
+                          onClick={() => api.patch(`/projects/${projectId}/units/${activeUnit.id}`, { isHidden: !activeUnit.isHidden, targetText: activeUnit.target.text, status: activeUnit.status, comment: activeUnit.comment })}
+                          disabled={isBusy}
+                          busy={false}
+                          icon={<EyeOff className="h-4 w-4" />}
+                          label={activeUnit.isHidden ? t('common.cancel') : t('workbench.status.hidden')}
+                          tone="secondary"
+                        />
+                      </>
+                    ) : null}
                   </div>
                 </section>
               </div>
@@ -304,25 +441,44 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
         </section>
 
         <aside className="w-80 shrink-0 border-l border-slate-200 bg-slate-50">
-          <ContextSidebar projectId={projectId} />
+          <ContextSidebar projectId={projectId} unitId={activeUnitId} />
         </aside>
       </main>
     </div>
   );
 }
 
-function SourceBlock({ language, text, emphasized = false, emptyText }: { language: string; text: string; emphasized?: boolean; emptyText: string }) {
+function orderSources(sources: Record<string, string>, preferredSource: string) {
+  const entries = Object.entries(sources || {});
+  entries.sort(([a], [b]) => {
+    if (a === preferredSource) return -1;
+    if (b === preferredSource) return 1;
+    return a.localeCompare(b);
+  });
+  return entries;
+}
+
+function normalizePreferredSource(value: string) {
+  return value === 'jp' ? 'ja' : value;
+}
+
+function SourceBlock({ language, text, emphasized = false, collapsed = false, emptyText }: { language: string; text: string; emphasized?: boolean; collapsed?: boolean; emptyText: string }) {
+  const [open, setOpen] = useState(!collapsed);
+
   return (
     <div className={cn('rounded-xl border p-4', emphasized ? 'border-blue-200 bg-blue-50/70' : 'border-slate-200 bg-slate-50')}>
-      <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">{language}</div>
-      <div className="mt-3 whitespace-pre-wrap text-base leading-7 text-slate-800">{text || emptyText}</div>
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between text-left">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">{language}</div>
+        {!emphasized ? <span className="text-[10px] text-slate-400">{open ? '−' : '+'}</span> : null}
+      </button>
+      {open ? <div className="mt-3 whitespace-pre-wrap text-base leading-7 text-slate-800">{text || emptyText}</div> : null}
     </div>
   );
 }
 
-function StatusBadge({ status, large = false, t }: { status: string; large?: boolean; t: (key: string) => string }) {
-  const normalized = status || 'untranslated';
-  
+function StatusBadge({ unit, large = false, t }: { unit: TranslationUnit; large?: boolean; t: (key: string) => string }) {
+  const normalized = unit.status || 'untranslated';
+
   const getStatusText = (s: string) => {
     switch (s) {
       case 'approved': return t('workbench.status.approved');
@@ -330,24 +486,44 @@ function StatusBadge({ status, large = false, t }: { status: string; large?: boo
       case 'translated': return t('workbench.status.translated');
       default: return t('workbench.status.untranslated');
     }
-  }
+  };
 
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-md font-semibold uppercase tracking-[0.16em]',
-        large ? 'px-3 py-1.5 text-xs' : 'px-2 py-1 text-[10px]',
-        normalized === 'approved'
-          ? 'bg-green-100 text-green-700'
-          : normalized === 'reviewed'
-            ? 'bg-blue-100 text-blue-700'
-            : normalized === 'translated'
-              ? 'bg-slate-200 text-slate-700'
-              : 'bg-slate-100 text-slate-500',
-      )}
-    >
-      {getStatusText(normalized)}
-    </span>
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {unit.isQuestioned ? (
+        <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+          <CircleHelp className="mr-1 h-3 w-3" />
+          {t('workbench.status.questioned')}
+        </span>
+      ) : null}
+      {unit.isLocked ? (
+        <span className="inline-flex items-center rounded-md bg-rose-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-700">
+          <Lock className="mr-1 h-3 w-3" />
+          {t('workbench.status.locked')}
+        </span>
+      ) : null}
+      {unit.isHidden ? (
+        <span className="inline-flex items-center rounded-md bg-slate-200 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-700">
+          <EyeOff className="mr-1 h-3 w-3" />
+          {t('workbench.status.hidden')}
+        </span>
+      ) : null}
+      <span
+        className={cn(
+          'inline-flex items-center rounded-md font-semibold uppercase tracking-[0.16em]',
+          large ? 'px-3 py-1.5 text-xs' : 'px-2 py-1 text-[10px]',
+          normalized === 'approved'
+            ? 'bg-emerald-100 text-emerald-700'
+            : normalized === 'reviewed'
+              ? 'bg-blue-100 text-blue-700'
+              : normalized === 'translated'
+                ? 'bg-violet-100 text-violet-700'
+                : 'bg-slate-100 text-slate-500',
+        )}
+      >
+        {getStatusText(normalized)}
+      </span>
+    </div>
   );
 }
 
@@ -375,7 +551,7 @@ function ActionButton({
         'inline-flex min-w-[140px] items-center justify-center rounded-lg px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
         tone === 'primary' && 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm',
         tone === 'secondary' && 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-sm',
-        tone === 'success' && 'bg-green-600 text-white hover:bg-green-700 shadow-sm',
+        tone === 'success' && 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm',
       )}
     >
       {busy ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <span className="mr-2">{icon}</span>}

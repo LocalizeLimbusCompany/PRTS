@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { FileText, LoaderCircle } from 'lucide-react';
+import { FileText, LoaderCircle, Search } from 'lucide-react';
+import { useState } from 'react';
 import { api } from '@/api/client';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
@@ -25,6 +26,7 @@ export const Route = createFileRoute('/project/$projectId/documents')({
 function DocumentsRoute() {
   const { projectId } = Route.useParams();
   const { t } = useTranslation();
+  const [search, setSearch] = useState('');
 
   const { data: docsData, isLoading } = useQuery({
     queryKey: ['documents', projectId],
@@ -32,12 +34,24 @@ function DocumentsRoute() {
   });
 
   const documents = docsData?.items || [];
+  const filteredDocuments = search
+    ? documents.filter((doc) => `${doc.title} ${doc.path}`.toLowerCase().includes(search.toLowerCase()))
+    : documents;
 
   return (
     <div className="p-8 max-w-7xl mx-auto w-full">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">{t('documents.title')}</h1>
         <p className="mt-2 text-slate-500">{t('documents.subtitle')}</p>
+        <div className="mt-4 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <Search className="h-4 w-4 text-slate-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('history.keyFilter')}
+            className="w-full bg-transparent text-sm outline-none"
+          />
+        </div>
       </div>
 
       {isLoading ? (
@@ -45,13 +59,13 @@ function DocumentsRoute() {
           <LoaderCircle className="animate-spin w-6 h-6 mr-2" />
           <span>{t('documents.loading')}</span>
         </div>
-      ) : documents.length === 0 ? (
+      ) : filteredDocuments.length === 0 ? (
         <div className="text-center py-20 border border-dashed border-slate-300 rounded-2xl bg-slate-50">
           <p className="text-slate-500">{t('documents.empty')}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {documents.map((doc) => (
+          {filteredDocuments.map((doc) => (
             <Link
               key={doc.id}
               to="/project/$projectId/workbench"

@@ -34,7 +34,7 @@ function ProjectsPage() {
       subtitle={org?.description || t('projects.subtitle')}
       actions={
         org?.canCreateProject ? (
-          <Link to={"/$orgId/projects/new" as any} params={{ orgId } as any} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-slate-900/20">
+          <Link to="/$orgId/projects/new" params={{ orgId }} className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-slate-900/20">
             <Plus className="h-4 w-4" />
             {t('projects.createAction')}
           </Link>
