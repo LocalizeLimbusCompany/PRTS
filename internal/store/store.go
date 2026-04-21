@@ -633,6 +633,11 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (ProjectOvervi
 			return ProjectOverview{}, err
 		}
 	}
+	for _, status := range []string{"untranslated", "translated", "reviewed", "approved"} {
+		if _, ok := item.StatusCounts[status]; !ok {
+			item.StatusCounts[status] = 0
+		}
+	}
 
 	return item, nil
 }

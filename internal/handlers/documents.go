@@ -194,6 +194,9 @@ func ListDocuments(dataStore *store.Store) http.HandlerFunc {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "获取文档列表失败")
 			return
 		}
+		if items == nil {
+			items = []store.Document{}
+		}
 
 		platform.WriteSuccess(w, r, http.StatusOK, map[string]any{
 			"items":    items,

@@ -46,6 +46,9 @@ func ListTranslationUnits(dataStore *store.Store) http.HandlerFunc {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "获取翻译条目列表失败")
 			return
 		}
+		if items == nil {
+			items = []store.TranslationUnit{}
+		}
 
 		platform.WriteSuccess(w, r, http.StatusOK, map[string]any{
 			"items":    items,
@@ -201,6 +204,9 @@ func ListTranslationUnitHistory(dataStore *store.Store) http.HandlerFunc {
 		if err != nil {
 			platform.WriteError(w, r, http.StatusInternalServerError, "internal_error", "获取翻译历史失败")
 			return
+		}
+		if items == nil {
+			items = []store.TranslationUnitHistoryEntry{}
 		}
 
 		platform.WriteSuccess(w, r, http.StatusOK, map[string]any{

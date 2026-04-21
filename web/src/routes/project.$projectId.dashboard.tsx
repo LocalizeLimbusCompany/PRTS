@@ -23,8 +23,13 @@ function Dashboard() {
     );
   }
 
-  const totalUnits = project?.translationUnitCount || 0;
-  const statusCounts = project?.statusCounts || { untranslated: 0, translated: 0, reviewed: 0, approved: 0 };
+  const totalUnits = Number(project?.translationUnitCount ?? 0);
+  const statusCounts = {
+    untranslated: Number(project?.statusCounts?.untranslated ?? 0),
+    translated: Number(project?.statusCounts?.translated ?? 0),
+    reviewed: Number(project?.statusCounts?.reviewed ?? 0),
+    approved: Number(project?.statusCounts?.approved ?? 0),
+  };
   
   const translatedPct = totalUnits > 0 ? (statusCounts.translated / totalUnits) * 100 : 0;
   const reviewedPct = totalUnits > 0 ? (statusCounts.reviewed / totalUnits) * 100 : 0;
@@ -131,6 +136,8 @@ function Dashboard() {
 }
 
 function StatCard({ icon, label, value, bg, isString = false }: { icon: React.ReactNode, label: string, value: string | number, bg: string, isString?: boolean }) {
+  const displayValue = isString ? value : Number(value ?? 0).toLocaleString();
+
   return (
     <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex items-center gap-5">
       <div className={`w-14 h-14 rounded-2xl ${bg} flex items-center justify-center shrink-0`}>
@@ -138,9 +145,7 @@ function StatCard({ icon, label, value, bg, isString = false }: { icon: React.Re
       </div>
       <div>
         <div className="text-sm font-semibold text-slate-500 mb-1">{label}</div>
-        <div className="text-2xl font-bold text-slate-900">
-          {isString ? value : (value as number).toLocaleString()}
-        </div>
+        <div className="text-2xl font-bold text-slate-900">{displayValue}</div>
       </div>
     </div>
   );
@@ -153,7 +158,7 @@ function ProgressStat({ dot, label, count }: { dot: string, label: string, count
         <div className={`w-3 h-3 rounded-full ${dot} mr-2`}></div>
         {label}
       </div>
-      <div className="text-2xl font-semibold text-slate-900">{count.toLocaleString()}</div>
+      <div className="text-2xl font-semibold text-slate-900">{Number(count ?? 0).toLocaleString()}</div>
     </div>
   );
 }

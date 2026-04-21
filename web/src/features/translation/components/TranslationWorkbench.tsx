@@ -79,7 +79,8 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
     queryFn: () => api.get<{ items: DocumentItem[] }>(`/projects/${projectId}/documents`),
   });
 
-  const selectedDocument = docsData?.items.find((doc) => doc.id === selectedDocId) ?? null;
+  const documents = Array.isArray(docsData?.items) ? docsData.items : [];
+  const selectedDocument = documents.find((doc) => doc.id === selectedDocId) ?? null;
 
   const { data: unitsData, isLoading: isLoadingUnits } = useQuery({
     queryKey: ['workbench-units', projectId, selectedDocId],
@@ -87,7 +88,7 @@ export default function TranslationWorkbench({ projectId, documentId: propDocume
     queryFn: () => api.get<UnitsResponse>(`/projects/${projectId}/units?documentId=${selectedDocId}&page=1&pageSize=1000`),
   });
 
-  const units = unitsData?.items || [];
+  const units = Array.isArray(unitsData?.items) ? unitsData.items : [];
 
   useEffect(() => {
     if (!selectedDocId) {
