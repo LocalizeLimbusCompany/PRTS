@@ -30,11 +30,12 @@ pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<User>, s
 
 /// 用户名是否已存在。
 pub async fn username_exists(pool: &PgPool, username: &str) -> Result<bool, sqlx::Error> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE username = $1")
-        .bind(username)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.is_some())
+    let (exists,): (bool,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)")
+            .bind(username)
+            .fetch_one(pool)
+            .await?;
+    Ok(exists)
 }
 
 /// 创建账号密码用户。`status` 取 `active` 或 `pending`（待邮箱验证）。
