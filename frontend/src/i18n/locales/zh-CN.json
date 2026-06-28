@@ -1,0 +1,16 @@
+{
+  "app": {
+    "tagline": "翻译协作平台",
+    "switchLang": "English"
+  },
+  "home": {
+    "title": "欢迎使用 PRTS",
+    "subtitle": "开源的公开本地化协作平台",
+    "backendStatus": "后端状态",
+    "checking": "检测中…",
+    "online": "在线",
+    "offline": "离线",
+    "version": "版本",
+    "refresh": "刷新"
+  }
+}

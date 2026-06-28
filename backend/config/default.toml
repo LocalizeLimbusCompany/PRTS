@@ -1,0 +1,20 @@
+# PRTS 后端默认配置（非密钥）。
+#
+# 加载顺序（后者覆盖前者）：
+#   1. 本文件 config/default.toml
+#   2. 环境变量，前缀 PRTS__，分隔符 __（例：PRTS__SERVER__PORT=8000）
+#
+# 密钥与连接串（数据库 / Redis / JWT / OAuth / Qwen 等）请仅通过环境变量注入，
+# 切勿写入本文件或提交进仓库。详见 plan §15、docs/architecture.md §6。
+
+[server]
+host = "0.0.0.0"
+port = 3000
+
+[database]
+# 生产环境务必用 PRTS__DATABASE__URL 覆盖为真实连接串。
+url = "postgres://prts:prts@localhost:5432/prts"
+max_connections = 10
+
+[redis]
+url = "redis://localhost:6379"

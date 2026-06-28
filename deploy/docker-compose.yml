@@ -1,0 +1,68 @@
+# PRTS 全栈编排：backend + frontend + postgres(pgvector) + redis。
+# 用法（在仓库根目录）：
+#   cp .env.example .env
+#   docker compose -f deploy/docker-compose.yml up -d --build
+name: prts
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16 # 预装 pgvector，迁移会启用 vector / pg_trgm 扩展
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-prts}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prts}
+      POSTGRES_DB: ${POSTGRES_DB:-prts}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-prts} -d ${POSTGRES_DB:-prts}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    image: ghcr.io/localizelimbuscompany/prts-backend:latest
+    environment:
+      PRTS__SERVER__HOST: 0.0.0.0
+      PRTS__SERVER__PORT: '3000'
+      PRTS__DATABASE__URL: postgres://${POSTGRES_USER:-prts}:${POSTGRES_PASSWORD:-prts}@postgres:5432/${POSTGRES_DB:-prts}
+      PRTS__REDIS__URL: redis://redis:6379
+      RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+    ports:
+      - '3000:3000' # 暴露以便访问 Swagger UI（/swagger-ui）；生产可仅内网
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    image: ghcr.io/localizelimbuscompany/prts-frontend:latest
+    ports:
+      - '8080:80'
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

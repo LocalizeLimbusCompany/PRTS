@@ -1,0 +1,41 @@
+[package]
+name = "prts-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+default-run = "prts-api"
+
+[[bin]]
+name = "prts-api"
+path = "src/main.rs"
+
+[dependencies]
+# 内部 crate
+prts-common.workspace = true
+prts-db.workspace = true
+prts-core.workspace = true
+prts-auth.workspace = true
+prts-search.workspace = true
+prts-realtime.workspace = true
+
+# Web / 运行时
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+
+# 序列化
+serde.workspace = true
+serde_json.workspace = true
+
+# OpenAPI / Swagger
+utoipa.workspace = true
+utoipa-axum.workspace = true
+utoipa-swagger-ui.workspace = true
+
+# 可观测性 / 错误 / 启动
+tracing.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true

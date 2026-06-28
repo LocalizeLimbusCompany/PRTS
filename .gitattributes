@@ -1,0 +1,18 @@
+# 统一行尾：仓库内文本一律 LF，避免跨平台 CRLF 干扰（含 Docker/Linux 构建与 shell 脚本）。
+* text=auto eol=lf
+
+# Windows 专用脚本保持 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 二进制文件（不做行尾转换）
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary

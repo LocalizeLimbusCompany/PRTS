@@ -1,0 +1,4 @@
+# 固定使用 stable 工具链，保证团队与 CI 构建一致。
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,16 @@
+{
+  "app": {
+    "tagline": "Localization Platform",
+    "switchLang": "中文"
+  },
+  "home": {
+    "title": "Welcome to PRTS",
+    "subtitle": "An open, public localization collaboration platform",
+    "backendStatus": "Backend status",
+    "checking": "Checking…",
+    "online": "Online",
+    "offline": "Offline",
+    "version": "Version",
+    "refresh": "Refresh"
+  }
+}

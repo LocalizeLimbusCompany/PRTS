@@ -1,0 +1,69 @@
+# PRTS 后端 Cargo workspace。
+# 各 crate 职责见 docs/architecture.md §1。
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"            # 许可证待定（见 plan §20）
+authors = ["ZengXiaoPi"]
+repository = "https://github.com/LocalizeLimbusCompany/PRTS"
+rust-version = "1.80"
+
+# 统一管理依赖版本，子 crate 用 `xxx.workspace = true` 引用。
+[workspace.dependencies]
+# —— 内部 crate ——
+prts-common = { path = "crates/prts-common" }
+prts-db = { path = "crates/prts-db" }
+prts-core = { path = "crates/prts-core" }
+prts-auth = { path = "crates/prts-auth" }
+prts-search = { path = "crates/prts-search" }
+prts-realtime = { path = "crates/prts-realtime" }
+
+# —— 运行时 / Web ——
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
+# 注：WebSocket（axum "ws"）将在 P3 实时编辑器阶段再启用，P0 保持精简以加快构建。
+axum = { version = "0.8" }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+
+# —— 序列化 ——
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# —— 数据层 ——
+# P0 暂不启用 TLS：后端与 PostgreSQL 同处 Docker 内网（明文 TCP），可免去 ring/aws-lc-rs 的 C 构建。
+# 如需连接强制 SSL 的外部库，后续加 "tls-rustls-ring" 即可。
+# macros：提供 sqlx::migrate! 宏（编译期嵌入 migrations 目录，无需连库）。
+# 注意：不使用 query!/query_as! 编译期校验宏，故无需 DATABASE_URL。
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio", "postgres", "macros", "migrate", "chrono", "uuid",
+] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+# —— OpenAPI / Swagger ——
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-axum = "0.2"
+# 9.x 起支持 axum 0.8；vendored 内置 Swagger UI 资源，避免构建期从 GitHub 下载。
+utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
+
+# —— 可观测性 / 错误 / 配置 ——
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+thiserror = "2"
+anyhow = "1"
+# 仅启用 TOML 解析（+ 环境变量始终可用）。默认特性会引入 yaml/ini 解析器，
+# 进而经 hashbrown 0.14 拉入 ahash，其构建脚本在部分 Windows AV 下会被拦截，故关闭。
+config = { version = "0.14", default-features = false, features = ["toml"] }
+dotenvy = "0.15"
+
+# —— 通用类型 ——
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
