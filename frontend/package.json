@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "PRTS 前端 · Vue 3 + Quasar",
+  "packageManager": "pnpm@10.6.3",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
