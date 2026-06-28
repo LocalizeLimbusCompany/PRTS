@@ -2,8 +2,11 @@
 
 pub mod admin;
 pub mod auth;
+pub mod entries;
+pub mod files;
 pub mod health;
 pub mod meta;
+pub mod projects;
 pub mod users;
 
 use axum::Router;
@@ -43,6 +46,26 @@ pub fn app(state: AppState) -> Router {
         // 平台管理
         .routes(routes!(admin::get_settings, admin::update_settings))
         .routes(routes!(admin::grant_role))
+        // 项目
+        .routes(routes!(projects::create_project, projects::list_projects))
+        .routes(routes!(
+            projects::get_project,
+            projects::update_project,
+            projects::delete_project
+        ))
+        .routes(routes!(projects::list_members, projects::add_member))
+        .routes(routes!(projects::remove_member))
+        // 文件树
+        .routes(routes!(files::get_tree))
+        .routes(routes!(files::delete_file))
+        .routes(routes!(files::delete_folder))
+        // 上传 / 词条 / 导出
+        .routes(routes!(entries::upload))
+        .routes(routes!(entries::list_entries))
+        .routes(routes!(entries::get_entry, entries::update_entry))
+        .routes(routes!(entries::set_entry_flags))
+        .routes(routes!(entries::entry_history))
+        .routes(routes!(entries::export_project))
         .split_for_parts();
 
     router

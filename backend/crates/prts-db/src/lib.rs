@@ -4,7 +4,11 @@
 //! 以及账号 / API Key / 设置等数据访问（[`models`] + 各仓储模块）。
 
 pub mod api_keys;
+pub mod entries;
+pub mod files;
+pub mod memberships;
 pub mod models;
+pub mod projects;
 pub mod settings;
 pub mod users;
 

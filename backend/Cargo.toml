@@ -71,6 +71,8 @@ rand = "0.8"
 # ZOOT/OAuth 的服务端 HTTP 调用。native-tls：Windows 用 SChannel、Linux 用 OpenSSL（见后端 Dockerfile）。
 reqwest = { version = "0.12", features = ["json"] }
 url = "2"
+# 项目导出打包
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = 3

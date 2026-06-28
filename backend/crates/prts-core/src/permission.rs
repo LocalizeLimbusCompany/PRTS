@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::entry::EntryState;
+
 /// 全部权限节点的稳定字符串标识。
 pub mod nodes {
     // —— 平台级 ——
@@ -179,6 +181,22 @@ impl ProjectRole {
     pub fn has(self, node: &str) -> bool {
         self.nodes().contains(&node)
     }
+
+    /// 是否可修改「已锁定」词条（仅拥有者与管理）。见 plan §6。
+    pub fn can_edit_locked(self) -> bool {
+        matches!(self, ProjectRole::Owner | ProjectRole::Manager)
+    }
+}
+
+/// 把词条目标状态映射到所需的权限节点：
+/// 未翻译/已翻译/有疑问 需 `project.entry.edit`；已检查/已审核 需 `project.entry.review`。
+pub fn node_for_state(state: EntryState) -> &'static str {
+    match state {
+        EntryState::Untranslated | EntryState::Translated | EntryState::Questioned => {
+            nodes::PROJECT_ENTRY_EDIT
+        }
+        EntryState::Checked | EntryState::Reviewed => nodes::PROJECT_ENTRY_REVIEW,
+    }
 }
 
 #[cfg(test)]
@@ -233,5 +251,22 @@ mod tests {
     fn translator_and_reviewer_cannot_manage_members() {
         assert!(!ProjectRole::Translator.has(PROJECT_MEMBER_MANAGE));
         assert!(!ProjectRole::Reviewer.has(PROJECT_MEMBER_MANAGE));
+    }
+
+    #[test]
+    fn node_for_state_maps_edit_vs_review() {
+        assert_eq!(node_for_state(EntryState::Untranslated), PROJECT_ENTRY_EDIT);
+        assert_eq!(node_for_state(EntryState::Translated), PROJECT_ENTRY_EDIT);
+        assert_eq!(node_for_state(EntryState::Questioned), PROJECT_ENTRY_EDIT);
+        assert_eq!(node_for_state(EntryState::Checked), PROJECT_ENTRY_REVIEW);
+        assert_eq!(node_for_state(EntryState::Reviewed), PROJECT_ENTRY_REVIEW);
+    }
+
+    #[test]
+    fn only_owner_and_manager_edit_locked() {
+        assert!(ProjectRole::Owner.can_edit_locked());
+        assert!(ProjectRole::Manager.can_edit_locked());
+        assert!(!ProjectRole::Reviewer.can_edit_locked());
+        assert!(!ProjectRole::Translator.can_edit_locked());
     }
 }

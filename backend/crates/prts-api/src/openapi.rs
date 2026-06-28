@@ -19,6 +19,9 @@ use utoipa::OpenApi;
         (name = "auth", description = "注册 / 登录 / 刷新 / 登出 / OAuth"),
         (name = "user", description = "用户资料 / 关联账号 / API Key"),
         (name = "admin", description = "平台设置与角色任免"),
+        (name = "project", description = "项目与成员"),
+        (name = "file", description = "文件夹 / 文件树"),
+        (name = "entry", description = "上传 / 词条 / 历史 / 导出"),
     ),
 )]
 pub struct ApiDoc;

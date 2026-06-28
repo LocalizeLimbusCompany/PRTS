@@ -80,3 +80,19 @@ impl FromRequestParts<AppState> for CurrentUser {
         })
     }
 }
+
+/// 可选当前用户：无凭证或凭证无效时为 `None`（用于公开项目的游客只读）。
+pub struct MaybeUser(pub Option<CurrentUser>);
+
+impl FromRequestParts<AppState> for MaybeUser {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(MaybeUser(
+            CurrentUser::from_request_parts(parts, state).await.ok(),
+        ))
+    }
+}

@@ -53,3 +53,94 @@ pub struct Setting {
     pub updated_at: DateTime<Utc>,
     pub updated_by: Option<i64>,
 }
+
+/// 项目行。
+#[derive(Debug, Clone, FromRow)]
+pub struct Project {
+    pub id: i64,
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    pub visibility: String,
+    pub source_langs: Vec<String>,
+    pub target_lang: String,
+    pub owner_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 项目成员行。
+#[derive(Debug, Clone, FromRow)]
+pub struct Membership {
+    pub project_id: i64,
+    pub user_id: i64,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 成员信息（含用户名/头像，用于成员列表展示）。
+#[derive(Debug, Clone, FromRow)]
+pub struct MemberInfo {
+    pub user_id: i64,
+    pub username: String,
+    pub avatar_url: Option<String>,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 文件夹行。
+#[derive(Debug, Clone, FromRow)]
+pub struct Folder {
+    pub id: i64,
+    pub project_id: i64,
+    pub parent_id: Option<i64>,
+    pub name: String,
+    pub path: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 文件行。
+#[derive(Debug, Clone, FromRow)]
+pub struct File {
+    pub id: i64,
+    pub project_id: i64,
+    pub folder_id: Option<i64>,
+    pub name: String,
+    pub path: String,
+    pub entry_count: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 词条行。
+#[derive(Debug, Clone, FromRow)]
+pub struct Entry {
+    pub id: i64,
+    pub file_id: i64,
+    pub project_id: i64,
+    pub key: String,
+    pub original: serde_json::Value,
+    pub context: String,
+    pub translation: String,
+    pub state: String,
+    pub locked: bool,
+    pub hidden: bool,
+    pub version: i64,
+    pub updated_by: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 词条历史行。
+#[derive(Debug, Clone, FromRow)]
+pub struct EntryVersion {
+    pub id: i64,
+    pub entry_id: i64,
+    pub version: i64,
+    pub kind: String,
+    pub translation: Option<String>,
+    pub state: Option<String>,
+    pub original: Option<serde_json::Value>,
+    pub editor_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}

@@ -4,7 +4,7 @@
 //! 本地无 DB 时默认不编译；CI 会起 Postgres 服务后执行（见 .github/workflows/ci.yml）。
 #![cfg(feature = "db-tests")]
 
-use prts_db::{api_keys, settings, users};
+use prts_db::{api_keys, entries, files, memberships, projects, settings, users};
 
 async fn pool() -> prts_db::Db {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL 未设置");
@@ -124,6 +124,150 @@ async fn users_api_keys_settings_oauth_roundtrip() {
         .await
         .unwrap();
     sqlx::query("DELETE FROM settings WHERE key = 'test.flag'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn projects_files_entries_roundtrip() {
+    let pool = pool().await;
+
+    sqlx::query("DELETE FROM projects WHERE slug = 'itest-proj'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let owner = users::create_password_user(&pool, "itest_owner", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // 项目 + 成员
+    let proj = projects::create(
+        &pool,
+        "itest-proj",
+        "ITest",
+        "",
+        "public",
+        &["en".to_string(), "ja".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&pool, proj.id, owner.id, "owner")
+        .await
+        .unwrap();
+    assert_eq!(
+        memberships::find_role(&pool, proj.id, owner.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("owner")
+    );
+    assert!(projects::slug_exists(&pool, "itest-proj").await.unwrap());
+
+    // 按路径上传（自动建文件夹/文件）
+    let file = files::ensure_file_at_path(&pool, proj.id, "dialog/ch1.json")
+        .await
+        .unwrap();
+    assert_eq!(file.path, "dialog/ch1.json");
+
+    let initial = vec![
+        entries::UploadEntry {
+            key: "k1".to_string(),
+            original: serde_json::json!({ "en": "Hello", "ja": "こんにちは" }),
+            context: Some("greeting".to_string()),
+            translation: None,
+            state: None,
+        },
+        entries::UploadEntry {
+            key: "k2".to_string(),
+            original: serde_json::json!({ "en": "Bye" }),
+            context: None,
+            translation: None,
+            state: None,
+        },
+    ];
+    let stats = entries::bulk_upsert(&pool, file.id, proj.id, &initial, Some(owner.id))
+        .await
+        .unwrap();
+    assert_eq!(stats.created, 2);
+    files::refresh_entry_count(&pool, file.id).await.unwrap();
+
+    let listed = entries::list(&pool, proj.id, &entries::EntryFilter::default(), None, 100)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 2);
+    let k1 = listed.iter().find(|e| e.key == "k1").unwrap().clone();
+    assert_eq!(k1.state, "untranslated");
+
+    // 乐观锁更新
+    let updated = entries::update_translation(
+        &pool,
+        k1.id,
+        k1.version,
+        "你好",
+        "translated",
+        "translate",
+        Some(owner.id),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(updated.translation, "你好");
+    assert_eq!(updated.state, "translated");
+    // 用过期版本号 → 冲突
+    let conflict = entries::update_translation(
+        &pool,
+        k1.id,
+        k1.version,
+        "x",
+        "translated",
+        "edit",
+        Some(owner.id),
+    )
+    .await
+    .unwrap();
+    assert!(conflict.is_none());
+
+    // 重传：同 key 源文变化 → 保留译文、置未翻译、记历史
+    let reupload = vec![entries::UploadEntry {
+        key: "k1".to_string(),
+        original: serde_json::json!({ "en": "Hello!", "ja": "こんにちは" }),
+        context: None,
+        translation: None,
+        state: None,
+    }];
+    let stats2 = entries::bulk_upsert(&pool, file.id, proj.id, &reupload, Some(owner.id))
+        .await
+        .unwrap();
+    assert_eq!(stats2.updated, 1);
+    let k1b = entries::get(&pool, proj.id, k1.id).await.unwrap().unwrap();
+    assert_eq!(k1b.state, "untranslated"); // 已重置
+    assert_eq!(k1b.translation, "你好"); // 译文保留
+    let history = entries::list_versions(&pool, k1.id, 50).await.unwrap();
+    assert!(history.iter().any(|v| v.kind == "source_update"));
+
+    // 锁定标志
+    let locked = entries::set_flags(&pool, proj.id, k1.id, Some(true), None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(locked.locked);
+
+    // 导出列表
+    let export = entries::list_for_export(&pool, proj.id).await.unwrap();
+    assert_eq!(export.len(), 2);
+
+    // 级联清理
+    projects::delete(&pool, proj.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_owner'")
         .execute(&pool)
         .await
         .unwrap();

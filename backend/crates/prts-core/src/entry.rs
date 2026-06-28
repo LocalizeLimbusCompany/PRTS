@@ -23,6 +23,18 @@ pub enum EntryState {
 }
 
 impl EntryState {
+    /// 解析线上线标识。
+    pub fn parse(s: &str) -> Option<EntryState> {
+        match s {
+            "untranslated" => Some(Self::Untranslated),
+            "translated" => Some(Self::Translated),
+            "questioned" => Some(Self::Questioned),
+            "checked" => Some(Self::Checked),
+            "reviewed" => Some(Self::Reviewed),
+            _ => None,
+        }
+    }
+
     /// 稳定字符串标识。
     pub fn as_str(&self) -> &'static str {
         match self {
