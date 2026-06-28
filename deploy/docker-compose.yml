@@ -44,7 +44,8 @@ services:
       PRTS__REDIS__URL: redis://redis:6379
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
     ports:
-      - '3000:3000' # 暴露以便访问 Swagger UI（/swagger-ui）；生产可仅内网
+      # 宿主机端口可经 .env 的 BACKEND_PORT 调整（默认 3000 被占用时改这里）
+      - '${BACKEND_PORT:-3000}:3000' # 暴露以便访问 Swagger UI（/swagger-ui）；生产可仅内网
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,7 +59,8 @@ services:
       dockerfile: deploy/frontend.Dockerfile
     image: ghcr.io/localizelimbuscompany/prts-frontend:latest
     ports:
-      - '8080:80'
+      # 宿主机端口可经 .env 的 FRONTEND_PORT 调整（默认 8080 被占用时改这里）
+      - '${FRONTEND_PORT:-8080}:80'
     depends_on:
       - backend
     restart: unless-stopped
