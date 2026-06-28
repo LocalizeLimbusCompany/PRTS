@@ -1,0 +1,88 @@
+# ===== Secrets / environment =====
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+*.pem
+*.key
+
+# ===== Rust / backend =====
+/backend/target/
+target/
+**/*.rs.bk
+*.pdb
+# sqlx offline data is committed on purpose; uncomment to ignore:
+# .sqlx/
+
+# ===== Node / frontend (Vue + Quasar + pnpm) =====
+node_modules/
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.quasar/
+/frontend/src-capacitor/
+/frontend/src-cordova/
+.pnpm-store/
+.pnp.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== Build / dist =====
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ===== Docker =====
+# compose override for local tweaks (keep the committed one)
+docker-compose.override.yml
+
+# ===== Logs / runtime =====
+*.log
+logs/
+pids/
+*.pid
+*.seed
+
+# ===== Test / coverage =====
+coverage/
+*.lcov
+.nyc_output/
+tarpaulin-report.html
+cobertura.xml
+
+# ===== Databases / volumes (local dev) =====
+*.sqlite
+*.sqlite3
+*.db
+/data/
+/deploy/data/
+pgdata/
+redisdata/
+
+# ===== IDE / editor =====
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+*.swo
+*~
+.fleet/
+.zed/
+
+# ===== OS =====
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ===== Misc =====
+*.bak
+*.tmp
+.cache/
+tmp/
