@@ -1,0 +1,258 @@
+/* ============================================================
+   PRTS 终端风设计系统 —— 亮/深双主题
+   UI 一律用 Quasar 组件；此处提供分主题配色/字体/纹理与少量工具类。
+   主题切换基于 Quasar Dark 插件（body.body--dark / body.body--light）。
+   ============================================================ */
+
+:root {
+  --font-display: 'Chakra Petch', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'Segoe UI',
+    sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --prts-radius: 4px;
+  --prts-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  --prts-nav-h: 56px;
+}
+
+/* —— 深色（默认终端风）—— */
+body.body--dark {
+  --prts-bg: #0b0e14;
+  --prts-bg-elev: #0f131c;
+  --prts-panel: #12161f;
+  --prts-panel-2: #171d28;
+  --prts-border: #232b38;
+  --prts-border-soft: #1b212c;
+  --prts-text: #c9d4e0;
+  --prts-text-strong: #eef3f8;
+  --prts-text-dim: #7e8a9a;
+  --prts-text-faint: #59636f;
+  --prts-accent: #36c5d0;
+  --prts-accent-strong: #5fe3ec;
+  --prts-accent-dim: #1c5b61;
+  --prts-amber: #f0a92c;
+  --prts-violet: #8b7df0;
+  --prts-danger: #f85149;
+  --prts-ok: #3fb950;
+  --prts-header-bg: rgba(11, 14, 20, 0.82);
+  --grid-line: rgba(255, 255, 255, 0.018);
+  --glow: rgba(54, 197, 208, 0.08);
+  --st-untranslated: #59636f;
+  --st-translated: #36c5d0;
+  --st-questioned: #f0a92c;
+  --st-checked: #8b7df0;
+  --st-reviewed: #3fb950;
+}
+
+/* —— 浅色 —— */
+body.body--light {
+  --prts-bg: #eef1f6;
+  --prts-bg-elev: #ffffff;
+  --prts-panel: #ffffff;
+  --prts-panel-2: #f5f8fb;
+  --prts-border: #d8e0e9;
+  --prts-border-soft: #e6ebf1;
+  --prts-text: #36434f;
+  --prts-text-strong: #0e1620;
+  --prts-text-dim: #61707f;
+  --prts-text-faint: #97a4b1;
+  --prts-accent: #0d8c99;
+  --prts-accent-strong: #0aa6b4;
+  --prts-accent-dim: #cdeef1;
+  --prts-amber: #b9750a;
+  --prts-violet: #6a5acd;
+  --prts-danger: #d13b33;
+  --prts-ok: #2f9e44;
+  --prts-header-bg: rgba(255, 255, 255, 0.85);
+  --grid-line: rgba(12, 35, 56, 0.045);
+  --glow: rgba(13, 140, 153, 0.07);
+  --st-untranslated: #8b97a5;
+  --st-translated: #0d8c99;
+  --st-questioned: #b9750a;
+  --st-checked: #6a5acd;
+  --st-reviewed: #2f9e44;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--prts-bg);
+  background-image:
+    radial-gradient(900px 420px at 78% -8%, var(--glow), transparent 60%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    44px 44px,
+    44px 44px;
+  background-attachment: fixed;
+  color: var(--prts-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--prts-border);
+  border: 2px solid var(--prts-bg);
+  border-radius: 6px;
+}
+
+a {
+  color: var(--prts-accent);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--prts-accent-strong);
+}
+
+/* —— Quasar 组件主题覆盖（跟随变量，亮深通用）—— */
+.q-card {
+  background: var(--prts-panel);
+  border: 1px solid var(--prts-border);
+  box-shadow: none;
+}
+.q-menu,
+.q-table__card {
+  background: var(--prts-panel-2);
+}
+.q-table th {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--prts-text-dim);
+}
+.q-btn {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+/* —— 工具类 —— */
+.prts-container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 28px 22px 64px;
+}
+.prts-container--narrow {
+  max-width: 920px;
+}
+.prts-h1 {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--prts-text-strong);
+  margin: 0;
+}
+.prts-h2 {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--prts-text-strong);
+  margin: 0;
+}
+.prts-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--prts-text-dim);
+}
+.prts-mono {
+  font-family: var(--font-mono);
+}
+.prts-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+}
+.prts-dim {
+  color: var(--prts-text-dim);
+}
+.text-accent {
+  color: var(--prts-accent);
+}
+
+.state-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.state-untranslated {
+  background: var(--st-untranslated);
+}
+.state-translated {
+  background: var(--st-translated);
+}
+.state-questioned {
+  background: var(--st-questioned);
+}
+.state-checked {
+  background: var(--st-checked);
+}
+.state-reviewed {
+  background: var(--st-reviewed);
+}
+
+.prts-empty {
+  text-align: center;
+  color: var(--prts-text-dim);
+  padding: 60px 20px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.auth-page {
+  min-height: calc(100vh - var(--prts-nav-h));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 384px;
+  padding: 30px 28px;
+  position: relative;
+  overflow: hidden;
+}
+.auth-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--prts-accent), transparent 70%);
+}
+.auth-foot {
+  text-align: center;
+  color: var(--prts-text-dim);
+  font-size: 13px;
+  margin-top: 14px;
+}
+
+.prts-fade-enter-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+.prts-fade-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
