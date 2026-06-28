@@ -1,7 +1,15 @@
 //! `prts-db` —— 数据访问基础设施。
 //!
-//! 提供 PostgreSQL 连接池、Redis 连接管理器、迁移执行与健康探测。
-//! 不含领域查询（那些归属各业务 crate），仅负责连接与生命周期。
+//! 提供 PostgreSQL 连接池、Redis 连接管理器、迁移执行与健康探测，
+//! 以及账号 / API Key / 设置等数据访问（[`models`] + 各仓储模块）。
+
+pub mod api_keys;
+pub mod models;
+pub mod settings;
+pub mod users;
+
+/// 数据库错误别名，便于上层映射而无需直接依赖 sqlx。
+pub use sqlx::Error as DbError;
 
 use redis::aio::ConnectionManager;
 use sqlx::postgres::PgPoolOptions;

@@ -10,3 +10,15 @@ repository.workspace = true
 prts-common.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
+
+# 加密 / 编码（纯 Rust）
+argon2.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+base64.workspace = true
+rand.workspace = true
+
+# OAuth2 服务端调用
+reqwest.workspace = true
+url.workspace = true

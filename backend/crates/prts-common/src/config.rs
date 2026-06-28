@@ -15,6 +15,85 @@ pub struct Settings {
     pub database: DatabaseSettings,
     #[serde(default)]
     pub redis: RedisSettings,
+    #[serde(default)]
+    pub auth: AuthSettings,
+}
+
+/// 认证相关配置。密钥与 OAuth 凭证经环境变量注入（`PRTS__AUTH__*`）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthSettings {
+    /// JWT 签名密钥（HS256）。生产务必经 `PRTS__AUTH__JWT_SECRET` 覆盖。
+    pub jwt_secret: String,
+    /// access token 有效期（秒）。
+    pub access_ttl_secs: i64,
+    /// refresh token 有效期（秒）。
+    pub refresh_ttl_secs: i64,
+    /// 启动时授予 super_admin 的用户名（可空）。
+    #[serde(default)]
+    pub bootstrap_admin: String,
+    /// 对外基础地址，用于拼接 OAuth 回调与登录后跳转，例如 `https://prts.zeroasso.top`。
+    pub public_base_url: String,
+    /// ZOOT OAuth provider 配置。
+    #[serde(default)]
+    pub zoot: ZootSettings,
+}
+
+/// ZOOT OAuth2 provider 配置。`client_id` 为空表示未启用。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ZootSettings {
+    #[serde(default)]
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+    #[serde(default)]
+    pub authorize_url: String,
+    #[serde(default)]
+    pub token_url: String,
+    #[serde(default)]
+    pub userinfo_url: String,
+    #[serde(default = "default_zoot_scopes")]
+    pub scopes: Vec<String>,
+}
+
+fn default_zoot_scopes() -> Vec<String> {
+    vec![
+        "profile".to_string(),
+        "work".to_string(),
+        "external".to_string(),
+    ]
+}
+
+impl Default for AuthSettings {
+    fn default() -> Self {
+        Self {
+            jwt_secret: "dev-insecure-change-me".to_string(),
+            access_ttl_secs: 900,        // 15 分钟
+            refresh_ttl_secs: 2_592_000, // 30 天
+            bootstrap_admin: String::new(),
+            public_base_url: "http://localhost:8080".to_string(),
+            zoot: ZootSettings::default(),
+        }
+    }
+}
+
+impl Default for ZootSettings {
+    fn default() -> Self {
+        Self {
+            client_id: String::new(),
+            client_secret: String::new(),
+            authorize_url: String::new(),
+            token_url: String::new(),
+            userinfo_url: String::new(),
+            scopes: default_zoot_scopes(),
+        }
+    }
+}
+
+impl ZootSettings {
+    /// 是否已配置（启用 ZOOT 登录）。
+    pub fn is_configured(&self) -> bool {
+        !self.client_id.is_empty() && !self.authorize_url.is_empty()
+    }
 }
 
 /// HTTP 服务配置。

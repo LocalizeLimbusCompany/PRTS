@@ -11,6 +11,13 @@ default-run = "prts-api"
 name = "prts-api"
 path = "src/main.rs"
 
+[features]
+# 需要真实 Postgres 的集成测试（CI 起服务后启用）。
+db-tests = []
+
+[dev-dependencies]
+sqlx.workspace = true
+
 [dependencies]
 # 内部 crate
 prts-common.workspace = true
@@ -25,6 +32,10 @@ tokio.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
+
+# 数据 / 会话
+redis.workspace = true
+chrono.workspace = true
 
 # 序列化
 serde.workspace = true

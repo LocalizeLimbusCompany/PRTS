@@ -16,6 +16,9 @@ use utoipa::OpenApi;
     tags(
         (name = "health", description = "存活与就绪探测"),
         (name = "meta", description = "服务元信息"),
+        (name = "auth", description = "注册 / 登录 / 刷新 / 登出 / OAuth"),
+        (name = "user", description = "用户资料 / 关联账号 / API Key"),
+        (name = "admin", description = "平台设置与角色任免"),
     ),
 )]
 pub struct ApiDoc;

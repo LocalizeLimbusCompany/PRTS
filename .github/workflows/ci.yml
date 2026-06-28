@@ -16,6 +16,21 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16 # 预装 pgvector，迁移会启用 vector / pg_trgm
+        env:
+          POSTGRES_USER: prts
+          POSTGRES_PASSWORD: prts
+          POSTGRES_DB: prts_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U prts" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -27,6 +42,11 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Integration tests (Postgres)
+        run: cargo test -p prts-api --features db-tests
+        env:
+          DATABASE_URL: postgres://prts:prts@localhost:5432/prts_test
+          PRTS__REDIS__URL: redis://localhost:6379
 
   frontend:
     name: Frontend (lint / build)

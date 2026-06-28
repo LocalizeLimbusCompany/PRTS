@@ -1,7 +1,10 @@
 //! 路由装配。
 
+pub mod admin;
+pub mod auth;
 pub mod health;
 pub mod meta;
+pub mod users;
 
 use axum::Router;
 use tower_http::compression::CompressionLayer;
@@ -25,6 +28,21 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(health::liveness))
         .routes(routes!(health::readiness))
         .routes(routes!(meta::version))
+        // 认证
+        .routes(routes!(auth::register))
+        .routes(routes!(auth::login))
+        .routes(routes!(auth::refresh))
+        .routes(routes!(auth::logout))
+        .routes(routes!(auth::oauth_start))
+        .routes(routes!(auth::oauth_callback))
+        // 用户自助
+        .routes(routes!(users::me, users::update_me))
+        .routes(routes!(users::my_accounts))
+        .routes(routes!(users::create_api_key, users::list_api_keys))
+        .routes(routes!(users::revoke_api_key))
+        // 平台管理
+        .routes(routes!(admin::get_settings, admin::update_settings))
+        .routes(routes!(admin::grant_role))
         .split_for_parts();
 
     router

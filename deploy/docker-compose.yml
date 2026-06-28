@@ -37,6 +37,10 @@ services:
       context: ..
       dockerfile: deploy/backend.Dockerfile
     image: ghcr.io/localizelimbuscompany/prts-backend:latest
+    # 从根目录 .env 注入认证等 PRTS__* 配置（缺失则忽略）。
+    env_file:
+      - path: ../.env
+        required: false
     environment:
       PRTS__SERVER__HOST: 0.0.0.0
       PRTS__SERVER__PORT: '3000'

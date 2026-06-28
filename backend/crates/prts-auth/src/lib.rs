@@ -5,7 +5,15 @@
 //! - 内置 `password`、通用 `oauth2`（Authorization Code + PKCE）；
 //! - ZOOT 是 `oauth2` provider 的一个配置实例 + 字段映射器。
 //!
-//! P0 仅定义接口骨架与归一化身份类型；具体 provider 实现与 JWT/会话见 P1。
+//! 加密原语见子模块：[`password`]、[`jwt`]、[`token`]、[`pkce`]。
+
+pub mod jwt;
+pub mod oauth2;
+pub mod password;
+pub mod pkce;
+pub mod token;
+
+pub use oauth2::{AuthorizationStart, OAuth2Config, OAuth2Error, OAuth2Provider};
 
 use serde::{Deserialize, Serialize};
 

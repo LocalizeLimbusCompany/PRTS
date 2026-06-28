@@ -10,8 +10,9 @@ RUN cargo build --release --manifest-path backend/Cargo.toml --bin prts-api
 # ---- 运行阶段 ----
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
+# libssl3：reqwest 用 native-tls，Linux 上动态链接 OpenSSL（ZOOT OAuth 调用需要）。
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl libssl3 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -r -u 10001 prts
 # 二进制 + 默认配置（迁移已在编译期嵌入二进制）

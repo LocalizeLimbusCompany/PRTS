@@ -38,7 +38,7 @@ serde_json = "1"
 # macros：提供 sqlx::migrate! 宏（编译期嵌入 migrations 目录，无需连库）。
 # 注意：不使用 query!/query_as! 编译期校验宏，故无需 DATABASE_URL。
 sqlx = { version = "0.8", default-features = false, features = [
-    "runtime-tokio", "postgres", "macros", "migrate", "chrono", "uuid",
+    "runtime-tokio", "postgres", "macros", "migrate", "chrono", "uuid", "json",
 ] }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
@@ -61,6 +61,16 @@ dotenvy = "0.15"
 # —— 通用类型 ——
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+# —— 认证 / 加密（纯 Rust，避免 C / ring 构建）——
+argon2 = { version = "0.5", features = ["std"] }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+# ZOOT/OAuth 的服务端 HTTP 调用。native-tls：Windows 用 SChannel、Linux 用 OpenSSL（见后端 Dockerfile）。
+reqwest = { version = "0.12", features = ["json"] }
+url = "2"
 
 [profile.release]
 opt-level = 3
