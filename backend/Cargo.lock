@@ -1626,7 +1626,10 @@ name = "prts-search"
 version = "0.1.0"
 dependencies = [
  "prts-common",
+ "prts-db",
  "serde",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

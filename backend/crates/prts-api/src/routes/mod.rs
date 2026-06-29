@@ -7,6 +7,7 @@ pub mod files;
 pub mod health;
 pub mod meta;
 pub mod projects;
+pub mod search;
 pub mod users;
 pub mod ws;
 
@@ -20,9 +21,27 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_swagger_ui::SwaggerUi;
 
+use prts_core::EntryState;
+
 use crate::error::ApiError;
 use crate::openapi::ApiDoc;
 use crate::state::AppState;
+
+// ============================= 公用工具 =============================
+
+/// 解析逗号分隔的词条状态字符串，过滤非法值，返回合法状态列表。
+///
+/// 供 `list_entries` 与 `search_entries` 共用，行为保持一致。
+pub(crate) fn parse_states(s: Option<&str>) -> Vec<String> {
+    s.map(|raw| {
+        raw.split(',')
+            .map(str::trim)
+            .filter(|x| EntryState::parse(x).is_some())
+            .map(|x| x.to_string())
+            .collect()
+    })
+    .unwrap_or_default()
+}
 
 /// 装配完整应用路由（含状态与中间件）。
 ///
@@ -68,6 +87,8 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(entries::set_entry_flags))
         .routes(routes!(entries::entry_history))
         .routes(routes!(entries::export_project))
+        // 混合搜索
+        .routes(routes!(search::search_entries))
         .split_for_parts();
 
     router

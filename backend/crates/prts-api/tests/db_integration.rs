@@ -467,3 +467,125 @@ async fn search_trgm_and_fts_recall() {
         .await
         .unwrap();
 }
+
+/// 验证 prts-search::orchestrator::run 端到端：
+/// - 给定一个含已翻译词条的项目，orchestrator 应为匹配查询词的词条返回命中；
+/// - 对无关词条不应出现在结果中；
+/// - 结果中应包含 (Entry, relevance) 元组，relevance > 0。
+#[tokio::test]
+async fn search_orchestrator_returns_ranked_hits() {
+    let pool = pool().await;
+
+    // —— 清理上次残留 ——
+    sqlx::query("DELETE FROM projects WHERE slug = 'itest-orch-search'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_orch_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // —— 建 owner ——
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let owner = users::create_password_user(&pool, "itest_orch_owner", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— 建项目：源语言 'zh-Hans'，目标 'en' ——
+    let proj = projects::create(
+        &pool,
+        "itest-orch-search",
+        "ITest Orchestrator Search",
+        "",
+        "public",
+        &["zh-Hans".to_string()],
+        "en",
+        owner.id,
+    )
+    .await
+    .unwrap();
+
+    // —— 建文件并插入词条 ——
+    let file = files::ensure_file_at_path(&pool, proj.id, "orch/test.json")
+        .await
+        .unwrap();
+
+    let batch = vec![
+        entries::UploadEntry {
+            key: "orch1".to_string(),
+            original: serde_json::json!({ "zh-Hans": "明日之后" }),
+            context: None,
+            translation: Some("state of survival".to_string()),
+            state: Some("translated".to_string()),
+        },
+        entries::UploadEntry {
+            key: "orch2".to_string(),
+            original: serde_json::json!({ "zh-Hans": "完全不相关词条" }),
+            context: None,
+            translation: Some("completely irrelevant entry".to_string()),
+            state: Some("translated".to_string()),
+        },
+    ];
+    let stats = entries::bulk_upsert(&pool, file.id, proj.id, &batch, Some(owner.id))
+        .await
+        .unwrap();
+    assert_eq!(stats.created, 2, "应创建 2 条词条");
+
+    let orch1_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'orch1'")
+            .bind(proj.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let orch2_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'orch2'")
+            .bind(proj.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // —— 调用 orchestrator.run ——
+    let results = prts_search::orchestrator::run(
+        &pool,
+        prts_search::orchestrator::OrchestratorInput {
+            project_id: proj.id,
+            q: "survival",
+            src_lang: "zh-Hans",
+            tgt_lang: "en",
+            file_ids: &[],
+            states: &[],
+            include_hidden: false,
+            per_path: 100,
+            top_k: 200,
+            sort: prts_search::SortBy::Relevance,
+            vector_ids: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    // 结果列表非空
+    assert!(!results.is_empty(), "orchestrator 应返回至少一条命中");
+
+    let hit_ids: Vec<i64> = results.iter().map(|(e, _)| e.id).collect();
+
+    // "survival" 应命中 orch1（translation = "state of survival"）
+    assert!(
+        hit_ids.contains(&orch1_id),
+        "orchestrator 应返回 orch1（translation 含 'survival'），实际结果 ids: {hit_ids:?}"
+    );
+
+    // 无关词条 orch2 不应出现在结果中
+    assert!(
+        !hit_ids.contains(&orch2_id),
+        "无关词条 orch2 不应出现在 'survival' 的搜索结果中，实际结果 ids: {hit_ids:?}"
+    );
+
+    // —— 级联清理 ——
+    projects::delete(&pool, proj.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_orch_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}

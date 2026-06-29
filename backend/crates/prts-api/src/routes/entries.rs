@@ -174,17 +174,7 @@ pub async fn list_entries(
     let access = paccess::load(&state, user.as_ref(), id).await?;
     access.require_view()?;
 
-    let states: Vec<String> = q
-        .state
-        .as_deref()
-        .map(|s| {
-            s.split(',')
-                .map(str::trim)
-                .filter(|x| EntryState::parse(x).is_some())
-                .map(|x| x.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+    let states = super::parse_states(q.state.as_deref());
 
     // 仅当成员可编辑时才允许查看隐藏词条
     let include_hidden = q.include_hidden && access.has_node(nodes::PROJECT_ENTRY_EDIT);
