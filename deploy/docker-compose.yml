@@ -6,7 +6,10 @@ name: prts
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16 # 预装 pgvector，迁移会启用 vector / pg_trgm 扩展
+    build:
+      context: ..
+      dockerfile: deploy/postgres.Dockerfile
+    image: ghcr.io/localizelimbuscompany/prts-postgres:latest # 预装 pgvector + zhparser
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-prts}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prts}
