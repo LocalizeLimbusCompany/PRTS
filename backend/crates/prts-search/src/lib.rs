@@ -5,6 +5,8 @@
 //!
 //! P0 仅定义向量化抽象与检索过滤骨架；具体编排与 SQL 见 P4。
 
+pub mod rrf;
+
 use serde::{Deserialize, Serialize};
 
 /// 文本向量化提供方。默认实现调用 Qwen 云 API；可替换为本地模型或其它服务。
