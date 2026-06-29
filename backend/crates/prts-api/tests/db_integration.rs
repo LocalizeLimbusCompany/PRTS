@@ -272,3 +272,89 @@ async fn projects_files_entries_roundtrip() {
         .await
         .unwrap();
 }
+
+/// 验证迁移 0004 的触发器：
+/// - 插入中文源词条后，`source_text` 由触发器从 `original` JSON 取出；
+/// - `source_tsv` 经 zhparser 分词，长度大于 0（zhparser 在 CI Postgres 镜像中可用）。
+///
+/// 仅在 CI 环境（带 zhparser 的 Postgres 镜像）运行；本地无 DB 时只编译不执行。
+#[tokio::test]
+async fn migration_0004_trigger_populates_source_text_and_zhparser_tsv() {
+    let pool = pool().await;
+
+    // —— 清理上次残留 ——
+    sqlx::query("DELETE FROM projects WHERE slug = 'itest-zh-search'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_zh_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // —— 建 owner（owner_id NOT NULL REFERENCES users） ——
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let owner = users::create_password_user(&pool, "itest_zh_owner", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— 建项目：source_langs 首位为 'zh-Hans'，触发器用 source_langs[1] 提取 ——
+    let proj = projects::create(
+        &pool,
+        "itest-zh-search",
+        "ITest ZH Search",
+        "",
+        "public",
+        &["zh-Hans".to_string()],
+        "en",
+        owner.id,
+    )
+    .await
+    .unwrap();
+
+    // —— 建文件 ——
+    let file = files::ensure_file_at_path(&pool, proj.id, "search/test.json")
+        .await
+        .unwrap();
+
+    // —— 插入中文原文词条，state='translated' ——
+    // original 的键必须与 source_langs[1]（即 'zh-Hans'）一致，触发器才能提取源文本。
+    let batch = vec![entries::UploadEntry {
+        key: "zh_test_key".to_string(),
+        original: serde_json::json!({ "zh-Hans": "今天天气很好" }),
+        context: None,
+        translation: Some("nice weather".to_string()),
+        state: Some("translated".to_string()),
+    }];
+    let stats = entries::bulk_upsert(&pool, file.id, proj.id, &batch, Some(owner.id))
+        .await
+        .unwrap();
+    assert_eq!(stats.created, 1, "应创建 1 条词条");
+
+    // —— 验证触发器效果 ——
+    // source_text：触发器从 original->>'zh-Hans' 填充
+    // source_tsv：触发器对中文源文用 zhparser 分词（prts_zh 配置），CI 必有 zhparser
+    let (source_text, tsv_text): (String, String) = sqlx::query_as(
+        "SELECT source_text, source_tsv::text FROM entries WHERE project_id = $1 AND key = 'zh_test_key'",
+    )
+    .bind(proj.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        source_text, "今天天气很好",
+        "触发器应将 original->>'zh-Hans' 写入 source_text"
+    );
+    assert!(
+        !tsv_text.is_empty(),
+        "zhparser 应将中文分词写入 source_tsv（实际得到空串，请确认 zhparser 已安装）"
+    );
+
+    // —— 级联清理 ——
+    projects::delete(&pool, proj.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_zh_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
