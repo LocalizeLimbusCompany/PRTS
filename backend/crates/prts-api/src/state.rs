@@ -19,6 +19,13 @@ pub struct AppState {
     pub zoot: Arc<Option<OAuth2Provider>>,
     /// 实时协作 hub（WebSocket + Redis pub/sub）。
     pub realtime: prts_realtime::Hub,
+    /// Qwen 向量化 provider（Some 当且仅当 env 配了 api_key）。
+    // T15/T16 将读取这两个字段；此处临时抑制 dead_code lint。
+    #[allow(dead_code)]
+    pub embedder: Arc<Option<prts_search::qwen::QwenProvider>>,
+    /// 搜索运行时配置（管理后台可热改；worker / 查询每次读快照）。
+    #[allow(dead_code)]
+    pub search_rt: Arc<tokio::sync::RwLock<prts_db::search_settings::SearchConfig>>,
 }
 
 impl AppState {

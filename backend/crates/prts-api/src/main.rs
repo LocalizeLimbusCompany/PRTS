@@ -51,6 +51,21 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("ZOOT OAuth provider enabled");
     }
 
+    // 向量化 provider：仅当 env 配了 key 才构造（决定 Some/None）。
+    let embedder = std::sync::Arc::new(
+        if settings.embedding.qwen.is_configured() {
+            Some(prts_search::qwen::QwenProvider::new(
+                settings.embedding.qwen.api_key.clone(),
+                settings.embedding.qwen.dimensions,
+            ))
+        } else {
+            None
+        },
+    );
+    // 搜索运行时配置（从 settings 表加载，缺省默认）。
+    let search_cfg = prts_db::search_settings::get(&db).await.unwrap_or_default();
+    let search_rt = std::sync::Arc::new(tokio::sync::RwLock::new(search_cfg));
+
     // 实时协作 hub（启动 Redis 订阅中继）。
     let realtime = prts_realtime::Hub::new(&settings.redis.url)
         .await
@@ -63,6 +78,8 @@ async fn main() -> anyhow::Result<()> {
         settings: Arc::new(settings),
         zoot: Arc::new(zoot),
         realtime,
+        embedder,
+        search_rt,
     };
     let app = routes::app(state);
 
