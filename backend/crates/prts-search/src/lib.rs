@@ -45,3 +45,10 @@ pub enum SortBy {
     /// 按更新时间。
     UpdatedAt,
 }
+
+/// 融合后的命中：entry id + 相关度分（RRF）。
+#[derive(Debug, Clone, Copy)]
+pub struct SearchHit {
+    pub id: i64,
+    pub score: f64,
+}
