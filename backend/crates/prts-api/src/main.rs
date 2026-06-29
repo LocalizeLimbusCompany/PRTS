@@ -51,12 +51,18 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("ZOOT OAuth provider enabled");
     }
 
+    // 实时协作 hub（启动 Redis 订阅中继）。
+    let realtime = prts_realtime::Hub::new(&settings.redis.url)
+        .await
+        .map_err(|e| anyhow::anyhow!("realtime hub init failed: {e}"))?;
+
     let addr = settings.server.addr();
     let state = AppState {
         db,
         cache,
         settings: Arc::new(settings),
         zoot: Arc::new(zoot),
+        realtime,
     };
     let app = routes::app(state);
 

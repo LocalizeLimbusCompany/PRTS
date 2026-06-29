@@ -274,7 +274,20 @@ pub async fn update_entry(
     .map_err(db_err)?;
 
     match updated {
-        Some(e) => Ok(Json((&e).into())),
+        Some(e) => {
+            state
+                .realtime
+                .publish(
+                    id,
+                    &prts_realtime::RoomEvent::EntryUpdated {
+                        entry_id: e.id,
+                        version: e.version,
+                        by: user.id,
+                    },
+                )
+                .await;
+            Ok(Json((&e).into()))
+        }
         None => Err(Error::Conflict.into()), // 版本冲突
     }
 }
@@ -306,6 +319,17 @@ pub async fn set_entry_flags(
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
+    state
+        .realtime
+        .publish(
+            id,
+            &prts_realtime::RoomEvent::EntryUpdated {
+                entry_id: updated.id,
+                version: updated.version,
+                by: user.id,
+            },
+        )
+        .await;
     Ok(Json((&updated).into()))
 }
 

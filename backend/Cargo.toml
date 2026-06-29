@@ -22,10 +22,10 @@ prts-search = { path = "crates/prts-search" }
 prts-realtime = { path = "crates/prts-realtime" }
 
 # —— 运行时 / Web ——
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net"] }
-# 注：WebSocket（axum "ws"）将在 P3 实时编辑器阶段再启用，P0 保持精简以加快构建。
-axum = { version = "0.8" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "sync", "time"] }
+axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
+futures-util = "0.3"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
 
 # —— 序列化 ——

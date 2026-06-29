@@ -8,7 +8,9 @@ pub mod health;
 pub mod meta;
 pub mod projects;
 pub mod users;
+pub mod ws;
 
+use axum::routing::get;
 use axum::Router;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
@@ -70,6 +72,8 @@ pub fn app(state: AppState) -> Router {
 
     router
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api))
+        // 实时协作 WebSocket（不在 OpenAPI 文档内）
+        .route("/ws/projects/{id}", get(ws::ws_handler))
         .fallback(handler_404)
         // P0：CORS 放开便于联调；生产环境按需收紧（见 plan §15）。
         .layer(CorsLayer::permissive())

@@ -17,6 +17,8 @@ pub struct AppState {
     pub settings: Arc<Settings>,
     /// ZOOT OAuth provider（未配置则为 None）。
     pub zoot: Arc<Option<OAuth2Provider>>,
+    /// 实时协作 hub（WebSocket + Redis pub/sub）。
+    pub realtime: prts_realtime::Hub,
 }
 
 impl AppState {

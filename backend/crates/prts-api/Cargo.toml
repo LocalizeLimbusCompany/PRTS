@@ -32,6 +32,7 @@ tokio.workspace = true
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true
+futures-util.workspace = true
 
 # 数据 / 会话
 redis.workspace = true

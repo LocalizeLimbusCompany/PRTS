@@ -14,6 +14,7 @@ import {
   type ProjectDto,
 } from '@/api'
 import { STATE_LABELS, STATE_ORDER, stateLabel } from '@/lib/states'
+import { useRealtime } from '@/composables/useRealtime'
 import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ id: number }>()
@@ -113,6 +114,7 @@ function select(e: EntryDto) {
   draft.value = e.translation
   draftState.value = e.state
   if (isNarrow.value) mobilePanel.value = true
+  sendEditing(e.id)
 }
 
 const sourceLangs = computed(() => project.value?.source_langs ?? [])
@@ -158,6 +160,31 @@ function selectNext() {
     draft.value = selected.value.translation
     draftState.value = selected.value.state
   }
+}
+
+/* —— 实时协作（WebSocket）—— */
+function handleRemoteUpdate(entryId: number, _version: number, by: number) {
+  if (by === auth.user?.id) return
+  if (entries.value.some((e) => e.id === entryId)) {
+    entriesApi
+      .get(props.id, entryId)
+      .then(applyUpdated)
+      .catch(() => {})
+  }
+}
+const {
+  online: onlineUsers,
+  editing: editingMap,
+  sendEditing,
+} = useRealtime(props.id, { onEntryUpdated: handleRemoteUpdate })
+const onlineNames = computed(() =>
+  onlineUsers.value
+    .filter((uid) => uid !== auth.user?.id)
+    .map((uid) => members.value.find((m) => m.user_id === uid)?.username ?? `#${uid}`),
+)
+function otherEditing(entryId: number): boolean {
+  const uid = editingMap.value[entryId]
+  return uid !== undefined && uid !== auth.user?.id
 }
 
 async function toggleFlag(flag: 'locked' | 'hidden') {
@@ -245,6 +272,18 @@ onMounted(async () => {
         class="editor-statefilter"
       />
       <q-toggle v-if="isMember" v-model="includeHidden" label="含隐藏" dense />
+      <q-chip
+        v-if="onlineUsers.length"
+        dense
+        square
+        icon="people"
+        color="primary"
+        text-color="dark"
+        class="prts-mono"
+      >
+        {{ onlineUsers.length }}
+        <q-tooltip v-if="onlineNames.length">协作中：{{ onlineNames.join('、') }}</q-tooltip>
+      </q-chip>
     </div>
 
     <div class="editor-body">
@@ -262,6 +301,9 @@ onMounted(async () => {
               </div>
               <q-icon v-if="item.locked" name="lock" size="14px" class="prts-dim" />
               <q-icon v-if="item.hidden" name="visibility_off" size="14px" class="prts-dim" />
+              <q-icon v-if="otherEditing(item.id)" name="edit" size="13px" color="amber">
+                <q-tooltip>有人正在编辑</q-tooltip>
+              </q-icon>
             </div>
           </template>
         </q-virtual-scroll>
