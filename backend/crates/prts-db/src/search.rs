@@ -26,6 +26,7 @@ fn push_filters(
 }
 
 /// FTS：源/译两列各按其语言 config 匹配；ts_rank 求和排序。
+#[allow(clippy::too_many_arguments)]
 pub async fn fts_search(
     pool: &PgPool,
     project_id: i64,

@@ -99,7 +99,7 @@ impl ZootSettings {
 }
 
 /// 向量化（Embedding）配置。密钥仅经 env 注入，绝不下发前端。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct EmbeddingSettings {
     #[serde(default)]
     pub qwen: QwenSettings,
@@ -118,14 +118,6 @@ pub struct QwenSettings {
 
 fn default_qwen_dimensions() -> usize {
     1024
-}
-
-impl Default for EmbeddingSettings {
-    fn default() -> Self {
-        Self {
-            qwen: QwenSettings::default(),
-        }
-    }
 }
 
 impl Default for QwenSettings {
