@@ -69,8 +69,8 @@ pub async fn run(
 
     match input.sort {
         SortBy::Relevance => {}
-        SortBy::Key => out.sort_by(|a, b| a.0.key.cmp(&b.0.key)),
-        SortBy::UpdatedAt => out.sort_by(|a, b| b.0.updated_at.cmp(&a.0.updated_at)),
+        SortBy::Key => out.sort_by_key(|e| e.0.key.clone()),
+        SortBy::UpdatedAt => out.sort_by_key(|e| std::cmp::Reverse(e.0.updated_at)),
     }
     Ok(out)
 }
