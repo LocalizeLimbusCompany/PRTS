@@ -8,4 +8,7 @@ repository.workspace = true
 
 [dependencies]
 prts-common.workspace = true
+prts-db.workspace = true
 serde.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
