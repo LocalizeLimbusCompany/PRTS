@@ -135,7 +135,9 @@ pub async fn put_search_settings(
         .map_err(db_err)?;
 
     // 重新读取（已规范化）并更新内存快照
-    let fresh = prts_db::search_settings::get(&state.db).await.map_err(db_err)?;
+    let fresh = prts_db::search_settings::get(&state.db)
+        .await
+        .map_err(db_err)?;
     *state.search_rt.write().await = fresh.clone();
 
     let embedding_key_present = state.settings.embedding.qwen.is_configured();

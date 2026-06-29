@@ -40,9 +40,7 @@ pub async fn fts_search(
     per_path: i64,
 ) -> Result<Vec<i64>, sqlx::Error> {
     let per_path = per_path.max(1);
-    let mut qb = QueryBuilder::new(
-        "SELECT id FROM entries, plainto_tsquery(prts_ts_config(",
-    );
+    let mut qb = QueryBuilder::new("SELECT id FROM entries, plainto_tsquery(prts_ts_config(");
     qb.push_bind(src_lang.to_string())
         .push("), ")
         .push_bind(q.to_string())
@@ -117,7 +115,11 @@ pub async fn vector_search(
 }
 
 /// 按 id 取整行，调用方负责按融合顺序重排。project_id 做纵深防御，避免跨项目泄露。
-pub async fn fetch_by_ids(pool: &PgPool, project_id: i64, ids: &[i64]) -> Result<Vec<Entry>, sqlx::Error> {
+pub async fn fetch_by_ids(
+    pool: &PgPool,
+    project_id: i64,
+    ids: &[i64],
+) -> Result<Vec<Entry>, sqlx::Error> {
     if ids.is_empty() {
         return Ok(vec![]);
     }

@@ -85,12 +85,11 @@ pub async fn search_entries(
     access.require_view()?;
 
     // 2. 确定主查询词；q 为空则 400
-    let main_q = q
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("");
+    let main_q =
+        q.q.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("");
 
     if main_q.is_empty() {
         return Err(Error::bad_request("search requires a non-empty `q`").into());

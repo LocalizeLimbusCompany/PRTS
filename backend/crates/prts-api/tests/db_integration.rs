@@ -451,10 +451,19 @@ async fn search_trgm_and_fts_recall() {
     );
 
     // —— FTS 召回：英文 plainto_tsquery('english', 'weather') 应匹配 w1 的 translation_tsv ——
-    let fts_ids =
-        prts_db::search::fts_search(&pool, proj.id, "weather", "zh-Hans", "en", &[], &[], false, 10)
-            .await
-            .unwrap();
+    let fts_ids = prts_db::search::fts_search(
+        &pool,
+        proj.id,
+        "weather",
+        "zh-Hans",
+        "en",
+        &[],
+        &[],
+        false,
+        10,
+    )
+    .await
+    .unwrap();
     assert!(
         fts_ids.contains(&w1_id),
         "fts_search 应召回 w1（translation_tsv 匹配 'weather'），实际结果：{fts_ids:?}"
@@ -693,15 +702,11 @@ async fn vector_search_returns_nearest_first() {
         .unwrap();
 
     // —— 查询向量贴近 A，断言 A 排在 B 之前 ——
-    let result_ids =
-        prts_db::search::vector_search(&pool, proj.id, &vec_a, &[], &[], false, 10)
-            .await
-            .unwrap();
+    let result_ids = prts_db::search::vector_search(&pool, proj.id, &vec_a, &[], &[], false, 10)
+        .await
+        .unwrap();
 
-    assert!(
-        !result_ids.is_empty(),
-        "vector_search 应返回至少一条结果"
-    );
+    assert!(!result_ids.is_empty(), "vector_search 应返回至少一条结果");
     let pos_a = result_ids.iter().position(|&x| x == id_a);
     let pos_b = result_ids.iter().position(|&x| x == id_b);
     assert!(
@@ -746,7 +751,10 @@ async fn search_settings_set_and_get_normalizes_values() {
 
     // 读取并断言规范化结果
     let got = search_settings::get(&pool).await.unwrap();
-    assert_eq!(got.embedding_batch, 10, "embedding_batch 应被 clamp 到上限 10");
+    assert_eq!(
+        got.embedding_batch, 10,
+        "embedding_batch 应被 clamp 到上限 10"
+    );
     assert_eq!(got.tm_top_n, 3, "tm_top_n 应被 clamp 到上限 3");
 
     // 清理

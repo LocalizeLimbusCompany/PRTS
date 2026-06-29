@@ -3,9 +3,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EmbedError {
-    #[error("http: {0}")] Http(String),
-    #[error("api {0}: {1}")] Api(u16, String),
-    #[error("parse: {0}")] Parse(String),
+    #[error("http: {0}")]
+    Http(String),
+    #[error("api {0}: {1}")]
+    Api(u16, String),
+    #[error("parse: {0}")]
+    Parse(String),
 }
 
 pub struct QwenProvider {
@@ -15,31 +18,63 @@ pub struct QwenProvider {
 }
 
 #[derive(Serialize)]
-struct EmbedReq<'a> { model: &'a str, input: &'a [String], dimensions: usize }
+struct EmbedReq<'a> {
+    model: &'a str,
+    input: &'a [String],
+    dimensions: usize,
+}
 #[derive(Deserialize)]
-struct EmbedResp { data: Vec<EmbedDatum> }
+struct EmbedResp {
+    data: Vec<EmbedDatum>,
+}
 #[derive(Deserialize)]
-struct EmbedDatum { embedding: Vec<f32> }
+struct EmbedDatum {
+    embedding: Vec<f32>,
+}
 
 impl QwenProvider {
     pub fn new(api_key: String, dimensions: usize) -> Self {
-        Self { http: reqwest::Client::new(), api_key, dimensions }
+        Self {
+            http: reqwest::Client::new(),
+            api_key,
+            dimensions,
+        }
     }
-    pub fn dimensions(&self) -> usize { self.dimensions }
+    pub fn dimensions(&self) -> usize {
+        self.dimensions
+    }
 
     /// 单批 ≤10；调用方分块。base_url/model 取自当前 settings 快照。
-    pub async fn embed_batch(&self, base_url: &str, model: &str, texts: &[String])
-        -> Result<Vec<Vec<f32>>, EmbedError>
-    {
+    pub async fn embed_batch(
+        &self,
+        base_url: &str,
+        model: &str,
+        texts: &[String],
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
         let url = format!("{}/embeddings", base_url.trim_end_matches('/'));
-        let resp = self.http.post(url).bearer_auth(&self.api_key)
-            .json(&EmbedReq { model, input: texts, dimensions: self.dimensions })
-            .send().await.map_err(|e| EmbedError::Http(e.to_string()))?;
+        let resp = self
+            .http
+            .post(url)
+            .bearer_auth(&self.api_key)
+            .json(&EmbedReq {
+                model,
+                input: texts,
+                dimensions: self.dimensions,
+            })
+            .send()
+            .await
+            .map_err(|e| EmbedError::Http(e.to_string()))?;
         let status = resp.status();
         if !status.is_success() {
-            return Err(EmbedError::Api(status.as_u16(), resp.text().await.unwrap_or_default()));
+            return Err(EmbedError::Api(
+                status.as_u16(),
+                resp.text().await.unwrap_or_default(),
+            ));
         }
-        let parsed: EmbedResp = resp.json().await.map_err(|e| EmbedError::Parse(e.to_string()))?;
+        let parsed: EmbedResp = resp
+            .json()
+            .await
+            .map_err(|e| EmbedError::Parse(e.to_string()))?;
         Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
     }
 }

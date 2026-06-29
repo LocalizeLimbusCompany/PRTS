@@ -57,7 +57,12 @@ mod tests {
     use super::*;
     #[test]
     fn normalize_clamps_dangerous_fields() {
-        let n = normalize(SearchConfig { embedding_batch: 99, tm_top_n: 9, tm_min_similarity: 2.0, ..Default::default() });
+        let n = normalize(SearchConfig {
+            embedding_batch: 99,
+            tm_top_n: 9,
+            tm_min_similarity: 2.0,
+            ..Default::default()
+        });
         assert_eq!(n.embedding_batch, 10);
         assert_eq!(n.tm_top_n, 3);
         assert!((n.tm_min_similarity - 1.0).abs() < 1e-9);

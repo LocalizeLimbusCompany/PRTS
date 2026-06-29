@@ -228,6 +228,9 @@ mod tests {
     fn embedding_defaults_are_safe() {
         let s = QwenSettings::default();
         assert_eq!(s.dimensions, 1024);
-        assert!(s.api_key.is_empty(), "key must default empty so we degrade, not crash");
+        assert!(
+            s.api_key.is_empty(),
+            "key must default empty so we degrade, not crash"
+        );
     }
 }
