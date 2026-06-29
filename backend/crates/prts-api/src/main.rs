@@ -6,6 +6,7 @@
 mod appsettings;
 mod auth;
 mod dto;
+mod embed_worker;
 mod error;
 mod openapi;
 mod routes;
@@ -68,6 +69,9 @@ async fn main() -> anyhow::Result<()> {
     let realtime = prts_realtime::Hub::new(&settings.redis.url)
         .await
         .map_err(|e| anyhow::anyhow!("realtime hub init failed: {e}"))?;
+
+    // 启动后台嵌入 sweep（clones cheap: pool 引用计数，Arc 指针）。
+    crate::embed_worker::spawn(db.clone(), embedder.clone(), search_rt.clone());
 
     let addr = settings.server.addr();
     let state = AppState {

@@ -16,8 +16,6 @@ path = "src/main.rs"
 db-tests = []
 
 [dev-dependencies]
-sqlx.workspace = true
-pgvector.workspace = true
 
 [dependencies]
 # 内部 crate
@@ -48,6 +46,10 @@ zip.workspace = true
 utoipa.workspace = true
 utoipa-axum.workspace = true
 utoipa-swagger-ui.workspace = true
+
+# 数据层（embed_worker 直接使用 sqlx/pgvector）
+sqlx.workspace = true
+pgvector.workspace = true
 
 # 可观测性 / 错误 / 启动
 tracing.workspace = true
