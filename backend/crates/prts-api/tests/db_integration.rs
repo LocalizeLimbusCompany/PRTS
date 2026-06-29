@@ -589,3 +589,38 @@ async fn search_orchestrator_returns_ranked_hits() {
         .await
         .unwrap();
 }
+
+/// 验证 search_settings::set 规范化 + get 持久化圆环：
+/// - 写入超出安全区间的 embedding_batch = 99、tm_top_n = 9；
+/// - 规范化后持久化，再 get 取回，应得 clamped 值（10 和 3）。
+#[tokio::test]
+async fn search_settings_set_and_get_normalizes_values() {
+    use prts_db::search_settings::{self, SearchConfig};
+
+    let pool = pool().await;
+
+    // 清理上次残留（key 固定为 "search.config"）
+    sqlx::query("DELETE FROM settings WHERE key = 'search.config'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // 写入超范围值
+    let cfg = SearchConfig {
+        embedding_batch: 99,
+        tm_top_n: 9,
+        ..SearchConfig::default()
+    };
+    search_settings::set(&pool, cfg, None).await.unwrap();
+
+    // 读取并断言规范化结果
+    let got = search_settings::get(&pool).await.unwrap();
+    assert_eq!(got.embedding_batch, 10, "embedding_batch 应被 clamp 到上限 10");
+    assert_eq!(got.tm_top_n, 3, "tm_top_n 应被 clamp 到上限 3");
+
+    // 清理
+    sqlx::query("DELETE FROM settings WHERE key = 'search.config'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}

@@ -1,6 +1,7 @@
 //! 路由装配。
 
 pub mod admin;
+pub mod admin_settings;
 pub mod auth;
 pub mod entries;
 pub mod files;
@@ -67,6 +68,7 @@ pub fn app(state: AppState) -> Router {
         // 平台管理
         .routes(routes!(admin::get_settings, admin::update_settings))
         .routes(routes!(admin::grant_role))
+        .routes(routes!(admin_settings::get_search_settings, admin_settings::put_search_settings))
         // 项目
         .routes(routes!(projects::create_project, projects::list_projects))
         .routes(routes!(
