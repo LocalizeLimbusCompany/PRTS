@@ -10,6 +10,7 @@ pub mod memberships;
 pub mod models;
 pub mod projects;
 pub mod search;
+pub mod search_settings;
 pub mod settings;
 pub mod users;
 
