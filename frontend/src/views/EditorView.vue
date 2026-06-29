@@ -7,15 +7,19 @@ import {
   apiErrorMessage,
   entriesApi,
   projectsApi,
+  searchApi,
   type EntryDto,
   type EntryVersionDto,
   type FileDto,
   type MemberDto,
   type ProjectDto,
+  type SearchHitDto,
 } from '@/api'
 import { STATE_LABELS, STATE_ORDER, stateLabel } from '@/lib/states'
 import { useRealtime } from '@/composables/useRealtime'
 import { useAuthStore } from '@/stores/auth'
+import SearchFilters from '@/components/SearchFilters.vue'
+import type { SearchParams } from '@/components/SearchFilters.vue'
 
 const props = defineProps<{ id: number }>()
 const route = useRoute()
@@ -44,20 +48,27 @@ const availableStates = computed(() =>
 
 /* —— 筛选 —— */
 const currentFileId = ref<number | null>(route.query.file ? Number(route.query.file) : null)
-const search = ref('')
-const stateFilter = ref<string[]>([])
 const includeHidden = ref(false)
 const fileOptions = computed(() => [
   { label: '全部文件', value: null as number | null },
   ...files.value.map((f) => ({ label: f.path, value: f.id })),
 ])
 
-/* —— 列表（键集分页累加）—— */
-const entries = ref<EntryDto[]>([])
+/* —— 搜索模式（search）vs 浏览模式（browse）—— */
+/** 当前搜索参数；null 表示浏览模式。 */
+const activeSearchParams = ref<SearchParams | null>(null)
+const isSearchMode = computed(() => activeSearchParams.value !== null)
+
+/** SearchFilters 组件实例引用，用于在切换文件时外部调用 clearAll。 */
+const searchFiltersRef = ref<InstanceType<typeof SearchFilters> | null>(null)
+
+/* —— 列表（浏览模式：键集分页累加；搜索模式：一次性结果）—— */
+const entries = ref<(EntryDto | SearchHitDto)[]>([])
 const listLoading = ref(false)
 const hasMore = ref(true)
 const PAGE = 80
 
+/** 浏览模式：键集分页累加。 */
 async function resetAndLoad() {
   entries.value = []
   hasMore.value = true
@@ -70,8 +81,6 @@ async function loadMore() {
     const after = entries.value.length ? entries.value[entries.value.length - 1].id : undefined
     const batch = await entriesApi.list(props.id, {
       file_id: currentFileId.value ?? undefined,
-      state: stateFilter.value.length ? stateFilter.value.join(',') : undefined,
-      q: search.value.trim() || undefined,
       after,
       limit: PAGE,
       include_hidden: includeHidden.value,
@@ -85,12 +94,58 @@ async function loadMore() {
   }
 }
 
-let searchTimer: ReturnType<typeof setTimeout> | undefined
-watch(search, () => {
-  clearTimeout(searchTimer)
-  searchTimer = setTimeout(resetAndLoad, 300)
+/** 搜索模式：调用混合搜索接口，结果含 relevance。 */
+async function runSearch(params: SearchParams) {
+  listLoading.value = true
+  entries.value = []
+  hasMore.value = false
+  try {
+    const hits = await searchApi.search(props.id, {
+      q: params.q,
+      file_id: params.file_id,
+      state: params.state,
+      sort: params.sort,
+      include_hidden: params.include_hidden ?? includeHidden.value,
+    })
+    entries.value = hits
+  } catch (e) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(e) })
+  } finally {
+    listLoading.value = false
+  }
+}
+
+/** SearchFilters 发出 @search 事件：切换到搜索模式。 */
+function onSearch(params: SearchParams) {
+  activeSearchParams.value = params
+  runSearch(params)
+}
+
+/** SearchFilters 发出 @clear 事件：恢复浏览模式。 */
+function onSearchClear() {
+  activeSearchParams.value = null
+  resetAndLoad()
+}
+
+watch([currentFileId, includeHidden], () => {
+  if (isSearchMode.value && activeSearchParams.value) {
+    // 文件/隐藏切换时，SearchFilters 内部 watch 也会触发重新搜索，
+    // 此处仅在浏览模式下重置列表。
+    return
+  }
+  resetAndLoad()
 })
-watch([currentFileId, stateFilter, includeHidden], resetAndLoad, { deep: true })
+
+/** 辅助：判断列表项是否含 relevance 字段（搜索结果）。 */
+function isHit(e: EntryDto | SearchHitDto): e is SearchHitDto {
+  return 'relevance' in e
+}
+
+/** 把 RRF 相关度值（0-1 浮点）转为百分比整数，便于展示。 */
+function relevancePct(r: number): number {
+  // RRF 分值通常在 0~1 之间；乘以 100 后取整，最高显示 99%
+  return Math.min(99, Math.round(r * 100))
+}
 
 interface VScrollDetails {
   to: number
@@ -109,7 +164,7 @@ const panelReadOnly = computed(
   () => !isMember.value || (selected.value?.locked === true && !canEditLocked.value),
 )
 
-function select(e: EntryDto) {
+function select(e: EntryDto | SearchHitDto) {
   selected.value = e
   draft.value = e.translation
   draftState.value = e.state
@@ -247,31 +302,19 @@ onMounted(async () => {
         map-options
         class="editor-fileselect"
       />
-      <q-input
-        v-model="search"
-        dense
-        outlined
-        clearable
-        debounce="0"
-        placeholder="搜索 key / 原文 / 译文"
-        class="editor-search"
-      >
-        <template #prepend><q-icon name="search" /></template>
-      </q-input>
-      <q-select
-        v-model="stateFilter"
-        :options="STATE_ORDER"
-        :option-label="(s) => STATE_LABELS[s] ?? s"
-        dense
-        outlined
-        multiple
-        options-dense
-        emit-value
-        map-options
-        placeholder="状态"
-        class="editor-statefilter"
+      <!-- 高级搜索控件：含搜索词时切搜索模式，清空时恢复浏览 -->
+      <SearchFilters
+        ref="searchFiltersRef"
+        :file-id="currentFileId"
+        :include-hidden="includeHidden"
+        @search="onSearch"
+        @clear="onSearchClear"
       />
       <q-toggle v-if="isMember" v-model="includeHidden" label="含隐藏" dense />
+      <!-- 搜索模式指示徽标 -->
+      <q-chip v-if="isSearchMode" dense square color="secondary" text-color="dark" icon="manage_search">
+        搜索中
+      </q-chip>
       <q-chip
         v-if="onlineUsers.length"
         dense
@@ -299,6 +342,10 @@ onMounted(async () => {
                   {{ item.translation || Object.values(item.original)[0] || '—' }}
                 </div>
               </div>
+              <!-- 搜索模式：显示相关度百分比 -->
+              <span v-if="isHit(item)" class="relevance-badge" :title="'相关度 ' + relevancePct(item.relevance) + '%'">
+                {{ relevancePct(item.relevance) }}%
+              </span>
               <q-icon v-if="item.locked" name="lock" size="14px" class="prts-dim" />
               <q-icon v-if="item.hidden" name="visibility_off" size="14px" class="prts-dim" />
               <q-icon v-if="otherEditing(item.id)" name="edit" size="13px" color="amber">
@@ -310,7 +357,9 @@ onMounted(async () => {
         <div v-if="listLoading" class="row justify-center q-pa-sm">
           <q-spinner color="primary" size="20px" />
         </div>
-        <div v-else-if="entries.length === 0" class="prts-empty">无匹配词条</div>
+        <div v-else-if="entries.length === 0" class="prts-empty">
+          {{ isSearchMode ? '未找到相关词条' : '无匹配词条' }}
+        </div>
       </div>
 
       <!-- panel pane -->
@@ -466,13 +515,6 @@ onMounted(async () => {
   min-width: 170px;
   max-width: 260px;
 }
-.editor-search {
-  min-width: 180px;
-  flex: 1;
-}
-.editor-statefilter {
-  min-width: 140px;
-}
 .editor-body {
   flex: 1;
   min-height: 0;
@@ -560,6 +602,19 @@ onMounted(async () => {
 :deep(.prts-translation) {
   font-size: 14px;
   line-height: 1.7;
+}
+
+/* 搜索结果相关度徽标 */
+.relevance-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--prts-text-dim);
+  background: var(--prts-bg-elev);
+  border: 1px solid var(--prts-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  line-height: 1.4;
 }
 
 /* 移动端：单栏 + 列表/面板切换 */

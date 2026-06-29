@@ -12,5 +12,19 @@
     "offline": "离线",
     "version": "版本",
     "refresh": "刷新"
+  },
+  "editor": {
+    "searchPlaceholder": "搜索 key / 原文 / 译文",
+    "stateFilter": "状态筛选",
+    "sortLabel": "排序方式",
+    "sortRelevance": "相关度",
+    "sortKey": "键名",
+    "sortUpdatedAt": "最近更新",
+    "includeHidden": "含隐藏",
+    "noResults": "无匹配词条",
+    "searchMode": "搜索模式",
+    "browseMode": "浏览模式",
+    "relevance": "相关度",
+    "clearSearch": "清除搜索"
   }
 }

@@ -12,5 +12,19 @@
     "offline": "Offline",
     "version": "Version",
     "refresh": "Refresh"
+  },
+  "editor": {
+    "searchPlaceholder": "Search key / source / translation",
+    "stateFilter": "Filter by state",
+    "sortLabel": "Sort by",
+    "sortRelevance": "Relevance",
+    "sortKey": "Key",
+    "sortUpdatedAt": "Last updated",
+    "includeHidden": "Include hidden",
+    "noResults": "No matching entries",
+    "searchMode": "Search mode",
+    "browseMode": "Browse mode",
+    "relevance": "Relevance",
+    "clearSearch": "Clear search"
   }
 }

@@ -129,3 +129,8 @@ export const ENTRY_STATES = [
   'reviewed',
 ] as const
 export type EntryState = (typeof ENTRY_STATES)[number]
+
+/** 混合搜索结果（EntryDto + RRF 相关度分值）。 */
+export interface SearchHitDto extends EntryDto {
+  relevance: number
+}

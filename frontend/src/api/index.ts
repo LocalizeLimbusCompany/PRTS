@@ -9,6 +9,7 @@ import type {
   ProjectDetailDto,
   ProjectDto,
   ProjectTree,
+  SearchHitDto,
   TokenResponse,
   UploadResult,
   UserDto,
@@ -144,6 +145,24 @@ export const entriesApi = {
     return http
       .get<EntryVersionDto[]>(`/projects/${id}/entries/${entryId}/history`)
       .then((r) => r.data)
+  },
+}
+
+/** 混合全文搜索（FTS + trgm + RRF）。 */
+export const searchApi = {
+  search(
+    id: number,
+    params: {
+      q?: string
+      file_id?: number
+      state?: string
+      sort?: string
+      offset?: number
+      limit?: number
+      include_hidden?: boolean
+    } = {},
+  ) {
+    return http.get<SearchHitDto[]>(`/projects/${id}/search`, { params }).then((r) => r.data)
   },
 }
 
