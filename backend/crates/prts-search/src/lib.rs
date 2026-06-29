@@ -6,6 +6,7 @@
 //! P0 仅定义向量化抽象与检索过滤骨架；具体编排与 SQL 见 P4。
 
 pub mod orchestrator;
+pub mod qwen;
 pub mod rrf;
 
 use serde::{Deserialize, Serialize};
