@@ -358,3 +358,112 @@ async fn migration_0004_trigger_populates_source_text_and_zhparser_tsv() {
         .await
         .unwrap();
 }
+
+/// 验证 prts-db::search 的 trgm_search 和 fts_search：
+/// - trgm_search 按三元组相似度召回匹配 "weather" 的词条；
+/// - fts_search 按 plainto_tsquery 匹配英文译文中的 "weather"。
+#[tokio::test]
+async fn search_trgm_and_fts_recall() {
+    let pool = pool().await;
+
+    // —— 清理上次残留 ——
+    sqlx::query("DELETE FROM projects WHERE slug = 'itest-search-recall'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_search_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // —— 建 owner ——
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let owner = users::create_password_user(&pool, "itest_search_owner", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— 建项目：source_langs 首位 'zh-Hans'，目标语言 'en' ——
+    let proj = projects::create(
+        &pool,
+        "itest-search-recall",
+        "ITest Search Recall",
+        "",
+        "public",
+        &["zh-Hans".to_string()],
+        "en",
+        owner.id,
+    )
+    .await
+    .unwrap();
+
+    // —— 建文件 ——
+    let file = files::ensure_file_at_path(&pool, proj.id, "search/recall.json")
+        .await
+        .unwrap();
+
+    // —— 插入两条词条 ——
+    let batch = vec![
+        entries::UploadEntry {
+            key: "w1".to_string(),
+            original: serde_json::json!({ "zh-Hans": "今天天气不错" }),
+            context: None,
+            translation: Some("nice weather today".to_string()),
+            state: Some("translated".to_string()),
+        },
+        entries::UploadEntry {
+            key: "w2".to_string(),
+            original: serde_json::json!({ "zh-Hans": "完全无关的内容" }),
+            context: None,
+            translation: Some("completely unrelated".to_string()),
+            state: Some("translated".to_string()),
+        },
+    ];
+    let stats = entries::bulk_upsert(&pool, file.id, proj.id, &batch, Some(owner.id))
+        .await
+        .unwrap();
+    assert_eq!(stats.created, 2, "应创建 2 条词条");
+
+    // —— 查询 w1/w2 的真实 id ——
+    let w1_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'w1'")
+            .bind(proj.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let w2_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'w2'")
+            .bind(proj.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // —— trgm 召回：w1 的 translation 含 "weather"，应出现在结果中 ——
+    let trgm_ids = prts_db::search::trgm_search(&pool, proj.id, "weather", &[], &[], false, 10)
+        .await
+        .unwrap();
+    assert!(
+        trgm_ids.contains(&w1_id),
+        "trgm_search 应召回 w1（translation 含 'weather'），实际结果：{trgm_ids:?}"
+    );
+    assert!(
+        !trgm_ids.contains(&w2_id),
+        "无关词条不应出现在 'weather' 的 trgm 结果中，实际结果：{trgm_ids:?}"
+    );
+
+    // —— FTS 召回：英文 plainto_tsquery('english', 'weather') 应匹配 w1 的 translation_tsv ——
+    let fts_ids =
+        prts_db::search::fts_search(&pool, proj.id, "weather", "zh-Hans", "en", &[], &[], false, 10)
+            .await
+            .unwrap();
+    assert!(
+        fts_ids.contains(&w1_id),
+        "fts_search 应召回 w1（translation_tsv 匹配 'weather'），实际结果：{fts_ids:?}"
+    );
+
+    // —— 级联清理 ——
+    projects::delete(&pool, proj.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_search_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}

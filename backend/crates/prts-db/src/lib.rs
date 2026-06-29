@@ -9,6 +9,7 @@ pub mod files;
 pub mod memberships;
 pub mod models;
 pub mod projects;
+pub mod search;
 pub mod settings;
 pub mod users;
 
