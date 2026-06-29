@@ -69,7 +69,7 @@ async function logout() {
                 <img v-if="auth.user?.avatar_url" :src="auth.user.avatar_url" alt="" />
                 <span v-else>{{ initials }}</span>
               </q-avatar>
-              <span class="q-ml-sm">{{ auth.user?.username }}</span>
+              <span class="q-ml-sm prts-username">{{ auth.user?.username }}</span>
             </template>
             <q-list style="min-width: 168px">
               <q-item v-close-popup clickable :to="{ name: 'me' }">
@@ -133,7 +133,7 @@ async function logout() {
   line-height: 1;
 }
 .prts-brand__mark {
-  font-family: var(--font-display);
+  font-family: var(--font-mono);
   font-weight: 700;
   font-size: 20px;
   letter-spacing: 0.14em;
@@ -163,5 +163,17 @@ async function logout() {
   color: var(--prts-accent-strong);
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+@media (max-width: 599px) {
+  .prts-toolbar {
+    padding: 0 10px;
+  }
+  .prts-brand__sub {
+    display: none;
+  }
+  .prts-username {
+    display: none;
+  }
 }
 </style>

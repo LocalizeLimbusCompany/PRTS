@@ -21,6 +21,9 @@ const route = useRoute()
 const auth = useAuthStore()
 const $q = useQuasar()
 
+const isNarrow = computed(() => $q.screen.lt.md)
+const mobilePanel = ref(false)
+
 const project = ref<ProjectDto | null>(null)
 const files = ref<FileDto[]>([])
 const members = ref<MemberDto[]>([])
@@ -109,6 +112,7 @@ function select(e: EntryDto) {
   selected.value = e
   draft.value = e.translation
   draftState.value = e.state
+  if (isNarrow.value) mobilePanel.value = true
 }
 
 const sourceLangs = computed(() => project.value?.source_langs ?? [])
@@ -149,7 +153,11 @@ function applyUpdated(u: EntryDto) {
 function selectNext() {
   if (!selected.value) return
   const idx = entries.value.findIndex((x) => x.id === selected.value!.id)
-  if (idx >= 0 && idx + 1 < entries.value.length) select(entries.value[idx + 1])
+  if (idx >= 0 && idx + 1 < entries.value.length) {
+    selected.value = entries.value[idx + 1]
+    draft.value = selected.value.translation
+    draftState.value = selected.value.state
+  }
 }
 
 async function toggleFlag(flag: 'locked' | 'hidden') {
@@ -177,8 +185,6 @@ async function openHistory() {
   }
 }
 
-const split = ref(34)
-
 onMounted(async () => {
   try {
     const [p, tree, mem] = await Promise.all([
@@ -203,9 +209,7 @@ onMounted(async () => {
       <q-btn flat dense round icon="arrow_back" :to="{ name: 'project', params: { id: props.id } }">
         <q-tooltip>返回项目</q-tooltip>
       </q-btn>
-      <div class="prts-display ellipsis" style="font-size: 14px; max-width: 220px">
-        {{ project?.name ?? '…' }}
-      </div>
+      <div class="prts-display ellipsis editor-title">{{ project?.name ?? '…' }}</div>
       <q-select
         v-model="currentFileId"
         :options="fileOptions"
@@ -214,7 +218,7 @@ onMounted(async () => {
         options-dense
         emit-value
         map-options
-        style="min-width: 180px; max-width: 280px"
+        class="editor-fileselect"
       />
       <q-input
         v-model="search"
@@ -223,7 +227,7 @@ onMounted(async () => {
         clearable
         debounce="0"
         placeholder="搜索 key / 原文 / 译文"
-        style="min-width: 200px; flex: 1"
+        class="editor-search"
       >
         <template #prepend><q-icon name="search" /></template>
       </q-input>
@@ -238,21 +242,17 @@ onMounted(async () => {
         emit-value
         map-options
         placeholder="状态"
-        style="min-width: 150px"
+        class="editor-statefilter"
       />
       <q-toggle v-if="isMember" v-model="includeHidden" label="含隐藏" dense />
     </div>
 
-    <q-splitter v-model="split" :limits="[26, 58]" class="editor-split">
-      <!-- list -->
-      <template #before>
+    <div class="editor-body">
+      <!-- list pane -->
+      <div v-show="!isNarrow || !mobilePanel" class="ed-pane ed-pane--list">
         <q-virtual-scroll :items="entries" class="entry-list" @virtual-scroll="onScroll">
           <template #default="{ item }">
-            <div
-              class="entry-row"
-              :class="{ active: item.id === selected?.id }"
-              @click="select(item)"
-            >
+            <div class="entry-row" :class="{ active: item.id === selected?.id }" @click="select(item)">
               <span class="state-dot" :class="'state-' + item.state" />
               <div class="entry-row__body">
                 <div class="entry-row__key prts-mono">{{ item.key }}</div>
@@ -269,17 +269,29 @@ onMounted(async () => {
           <q-spinner color="primary" size="20px" />
         </div>
         <div v-else-if="entries.length === 0" class="prts-empty">无匹配词条</div>
-      </template>
+      </div>
 
-      <!-- panel -->
-      <template #after>
-        <div v-if="!selected" class="prts-empty" style="padding-top: 120px">
-          从左侧选择一个词条开始翻译
+      <!-- panel pane -->
+      <div v-show="!isNarrow || mobilePanel" class="ed-pane ed-pane--panel">
+        <q-btn
+          v-if="isNarrow"
+          flat
+          dense
+          no-caps
+          icon="arrow_back"
+          label="词条列表"
+          class="q-ma-sm"
+          @click="mobilePanel = false"
+        />
+        <div v-if="!selected" class="prts-empty" style="padding-top: 100px">
+          从{{ isNarrow ? '列表' : '左侧' }}选择一个词条开始翻译
         </div>
         <div v-else class="panel">
           <div class="row items-center q-mb-sm">
             <div class="prts-label">KEY</div>
-            <div class="prts-mono q-ml-sm" style="font-size: 13px">{{ selected.key }}</div>
+            <div class="prts-mono q-ml-sm ellipsis" style="font-size: 13px; max-width: 50%">
+              {{ selected.key }}
+            </div>
             <q-space />
             <q-btn flat dense round size="sm" icon="history" @click="openHistory">
               <q-tooltip>历史</q-tooltip>
@@ -309,7 +321,6 @@ onMounted(async () => {
             </q-btn>
           </div>
 
-          <!-- original per source lang -->
           <div class="orig-block">
             <div v-for="lang in sourceLangs" :key="lang" class="orig-row">
               <div class="prts-label orig-lang">{{ lang }}</div>
@@ -342,7 +353,7 @@ onMounted(async () => {
               emit-value
               map-options
               :disable="panelReadOnly"
-              style="min-width: 140px"
+              style="min-width: 130px"
             />
             <q-space />
             <span v-if="panelReadOnly" class="prts-dim prts-mono" style="font-size: 12px">
@@ -361,8 +372,8 @@ onMounted(async () => {
             />
           </div>
         </div>
-      </template>
-    </q-splitter>
+      </div>
+    </div>
 
     <!-- history dialog -->
     <q-dialog v-model="showHistory">
@@ -376,9 +387,7 @@ onMounted(async () => {
               :subtitle="new Date(h.created_at).toLocaleString()"
             >
               <template #title>
-                <span class="prts-mono" style="font-size: 13px"
-                  >v{{ h.version }} · {{ h.kind }}</span
-                >
+                <span class="prts-mono" style="font-size: 13px">v{{ h.version }} · {{ h.kind }}</span>
                 <q-badge v-if="h.state" outline class="q-ml-sm" :label="stateLabel(h.state)" />
               </template>
               <div v-if="h.translation" class="prts-translation">{{ h.translation }}</div>
@@ -386,9 +395,7 @@ onMounted(async () => {
           </q-timeline>
           <div v-else class="prts-empty">暂无历史</div>
         </q-card-section>
-        <q-card-actions align="right"
-          ><q-btn v-close-popup flat no-caps label="关闭"
-        /></q-card-actions>
+        <q-card-actions align="right"><q-btn v-close-popup flat no-caps label="关闭" /></q-card-actions>
       </q-card>
     </q-dialog>
   </q-page>
@@ -407,13 +414,45 @@ onMounted(async () => {
   padding: 8px 12px;
   border-bottom: 1px solid var(--prts-border);
   background: var(--prts-panel);
+  flex-wrap: wrap;
 }
-.editor-split {
+.editor-title {
+  font-size: 14px;
+  max-width: 200px;
+}
+.editor-fileselect {
+  min-width: 170px;
+  max-width: 260px;
+}
+.editor-search {
+  min-width: 180px;
+  flex: 1;
+}
+.editor-statefilter {
+  min-width: 140px;
+}
+.editor-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+.ed-pane {
+  height: 100%;
+  min-height: 0;
+}
+.ed-pane--list {
+  width: 340px;
+  border-right: 1px solid var(--prts-border);
+  display: flex;
+  flex-direction: column;
+}
+.ed-pane--panel {
+  flex: 1;
+  overflow: auto;
 }
 .entry-list {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 .entry-row {
   display: flex;
@@ -449,9 +488,7 @@ onMounted(async () => {
   text-overflow: ellipsis;
 }
 .panel {
-  padding: 22px 26px;
-  height: 100%;
-  overflow: auto;
+  padding: 18px 22px 40px;
 }
 .orig-block {
   border: 1px solid var(--prts-border);
@@ -469,7 +506,7 @@ onMounted(async () => {
   border-bottom: none;
 }
 .orig-lang {
-  flex: 0 0 56px;
+  flex: 0 0 52px;
   padding-top: 2px;
 }
 .orig-text {
@@ -481,5 +518,13 @@ onMounted(async () => {
 :deep(.prts-translation) {
   font-size: 14px;
   line-height: 1.7;
+}
+
+/* 移动端：单栏 + 列表/面板切换 */
+@media (max-width: 1023px) {
+  .ed-pane--list {
+    width: 100%;
+    border-right: none;
+  }
 }
 </style>

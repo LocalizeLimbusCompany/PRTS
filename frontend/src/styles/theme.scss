@@ -5,9 +5,10 @@
    ============================================================ */
 
 :root {
-  --font-display: 'Chakra Petch', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 思源宋体（标题）/ 思源黑体（正文）/ JetBrains Mono（等宽）—— 均本地自托管 */
+  --font-display: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'Segoe UI',
+    'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI',
     sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
   --prts-radius: 4px;
@@ -255,4 +256,14 @@ a:hover {
 .prts-fade-enter-from {
   opacity: 0;
   transform: translateY(4px);
+}
+
+/* —— 移动端 —— */
+@media (max-width: 600px) {
+  .prts-container {
+    padding: 16px 14px 44px;
+  }
+  .prts-h1 {
+    font-size: 21px;
+  }
 }

@@ -5,7 +5,18 @@ import { Quasar, Notify, Dialog, Loading } from 'quasar'
 // Quasar 图标与样式
 import '@quasar/extras/material-icons/material-icons.css'
 import 'quasar/src/css/index.sass'
-// PRTS 终端风设计系统（覆盖 Quasar 暗色）
+
+// 自托管字体（@fontsource：chunked woff2，按 unicode-range 懒加载，无外部 CDN）
+import '@fontsource/noto-sans-sc/400.css'
+import '@fontsource/noto-sans-sc/500.css'
+import '@fontsource/noto-sans-sc/700.css'
+import '@fontsource/noto-serif-sc/600.css'
+import '@fontsource/noto-serif-sc/700.css'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/500.css'
+import '@fontsource/jetbrains-mono/700.css'
+
+// PRTS 设计系统（覆盖 Quasar 暗色）
 import './styles/theme.scss'
 
 import App from './App.vue'
