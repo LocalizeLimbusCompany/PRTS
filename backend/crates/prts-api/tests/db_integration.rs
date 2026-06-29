@@ -590,6 +590,137 @@ async fn search_orchestrator_returns_ranked_hits() {
         .unwrap();
 }
 
+/// 验证 vector_search 的 cosine 距离排序：
+/// - 播种两条词条，各手动 UPDATE embedding 为 1024 维已知向量；
+/// - 查询向量贴近词条 A，断言 A 的 id 排在 B 之前。
+///
+/// 注：直接 UPDATE embedding 不改 original/source_text，故不触发清零触发器。
+#[tokio::test]
+async fn vector_search_returns_nearest_first() {
+    use pgvector::Vector;
+
+    let pool = pool().await;
+
+    // —— 清理上次残留 ——
+    sqlx::query("DELETE FROM projects WHERE slug = 'itest-vec-search'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_vec_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // —— 建 owner ——
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let owner = users::create_password_user(&pool, "itest_vec_owner", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— 建项目 ——
+    let proj = projects::create(
+        &pool,
+        "itest-vec-search",
+        "ITest Vec Search",
+        "",
+        "public",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+
+    // —— 建文件 + 插入两条词条 ——
+    let file = files::ensure_file_at_path(&pool, proj.id, "vec/test.json")
+        .await
+        .unwrap();
+
+    let batch = vec![
+        entries::UploadEntry {
+            key: "va".to_string(),
+            original: serde_json::json!({ "en": "vector entry A" }),
+            context: None,
+            translation: None,
+            state: None,
+        },
+        entries::UploadEntry {
+            key: "vb".to_string(),
+            original: serde_json::json!({ "en": "vector entry B" }),
+            context: None,
+            translation: None,
+            state: None,
+        },
+    ];
+    let stats = entries::bulk_upsert(&pool, file.id, proj.id, &batch, Some(owner.id))
+        .await
+        .unwrap();
+    assert_eq!(stats.created, 2, "应创建 2 条词条");
+
+    // —— 取真实 id ——
+    let id_a: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'va'")
+            .bind(proj.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let id_b: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'vb'")
+            .bind(proj.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // —— 构造 1024 维向量 ——
+    // A 贴近 [1, 0, 0, ...0]，B 贴近 [0, 1, 0, ...0]
+    let mut vec_a = vec![0.0_f32; 1024];
+    vec_a[0] = 1.0;
+    let mut vec_b = vec![0.0_f32; 1024];
+    vec_b[1] = 1.0;
+
+    // —— 直接 UPDATE embedding（不改 original，不触发清零触发器）——
+    sqlx::query("UPDATE entries SET embedding = $1 WHERE id = $2")
+        .bind(Vector::from(vec_a.clone()))
+        .bind(id_a)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE entries SET embedding = $1 WHERE id = $2")
+        .bind(Vector::from(vec_b))
+        .bind(id_b)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // —— 查询向量贴近 A，断言 A 排在 B 之前 ——
+    let result_ids =
+        prts_db::search::vector_search(&pool, proj.id, &vec_a, &[], &[], false, 10)
+            .await
+            .unwrap();
+
+    assert!(
+        !result_ids.is_empty(),
+        "vector_search 应返回至少一条结果"
+    );
+    let pos_a = result_ids.iter().position(|&x| x == id_a);
+    let pos_b = result_ids.iter().position(|&x| x == id_b);
+    assert!(
+        pos_a.is_some() && pos_b.is_some(),
+        "两条词条均应出现在结果中，实际：{result_ids:?}"
+    );
+    assert!(
+        pos_a.unwrap() < pos_b.unwrap(),
+        "A 应排在 B 之前（与查询向量 cosine 更近），实际顺序：{result_ids:?}"
+    );
+
+    // —— 级联清理 ——
+    projects::delete(&pool, proj.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_vec_owner'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
 /// 验证 search_settings::set 规范化 + get 持久化圆环：
 /// - 写入超出安全区间的 embedding_batch = 99、tm_top_n = 9；
 /// - 规范化后持久化，再 get 取回，应得 clamped 值（10 和 3）。

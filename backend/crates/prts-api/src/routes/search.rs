@@ -1,6 +1,6 @@
-//! GET /projects/{id}/search — 混合搜索（FTS + pg_trgm + RRF 融合）。
+//! GET /projects/{id}/search — 混合搜索（FTS + pg_trgm + pgvector RRF 融合）。
 //!
-//! 向量召回路径目前关闭（Phase 3 / Task 16 注入），仅执行 FTS + trgm 双路召回。
+//! 向量路径在 settings.embedding_enabled = true 且 env 配有 api_key 时激活；否则降级为 FTS + trgm。
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
@@ -56,12 +56,13 @@ pub struct SearchHitDto {
 
 // ============================= 搜索处理器 =============================
 
-/// 混合搜索词条（FTS + pg_trgm + RRF 融合，向量路径当前关闭）。
+/// 混合搜索词条（FTS + pg_trgm + pgvector RRF 融合）。
 ///
 /// - 公开项目任意用户可搜索；私有项目需成员资格。
 /// - `q` 不能为空，否则返回 400。
 /// - `include_hidden = true` 需要项目「编辑」权限，否则静默忽略。
 /// - 结果先经 RRF 融合（最多 200 候选），再按 `offset`/`limit` 窗口截取。
+/// - 向量路径仅在 settings 开启且 env 配有 api_key 时激活；失败或关闭时自动降级 FTS+trgm。
 #[utoipa::path(
     get,
     path = "/projects/{id}/search",
@@ -124,7 +125,46 @@ pub async fn search_entries(
     // 7. 文件过滤列表
     let file_ids: Vec<i64> = q.file_id.into_iter().collect();
 
-    // 8. 调用编排器（向量 IDs = None，向量路径当前关闭）
+    // 8. 向量路：仅当 settings 开启 + env 配了 api_key。失败/关 → None（降级 FTS+trgm）。
+    let vector_ids: Option<Vec<i64>> = {
+        let rt = state.search_rt.read().await.clone();
+        match (rt.embedding_enabled, (*state.embedder).as_ref()) {
+            (true, Some(p)) => {
+                let q_string = main_q.to_string();
+                match p
+                    .embed_batch(
+                        &rt.embedding_base_url,
+                        &rt.embedding_model,
+                        std::slice::from_ref(&q_string),
+                    )
+                    .await
+                {
+                    Ok(mut v) if !v.is_empty() => {
+                        let qvec = v.remove(0);
+                        prts_db::search::vector_search(
+                            &state.db,
+                            id,
+                            &qvec,
+                            &file_ids,
+                            &states,
+                            include_hidden,
+                            100,
+                        )
+                        .await
+                        .ok()
+                    }
+                    Ok(_) => None,
+                    Err(e) => {
+                        tracing::warn!("query embed failed, degrading to FTS+trgm: {e}");
+                        None
+                    }
+                }
+            }
+            _ => None,
+        }
+    };
+
+    // 9. 调用编排器（三路 RRF 融合）
     let results = run(
         &state.db,
         OrchestratorInput {
@@ -138,13 +178,13 @@ pub async fn search_entries(
             per_path,
             top_k,
             sort,
-            vector_ids: None,
+            vector_ids,
         },
     )
     .await
     .map_err(db_err)?;
 
-    // 9. 应用 offset/limit 窗口并转换为 DTO
+    // 10. 应用 offset/limit 窗口并转换为 DTO
     let window: Vec<SearchHitDto> = results
         .into_iter()
         .skip(offset as usize)

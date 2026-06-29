@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 prts-common.workspace = true
 sqlx.workspace = true
+pgvector.workspace = true
 redis.workspace = true
 tracing.workspace = true
 serde.workspace = true

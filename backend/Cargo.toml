@@ -40,6 +40,8 @@ serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio", "postgres", "macros", "migrate", "chrono", "uuid", "json",
 ] }
+# pgvector：sqlx 0.8 集成（向量列绑定/读取）。`sqlx` feature 启用 Encode/Decode 实现。
+pgvector = { version = "0.4", features = ["sqlx"] }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
 # —— OpenAPI / Swagger ——

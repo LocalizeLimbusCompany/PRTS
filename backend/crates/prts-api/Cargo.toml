@@ -17,6 +17,7 @@ db-tests = []
 
 [dev-dependencies]
 sqlx.workspace = true
+pgvector.workspace = true
 
 [dependencies]
 # 内部 crate

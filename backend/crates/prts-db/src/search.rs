@@ -1,4 +1,5 @@
 //! 三路召回的参数化查询。每路返回按相关度降序的 entry id（≤ per_path）。
+use pgvector::Vector;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use crate::models::Entry;
@@ -87,6 +88,30 @@ pub async fn trgm_search(
         .push("), similarity(key, ")
         .push_bind(q.to_string())
         .push(")) DESC LIMIT ")
+        .push_bind(per_path);
+    qb.build_query_scalar().fetch_all(pool).await
+}
+
+/// 向量召回：cosine 距离最近的 per_path 条（仅 embedding 非空）。
+/// 失败或 embedding 列全空时返回空列表，由调用方降级为 FTS+trgm。
+#[allow(clippy::too_many_arguments)]
+pub async fn vector_search(
+    pool: &PgPool,
+    project_id: i64,
+    qvec: &[f32],
+    file_ids: &[i64],
+    states: &[String],
+    include_hidden: bool,
+    per_path: i64,
+) -> Result<Vec<i64>, sqlx::Error> {
+    let per_path = per_path.max(1);
+    let v = Vector::from(qvec.to_vec());
+    let mut qb = QueryBuilder::new("SELECT id FROM entries WHERE project_id = ");
+    qb.push_bind(project_id).push(" AND embedding IS NOT NULL");
+    push_filters(&mut qb, file_ids, states, include_hidden);
+    qb.push(" ORDER BY embedding <=> ")
+        .push_bind(v)
+        .push(" LIMIT ")
         .push_bind(per_path);
     qb.build_query_scalar().fetch_all(pool).await
 }
