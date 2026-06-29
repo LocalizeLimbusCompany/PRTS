@@ -17,6 +17,8 @@ pub struct Settings {
     pub redis: RedisSettings,
     #[serde(default)]
     pub auth: AuthSettings,
+    #[serde(default)]
+    pub embedding: EmbeddingSettings,
 }
 
 /// 认证相关配置。密钥与 OAuth 凭证经环境变量注入（`PRTS__AUTH__*`）。
@@ -93,6 +95,52 @@ impl ZootSettings {
     /// 是否已配置（启用 ZOOT 登录）。
     pub fn is_configured(&self) -> bool {
         !self.client_id.is_empty() && !self.authorize_url.is_empty()
+    }
+}
+
+/// 向量化（Embedding）配置。密钥仅经 env 注入，绝不下发前端。
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmbeddingSettings {
+    #[serde(default)]
+    pub qwen: QwenSettings,
+}
+
+/// Qwen Embedding provider 配置。
+#[derive(Debug, Clone, Deserialize)]
+pub struct QwenSettings {
+    /// Qwen API Key（仅 env：PRTS__EMBEDDING__QWEN__API_KEY）。空 = 未配置 → 降级。
+    #[serde(default)]
+    pub api_key: String,
+    /// 向量维度，须与迁移 0004 的 vector(N) 一致。
+    #[serde(default = "default_qwen_dimensions")]
+    pub dimensions: usize,
+}
+
+fn default_qwen_dimensions() -> usize {
+    1024
+}
+
+impl Default for EmbeddingSettings {
+    fn default() -> Self {
+        Self {
+            qwen: QwenSettings::default(),
+        }
+    }
+}
+
+impl Default for QwenSettings {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            dimensions: default_qwen_dimensions(),
+        }
+    }
+}
+
+impl QwenSettings {
+    /// 是否已配置 API Key（决定向量化能否启用）。
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.is_empty()
     }
 }
 
@@ -180,5 +228,14 @@ mod tests {
         assert_eq!(s.server.addr(), "0.0.0.0:3000");
         assert_eq!(s.database.max_connections, 10);
         assert!(s.redis.url.starts_with("redis://"));
+        assert_eq!(s.embedding.qwen.dimensions, 1024);
+        assert!(s.embedding.qwen.api_key.is_empty());
+    }
+
+    #[test]
+    fn embedding_defaults_are_safe() {
+        let s = QwenSettings::default();
+        assert_eq!(s.dimensions, 1024);
+        assert!(s.api_key.is_empty(), "key must default empty so we degrade, not crash");
     }
 }
