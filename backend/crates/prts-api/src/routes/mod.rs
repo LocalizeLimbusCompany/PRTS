@@ -9,6 +9,7 @@ pub mod health;
 pub mod meta;
 pub mod projects;
 pub mod search;
+pub mod suggestions;
 pub mod users;
 pub mod ws;
 
@@ -94,6 +95,8 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(entries::export_project))
         // 混合搜索
         .routes(routes!(search::search_entries))
+        // TM 翻译建议
+        .routes(routes!(suggestions::entry_suggestions))
         .split_for_parts();
 
     router
