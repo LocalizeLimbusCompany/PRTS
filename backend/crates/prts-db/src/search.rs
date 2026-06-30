@@ -129,3 +129,106 @@ pub async fn fetch_by_ids(
         .fetch_all(pool)
         .await
 }
+
+// ────────────────────────────────────────────────────────────────
+// TM 建议（Translation Memory Suggestions）
+// ────────────────────────────────────────────────────────────────
+
+/// TM 建议候选行（含来源项目名）。
+#[derive(Debug, sqlx::FromRow)]
+pub struct SuggestionRow {
+    pub entry_id: i64,
+    pub project_id: i64,
+    pub project_name: String,
+    pub source_text: String,
+    pub translation: String,
+    pub state: String,
+    pub similarity: f64,
+}
+
+/// 当前词条的 source_text 与 embedding（用于建议召回；None = 词条不存在）。
+pub async fn current_search_fields(
+    pool: &PgPool,
+    entry_id: i64,
+) -> Result<Option<(String, Option<Vec<f32>>)>, sqlx::Error> {
+    let row: Option<(String, Option<Vector>)> =
+        sqlx::query_as("SELECT source_text, embedding FROM entries WHERE id = $1")
+            .bind(entry_id)
+            .fetch_optional(pool)
+            .await?;
+    // pgvector::Vector 转 Vec<f32>：用 as_slice().to_vec()。
+    Ok(row.map(|(st, emb)| (st, emb.map(|v| v.as_slice().to_vec()))))
+}
+
+/// 向量版 TM 建议：当前词条已有 embedding。仅用户已加入项目 + 同 target_lang。
+#[allow(clippy::too_many_arguments)]
+pub async fn suggestions_vector(
+    pool: &PgPool,
+    user_id: i64,
+    target_lang: &str,
+    cur_embedding: &[f32],
+    cur_entry_id: i64,
+    min_sim: f64,
+    top_n: i64,
+) -> Result<Vec<SuggestionRow>, sqlx::Error> {
+    let v = Vector::from(cur_embedding.to_vec());
+    sqlx::query_as::<_, SuggestionRow>(
+        "SELECT e.id AS entry_id, p.id AS project_id, p.name AS project_name,
+                e.source_text, e.translation, e.state,
+                (1 - (e.embedding <=> $1))::float8 AS similarity
+         FROM entries e
+         JOIN projects p ON p.id = e.project_id
+         JOIN memberships m ON m.project_id = p.id AND m.user_id = $2
+         WHERE p.target_lang = $3
+           AND e.state IN ('translated','questioned','checked','reviewed')
+           AND e.translation <> '' AND e.source_text <> ''
+           AND e.id <> $4 AND e.embedding IS NOT NULL
+           AND (1 - (e.embedding <=> $1)) >= $5
+         ORDER BY e.embedding <=> $1
+         LIMIT $6",
+    )
+    .bind(v)
+    .bind(user_id)
+    .bind(target_lang)
+    .bind(cur_entry_id)
+    .bind(min_sim)
+    .bind(top_n)
+    .fetch_all(pool)
+    .await
+}
+
+/// trgm 版 TM 建议：向量关或当前词条无 embedding 时，用源文相似度。
+#[allow(clippy::too_many_arguments)]
+pub async fn suggestions_trgm(
+    pool: &PgPool,
+    user_id: i64,
+    target_lang: &str,
+    cur_source: &str,
+    cur_entry_id: i64,
+    min_sim: f64,
+    top_n: i64,
+) -> Result<Vec<SuggestionRow>, sqlx::Error> {
+    sqlx::query_as::<_, SuggestionRow>(
+        "SELECT e.id AS entry_id, p.id AS project_id, p.name AS project_name,
+                e.source_text, e.translation, e.state,
+                similarity(e.source_text, $1)::float8 AS similarity
+         FROM entries e
+         JOIN projects p ON p.id = e.project_id
+         JOIN memberships m ON m.project_id = p.id AND m.user_id = $2
+         WHERE p.target_lang = $3
+           AND e.state IN ('translated','questioned','checked','reviewed')
+           AND e.translation <> '' AND e.source_text <> ''
+           AND e.id <> $4
+           AND similarity(e.source_text, $1) >= $5
+         ORDER BY similarity(e.source_text, $1) DESC
+         LIMIT $6",
+    )
+    .bind(cur_source)
+    .bind(user_id)
+    .bind(target_lang)
+    .bind(cur_entry_id)
+    .bind(min_sim)
+    .bind(top_n)
+    .fetch_all(pool)
+    .await
+}

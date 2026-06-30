@@ -763,3 +763,193 @@ async fn search_settings_set_and_get_normalizes_values() {
         .await
         .unwrap();
 }
+
+/// 验证 suggestions_trgm 的成员范围过滤：
+/// - 用户 U 是项目 A 和 B 的成员，不是项目 C 的成员；
+/// - 查询 A 中某词条的 trgm 建议：应包含 B 的跨项目词条，排除 C 及 A 自身被查词条。
+#[tokio::test]
+async fn suggestions_trgm_membership_scoped() {
+    let pool = pool().await;
+
+    // —— 清理上次残留 ——
+    for slug in ["itest-tm-a", "itest-tm-b", "itest-tm-c"] {
+        sqlx::query("DELETE FROM projects WHERE slug = $1")
+            .bind(slug)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM users WHERE username = 'itest_tm_user'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // —— 建用户 U ——
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let u = users::create_password_user(&pool, "itest_tm_user", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— 建项目 A（U 是 owner，自动加入成员） ——
+    let proj_a = projects::create(
+        &pool,
+        "itest-tm-a",
+        "TM Test A",
+        "",
+        "public",
+        &["zh-Hans".to_string()],
+        "en",
+        u.id,
+    )
+    .await
+    .unwrap();
+    // projects::create 已插入 owner 行，此处确保角色正确
+    memberships::upsert(&pool, proj_a.id, u.id, "owner")
+        .await
+        .unwrap();
+
+    // —— 建项目 B（U 作为 translator 加入） ——
+    let proj_b = projects::create(
+        &pool,
+        "itest-tm-b",
+        "TM Test B",
+        "",
+        "public",
+        &["zh-Hans".to_string()],
+        "en",
+        u.id, // owner 也是 U，所以 U 在 B 中
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&pool, proj_b.id, u.id, "translator")
+        .await
+        .unwrap();
+
+    // —— 建项目 C（U 不是成员；由另一个 owner 创建，使用直接 INSERT） ——
+    // 为了避免引入额外用户，直接插入项目并让 U 不加入成员表
+    let proj_c: (i64,) = sqlx::query_as(
+        "INSERT INTO projects (slug, name, description, visibility, source_langs, target_lang, owner_id)
+         VALUES ('itest-tm-c', 'TM Test C', '', 'public', ARRAY['zh-Hans'], 'en', $1)
+         RETURNING id",
+    )
+    .bind(u.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let proj_c_id = proj_c.0;
+    // 明确不为 U 在 proj_c 插入 membership
+
+    // —— 建文件 ——
+    let file_a = files::ensure_file_at_path(&pool, proj_a.id, "tm/a.json")
+        .await
+        .unwrap();
+    let file_b = files::ensure_file_at_path(&pool, proj_b.id, "tm/b.json")
+        .await
+        .unwrap();
+    let file_c = files::ensure_file_at_path(&pool, proj_c_id, "tm/c.json")
+        .await
+        .unwrap();
+
+    // 相同/相似源文：三个项目都用同一个英文原文，触发器提取 source_text
+    let make_batch = |key: &str| {
+        vec![entries::UploadEntry {
+            key: key.to_string(),
+            original: serde_json::json!({ "zh-Hans": "今天天气晴朗" }),
+            context: None,
+            translation: Some("the weather is sunny today".to_string()),
+            state: Some("translated".to_string()),
+        }]
+    };
+
+    let stats_a = entries::bulk_upsert(
+        &pool,
+        file_a.id,
+        proj_a.id,
+        &make_batch("tm_a1"),
+        Some(u.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stats_a.created, 1);
+
+    let stats_b = entries::bulk_upsert(
+        &pool,
+        file_b.id,
+        proj_b.id,
+        &make_batch("tm_b1"),
+        Some(u.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stats_b.created, 1);
+
+    let stats_c = entries::bulk_upsert(
+        &pool,
+        file_c.id,
+        proj_c_id,
+        &make_batch("tm_c1"),
+        Some(u.id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stats_c.created, 1);
+
+    // —— 取各词条真实 id ——
+    let entry_a_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'tm_a1'")
+            .bind(proj_a.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let entry_b_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'tm_b1'")
+            .bind(proj_b.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let entry_c_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'tm_c1'")
+            .bind(proj_c_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    // —— 调用 suggestions_trgm，以 A 的词条为查询基点 ——
+    let results =
+        prts_db::search::suggestions_trgm(&pool, u.id, "en", "今天天气晴朗", entry_a_id, 0.0, 10)
+            .await
+            .unwrap();
+
+    let result_ids: Vec<i64> = results.iter().map(|r| r.entry_id).collect();
+
+    // B 的词条应出现（跨项目，U 是成员）
+    assert!(
+        result_ids.contains(&entry_b_id),
+        "B 项目词条应出现在建议中（U 是成员），实际：{result_ids:?}"
+    );
+
+    // C 的词条不应出现（U 不是 C 的成员）
+    assert!(
+        !result_ids.contains(&entry_c_id),
+        "C 项目词条不应出现在建议中（U 不是成员），实际：{result_ids:?}"
+    );
+
+    // A 的被查词条本身不应出现（cur_entry_id 排除）
+    assert!(
+        !result_ids.contains(&entry_a_id),
+        "被查词条自身不应出现在建议结果中，实际：{result_ids:?}"
+    );
+
+    // —— 级联清理 ——
+    projects::delete(&pool, proj_a.id).await.unwrap();
+    projects::delete(&pool, proj_b.id).await.unwrap();
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(proj_c_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE username = 'itest_tm_user'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
