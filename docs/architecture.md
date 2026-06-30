@@ -50,14 +50,23 @@ ZOOT 端点与字段详见 [`external/oauth_integration.md`](./external/oauth_in
  → COPY/批量事务入库 → 增量更新文件/项目状态计数 → 写 audit_log
 ```
 
-### 3.3 混合搜索
+### 3.3 混合搜索（P4）
+
+**列与索引**（迁移 `0004`，触发器维护）：`entries` 增 `source_text`（主源语言文本）、`source_tsv`/`translation_tsv`（按语言选 `regconfig`，中文经 **zhparser**）、`embedding vector(1024)`、`embed_attempts`。索引：tsv GIN、`source_text`/`translation`/`key` 的 trgm GIN、`embedding` 的 HNSW(cosine)。触发器仅在**源文变化**时作废 `embedding`（译文编辑不触发重嵌）。
+
+`GET /projects/{id}/search`：
 
 ```
-query + 过滤(文件/目录/状态/排序)
- → 并行：FTS(tsvector) | trgm(相似度) | vector(EmbeddingProvider→pgvector kNN)
- → RRF 融合排序 → 应用过滤与权限可见性 → 分页返回
-（Embedding 不可用 → 自动降级为 FTS+trgm）
+q + 过滤(file/状态/排序) + 可见性(hidden 需编辑权限)
+ → 查询期对 q 取一次 embedding（向量启用且配 key 时）
+ → 并行三路：FTS(source_tsv/translation_tsv) | trgm(source_text/translation/key) | pgvector kNN
+ → RRF 融合(k=60, 每路 top-100) → 有界 top-200 → offset/limit 窗口 → 取行返回(含 relevance)
+（向量默认关闭 / key 缺失 / 调用失败 → 自动降级为 FTS+trgm）
 ```
+
+**向量化**：`EmbeddingProvider`（默认 `QwenProvider`，DashScope OpenAI 兼容端点）。**默认关闭**；管理后台 `GET|PUT /admin/settings/search` 开关并配置 model/base_url/batch 与 TM 参数（存 `settings` 表 `search.config`，运行时热生效）；**API Key 仅经 env，绝不下发前端**（后台只显示「已配置:是/否」）。后台 **sweep worker** 分批回填 `embedding IS NULL` 的词条（batch ≤10，失败退避），覆盖 20w 存量，不阻塞主流程。
+
+**TM 翻译建议** `GET /projects/{id}/entries/{entry_id}/suggestions`：从**当前用户已加入**、`target_lang` 一致的项目里，按源文相似度（向量 cosine，关则 trgm）召回状态≥已翻译、译文非空的词条（排除自身），≤ `tm_top_n`(默认 3) 条，供编辑器译文面板下方展示、点击填入。
 
 ### 3.4 实时编辑
 
