@@ -1,5 +1,5 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import { quasar, transformAssetUrls } from '@quasar/vite-plugin'
 
@@ -46,5 +46,9 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'dist',
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.spec.ts'],
   },
 })
