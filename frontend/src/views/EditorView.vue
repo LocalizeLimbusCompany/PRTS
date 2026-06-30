@@ -299,6 +299,13 @@ function otherEditing(entryId: number): boolean {
   return uid !== undefined && uid !== auth.user?.id
 }
 
+/** 返回正在编辑指定词条的成员（排除自己）；未找到时返回 null。 */
+function editorOf(entryId: number): MemberDto | null {
+  const uid = editingMap.value[entryId]
+  if (uid === undefined || uid === auth.user?.id) return null
+  return members.value.find((m) => m.user_id === uid) ?? null
+}
+
 async function toggleFlag(flag: 'locked' | 'hidden') {
   if (!selected.value) return
   try {
@@ -405,9 +412,19 @@ onMounted(async () => {
               </span>
               <q-icon v-if="item.locked" name="lock" size="14px" class="prts-dim" />
               <q-icon v-if="item.hidden" name="visibility_off" size="14px" class="prts-dim" />
-              <q-icon v-if="otherEditing(item.id)" name="edit" size="13px" color="amber">
-                <q-tooltip>有人正在编辑</q-tooltip>
-              </q-icon>
+              <template v-if="otherEditing(item.id)">
+                <q-avatar v-if="editorOf(item.id)?.avatar_url" size="18px">
+                  <img :src="editorOf(item.id)!.avatar_url!" :alt="editorOf(item.id)!.username" />
+                  <q-tooltip>{{ editorOf(item.id)!.username }} · {{ editorOf(item.id)!.role }} · {{ t('editor.editingNow') }}</q-tooltip>
+                </q-avatar>
+                <q-avatar v-else-if="editorOf(item.id)" size="18px" color="amber" text-color="dark">
+                  {{ editorOf(item.id)!.username.charAt(0).toUpperCase() }}
+                  <q-tooltip>{{ editorOf(item.id)!.username }} · {{ editorOf(item.id)!.role }} · {{ t('editor.editingNow') }}</q-tooltip>
+                </q-avatar>
+                <q-icon v-else name="edit" size="13px" color="amber">
+                  <q-tooltip>{{ t('editor.editingNow') }}</q-tooltip>
+                </q-icon>
+              </template>
             </div>
           </template>
         </q-virtual-scroll>
