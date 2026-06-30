@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useQuasar } from 'quasar'
+import { useI18n } from 'vue-i18n'
 
 import {
   apiErrorMessage,
@@ -23,11 +24,13 @@ import { useAuthStore } from '@/stores/auth'
 import SearchFilters from '@/components/SearchFilters.vue'
 import SuggestionsPanel from '@/components/SuggestionsPanel.vue'
 import type { SearchParams } from '@/components/SearchFilters.vue'
+import { computeSaveButton } from '@/lib/saveButton'
 
 const props = defineProps<{ id: number }>()
 const route = useRoute()
 const auth = useAuthStore()
 const $q = useQuasar()
+const { t } = useI18n()
 
 const isNarrow = computed(() => $q.screen.lt.md)
 const mobilePanel = ref(false)
@@ -45,6 +48,8 @@ const isMember = computed(() => myRole.value !== null)
 const canReview = computed(() => ['owner', 'manager', 'reviewer'].includes(myRole.value ?? ''))
 const canEditLocked = computed(() => ['owner', 'manager'].includes(myRole.value ?? ''))
 const canFlag = computed(() => ['owner', 'manager'].includes(myRole.value ?? ''))
+const isManager = computed(() => ['owner', 'manager'].includes(myRole.value ?? ''))
+const canEdit = computed(() => isMember.value) // 任何成员都有 PROJECT_ENTRY_EDIT
 const availableStates = computed(() =>
   canReview.value ? STATE_ORDER : ['untranslated', 'translated', 'questioned'],
 )
@@ -184,6 +189,33 @@ const panelReadOnly = computed(
   () => !isMember.value || (selected.value?.locked === true && !canEditLocked.value),
 )
 
+/** 译文或状态相对已保存值有变化。 */
+const dirty = computed(
+  () =>
+    !!selected.value &&
+    (draft.value !== selected.value.translation || draftState.value !== selected.value.state),
+)
+
+/** 当前选中词条是否有他人正在编辑。 */
+const othersEditingSelected = computed(() =>
+  selected.value ? otherEditing(selected.value.id) : false,
+)
+
+/** 保存按钮形态（标签 / 颜色 / 禁用 / 模式）。 */
+const saveBtn = computed(() =>
+  computeSaveButton({
+    isMember: isMember.value,
+    locked: selected.value?.locked === true,
+    canEditLocked: canEditLocked.value,
+    isManager: isManager.value,
+    canReview: canReview.value,
+    canEdit: canEdit.value,
+    state: selected.value?.state ?? 'untranslated',
+    dirty: dirty.value,
+    othersEditing: othersEditingSelected.value,
+  }),
+)
+
 function select(e: EntryDto | SearchHitDto) {
   selected.value = e
   draft.value = e.translation
@@ -196,14 +228,16 @@ function select(e: EntryDto | SearchHitDto) {
 const sourceLangs = computed(() => project.value?.source_langs ?? [])
 
 async function save() {
-  if (!selected.value) return
+  if (!selected.value || saveBtn.value.disabled) return
+  const targetState = saveBtn.value.nextState ?? draftState.value
   saving.value = true
   try {
     const updated = await entriesApi.update(props.id, selected.value.id, {
       translation: draft.value,
-      state: draftState.value,
+      state: targetState,
       version: selected.value.version,
     })
+    draftState.value = targetState // 推进后同步下拉
     applyUpdated(updated)
     $q.notify({ type: 'positive', message: '已保存', timeout: 900 })
     selectNext()
@@ -479,14 +513,19 @@ onMounted(async () => {
             <q-btn
               unelevated
               no-caps
-              color="primary"
-              text-color="dark"
+              :color="saveBtn.color"
+              :text-color="saveBtn.color ? 'dark' : undefined"
               icon="save"
-              label="保存"
+              :label="t('editor.btn_' + saveBtn.labelKey)"
               :loading="saving"
-              :disable="panelReadOnly"
+              :disable="saveBtn.disabled"
               @click="save"
-            />
+            >
+              <q-tooltip v-if="saveBtn.mode === 'force'">{{ t('editor.forceHint') }}</q-tooltip>
+              <q-tooltip v-else-if="saveBtn.disabled && saveBtn.mode === 'none' && othersEditingSelected">
+                {{ t('editor.othersEditingHint') }}
+              </q-tooltip>
+            </q-btn>
           </div>
         </div>
       </div>

@@ -25,7 +25,15 @@
     "searchMode": "Search mode",
     "browseMode": "Browse mode",
     "relevance": "Relevance",
-    "clearSearch": "Clear search"
+    "clearSearch": "Clear search",
+    "btn_save": "Save",
+    "btn_force": "Force save",
+    "btn_check": "Mark checked",
+    "btn_review": "Approve",
+    "btn_translated": "Mark translated",
+    "forceHint": "Someone is editing; force-save (still version-checked)",
+    "othersEditingHint": "Someone is editing this entry",
+    "editingNow": "editing now"
   },
   "admin": {
     "search": {
