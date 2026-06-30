@@ -26,5 +26,34 @@
     "browseMode": "浏览模式",
     "relevance": "相关度",
     "clearSearch": "清除搜索"
+  },
+  "admin": {
+    "search": {
+      "title": "搜索 / 向量化",
+      "subtitle": "配置混合搜索（FTS + trgm + pgvector）行为。",
+      "embeddingEnabled": "启用向量化（pgvector 召回）",
+      "embeddingEnabledHint": "关闭后仅使用 FTS + trgm 搜索。",
+      "embeddingModel": "向量模型名称",
+      "embeddingBaseUrl": "向量服务地址（Base URL）",
+      "embeddingBatch": "批次大小（1–10）",
+      "keyPresent": "Qwen 密钥",
+      "keyPresentYes": "已配置",
+      "keyPresentNo": "未配置",
+      "keyHint": "密钥仅由环境变量注入，不可在此修改。",
+      "keyMissingWarning": "已开启向量化但未配置密钥，将降级为 FTS + trgm。",
+      "tmEnabled": "启用 TM（翻译记忆）建议",
+      "tmEnabledHint": "为编辑器提供相似词条翻译参考。",
+      "tmMinSimilarity": "最低相似度（0–1）",
+      "tmTopN": "最多返回条数（1–3）",
+      "save": "保存搜索设置",
+      "saved": "搜索设置已保存",
+      "saveFailed": "保存失败"
+    }
+  },
+  "suggestions": {
+    "title": "翻译建议",
+    "from": "来源",
+    "similarity": "相似度",
+    "apply": "应用此译文"
   }
 }

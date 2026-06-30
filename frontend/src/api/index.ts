@@ -9,7 +9,10 @@ import type {
   ProjectDetailDto,
   ProjectDto,
   ProjectTree,
+  SearchConfigDto,
   SearchHitDto,
+  SearchSettingsDto,
+  SuggestionDto,
   TokenResponse,
   UploadResult,
   UserDto,
@@ -163,6 +166,25 @@ export const searchApi = {
     } = {},
   ) {
     return http.get<SearchHitDto[]>(`/projects/${id}/search`, { params }).then((r) => r.data)
+  },
+}
+
+/** 搜索 / 向量化管理员配置。 */
+export const adminSearchApi = {
+  get() {
+    return http.get<SearchSettingsDto>('/admin/settings/search').then((r) => r.data)
+  },
+  put(cfg: SearchConfigDto) {
+    return http.put<SearchSettingsDto>('/admin/settings/search', cfg).then((r) => r.data)
+  },
+}
+
+/** TM 翻译建议。 */
+export const suggestionsApi = {
+  forEntry(projectId: number, entryId: number) {
+    return http
+      .get<SuggestionDto[]>(`/projects/${projectId}/entries/${entryId}/suggestions`)
+      .then((r) => r.data)
   },
 }
 

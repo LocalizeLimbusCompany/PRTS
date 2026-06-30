@@ -134,3 +134,30 @@ export type EntryState = (typeof ENTRY_STATES)[number]
 export interface SearchHitDto extends EntryDto {
   relevance: number
 }
+
+/** 搜索 / 向量化配置（可写部分）。 */
+export interface SearchConfigDto {
+  embedding_enabled: boolean
+  embedding_model: string
+  embedding_base_url: string
+  embedding_batch: number
+  tm_enabled: boolean
+  tm_min_similarity: number
+  tm_top_n: number
+}
+
+/** 搜索 / 向量化设置（GET 响应：含密钥是否已配置的只读标志）。 */
+export interface SearchSettingsDto extends SearchConfigDto {
+  embedding_key_present: boolean
+}
+
+/** TM 翻译建议（来自其他项目的复用）。 */
+export interface SuggestionDto {
+  entry_id: number
+  project_id: number
+  project_name: string
+  source_text: string
+  translation: string
+  state: string
+  similarity: number
+}

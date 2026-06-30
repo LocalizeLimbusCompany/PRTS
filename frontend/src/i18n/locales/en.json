@@ -26,5 +26,34 @@
     "browseMode": "Browse mode",
     "relevance": "Relevance",
     "clearSearch": "Clear search"
+  },
+  "admin": {
+    "search": {
+      "title": "Search / Vectorization",
+      "subtitle": "Configure hybrid search behaviour (FTS + trgm + pgvector).",
+      "embeddingEnabled": "Enable vector search (pgvector recall)",
+      "embeddingEnabledHint": "When off, only FTS + trgm is used.",
+      "embeddingModel": "Embedding model name",
+      "embeddingBaseUrl": "Embedding service base URL",
+      "embeddingBatch": "Batch size (1–10)",
+      "keyPresent": "Qwen API key",
+      "keyPresentYes": "Configured",
+      "keyPresentNo": "Not configured",
+      "keyHint": "The key is injected via environment variable and cannot be changed here.",
+      "keyMissingWarning": "Vector search is enabled but no API key is configured — will fall back to FTS + trgm.",
+      "tmEnabled": "Enable TM (translation memory) suggestions",
+      "tmEnabledHint": "Provides similar-entry suggestions in the editor.",
+      "tmMinSimilarity": "Minimum similarity (0–1)",
+      "tmTopN": "Max suggestions (1–3)",
+      "save": "Save search settings",
+      "saved": "Search settings saved",
+      "saveFailed": "Save failed"
+    }
+  },
+  "suggestions": {
+    "title": "Suggestions",
+    "from": "Source",
+    "similarity": "Similarity",
+    "apply": "Apply"
   }
 }
