@@ -8,17 +8,20 @@ import {
   entriesApi,
   projectsApi,
   searchApi,
+  suggestionsApi,
   type EntryDto,
   type EntryVersionDto,
   type FileDto,
   type MemberDto,
   type ProjectDto,
   type SearchHitDto,
+  type SuggestionDto,
 } from '@/api'
 import { STATE_LABELS, STATE_ORDER, stateLabel } from '@/lib/states'
 import { useRealtime } from '@/composables/useRealtime'
 import { useAuthStore } from '@/stores/auth'
 import SearchFilters from '@/components/SearchFilters.vue'
+import SuggestionsPanel from '@/components/SuggestionsPanel.vue'
 import type { SearchParams } from '@/components/SearchFilters.vue'
 
 const props = defineProps<{ id: number }>()
@@ -160,6 +163,23 @@ const draft = ref('')
 const draftState = ref('untranslated')
 const saving = ref(false)
 
+/* —— TM 翻译建议 —— */
+const suggestions = ref<SuggestionDto[]>([])
+
+/** 应用某条 TM 建议到译文草稿（不自动保存）。 */
+function onApplySuggestion(translation: string) {
+  draft.value = translation
+}
+
+/** 拉取当前词条的 TM 建议；失败时静默降级（非核心功能）。 */
+async function fetchSuggestions(entryId: number) {
+  try {
+    suggestions.value = await suggestionsApi.forEntry(props.id, entryId)
+  } catch {
+    suggestions.value = []
+  }
+}
+
 const panelReadOnly = computed(
   () => !isMember.value || (selected.value?.locked === true && !canEditLocked.value),
 )
@@ -170,6 +190,7 @@ function select(e: EntryDto | SearchHitDto) {
   draftState.value = e.state
   if (isNarrow.value) mobilePanel.value = true
   sendEditing(e.id)
+  void fetchSuggestions(e.id)
 }
 
 const sourceLangs = computed(() => project.value?.source_langs ?? [])
@@ -211,9 +232,11 @@ function selectNext() {
   if (!selected.value) return
   const idx = entries.value.findIndex((x) => x.id === selected.value!.id)
   if (idx >= 0 && idx + 1 < entries.value.length) {
-    selected.value = entries.value[idx + 1]
-    draft.value = selected.value.translation
-    draftState.value = selected.value.state
+    const next = entries.value[idx + 1]
+    selected.value = next
+    draft.value = next.translation
+    draftState.value = next.state
+    void fetchSuggestions(next.id)
   }
 }
 
@@ -433,6 +456,9 @@ onMounted(async () => {
             input-class="prts-translation"
             :input-style="{ minHeight: '120px' }"
           />
+
+          <!-- TM 翻译建议面板（无建议时不渲染）-->
+          <SuggestionsPanel :suggestions="suggestions" @apply="onApplySuggestion" />
 
           <div class="row items-center q-mt-md q-gutter-sm">
             <q-select
