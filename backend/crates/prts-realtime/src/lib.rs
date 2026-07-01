@@ -40,7 +40,11 @@ pub enum RoomEvent {
 
 /// 用户通知事件（用户频道专用，区别于 project 房间的 [`RoomEvent`]）。
 ///
-/// 目前仅一种：一条新通知落库后推送给收件人（`kind` 即通知类型，如 `poke`）。
+/// - [`UserEvent::Notification`]：一条新通知落库后推送给收件人（`kind` 即通知类型，如 `poke`）。
+/// - [`UserEvent::DmMessage`]：一条新私信落库后推送给收件人，其在线连接即时追加（见 Spec D）。
+///
+/// `#[serde(tag = "type")]` 使线协议为 `{"type":"Notification",…}` / `{"type":"DmMessage",…}`，
+/// 前端 shared user-stream 据 `type` 分发。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum UserEvent {
@@ -49,6 +53,17 @@ pub enum UserEvent {
         id: i64,
         kind: String,
         payload: serde_json::Value,
+    },
+    /// 收件人收到一条新私信。
+    DmMessage {
+        /// 消息 id。
+        id: i64,
+        /// 发送者用户 id。
+        from_user_id: i64,
+        /// 消息正文。
+        content: String,
+        /// 创建时间（RFC3339 字符串，避免 realtime 层引入 chrono 依赖）。
+        created_at: String,
     },
 }
 
