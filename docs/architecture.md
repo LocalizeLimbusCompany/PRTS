@@ -84,7 +84,17 @@ q + 过滤(file/状态/排序) + 可见性(hidden 需编辑权限)
 
 **通知底座**：`notifications(user_id 收件人, type, payload JSONB, read_at, created_at)`（键集分页；未读 = `read_at IS NULL`）。per-user 实时推送经 `prts-realtime` Hub 的**用户房间**（独立 Redis 频道 `prts:rt:user`，与项目房间并行、互不串扰）；前端 App 根部登录后常连 `GET /ws/user`，右上角铃铛显未读数 + 列表，收到即 toast。REST：`GET /notifications`、`/unread_count`、`POST /notifications/read`。
 
-**编辑器「戳一下」**（第一种通知 `type=poke`）：翻译编辑器点在场头像 → 写一段提示 → `POST /projects/{id}/poke {to_user_id, text}`（收发双方均需项目成员）→ 建通知 + `publish_user` 实时推。用于协调（如提醒占用文件的译者换文件）。持久私信页留后续（**Spec D**，复用此底座）。
+**编辑器「戳一下」**（第一种通知 `type=poke`）：翻译编辑器点在场头像 → 写一段提示 → `POST /projects/{id}/poke {to_user_id, text}`（收发双方均需项目成员）→ 建通知 + `publish_user` 实时推。用于协调（如提醒占用文件的译者换文件）。poke 文本上限 **140** 字；持久私信见 §3.6（复用此底座）。
+
+### 3.6 私信（Spec D）
+
+**持久私信**：独立 `/messages` 页（会话列表 + 会话线程），复用 §3.5 的 per-user 实时底座。
+
+- **数据**：`messages(id, sender_id→users, recipient_id→users, content, read_at, created_at)`（迁移 0006）。会话 = 一对用户间的消息，无独立会话表；键集分页（正反双向复合索引 + 收件人未读部分索引）。
+- **门限**：私信双方须**共享 ≥1 项目**（`memberships` 交集 `EXISTS`）否则 403（防陌生人骚扰）；`content` ≤ 2000 字、不可自发；消息仅收发双方可见（端点按 user 鉴权）。
+- **实时**：`prts-realtime` 用户频道加 `UserEvent::DmMessage`；`POST /messages` 落库后 `publish_user` 推给收件人 → 在线即时追加 + 顶栏 ✉️ 红点（独立于铃铛）；离线经 `GET /messages` / `/messages/unread_count` 补看（持久 DB）。
+- **REST**：`GET /messages`、`GET /messages/{user_id}`（键集会话）、`POST /messages`、`POST /messages/{user_id}/read`、`GET /messages/unread_count`；另 `GET /users/{id}`（公开资料，**不含 email**）供会话页展示对话方头名。
+- **前端**：单一 `/ws/user` 共享连接（`useUserStream`）按事件 `type` 分发给通知（`useNotifications`）与私信（`useMessages`）；`MessagesView`（会话列表）、`MessageThreadView`（会话线程：气泡 + 发送 + 实时追加 + 进入即已读）；编辑器在场头像菜单与项目成员列表均可「发私信」。
 
 ## 4. 数据模型（ER 摘要）
 
