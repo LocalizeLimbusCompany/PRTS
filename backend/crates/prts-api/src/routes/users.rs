@@ -65,6 +65,26 @@ pub async fn update_me(
     Ok(Json((&updated).into()))
 }
 
+/// 公开用户资料（**不含 email**）。
+///
+/// 供私信会话页展示对话方头名/头像等。资料本身对已认证用户公开；
+/// 出于红线 §8「GET /users/{id} 不下发 email」，返回前显式清空 email。
+#[utoipa::path(get, path = "/users/{id}", tag = "user",
+    params(("id" = i64, Path, description = "用户 id")),
+    responses((status = 200, body = UserDto), (status = 404)))]
+pub async fn get_user(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<UserDto>, ApiError> {
+    let u = prts_db::users::find_by_id(&state.db, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    let mut dto: UserDto = (&u).into();
+    dto.email = None; // 公开资料不下发 email。
+    Ok(Json(dto))
+}
+
 /// 关联账号对外表示。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ExternalAccountDto {
