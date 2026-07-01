@@ -47,12 +47,14 @@ pub(crate) fn parse_states(s: Option<&str>) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// 装配完整应用路由（含状态与中间件）。
+/// 构建 OpenAPI 路由（注册全部业务端点，不含状态/中间件）。
 ///
-/// 端点经 `utoipa-axum` 注册，既挂载到 axum，也写入 OpenAPI 文档；
-/// Swagger UI 挂在 `/swagger-ui`，OpenAPI JSON 在 `/api-docs/openapi.json`。
-pub fn app(state: AppState) -> Router {
-    let (router, api) = OpenApiRouter::with_openapi(ApiDoc::openapi())
+/// 抽出以便单测「路由装配不 panic（无路径/方法重叠）」——`app()` 的路由注册发生在
+/// `with_state` 之前，测试无需真实 AppState/DB/Redis 即可装配校验。历史上单测仅覆盖
+/// `public_router()`，未装配完整路由，致使「不同路径 handler 误并入一次 `routes!()`」
+/// 造成的路由重叠在服务启动时才 panic。
+fn api_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health::liveness))
         .routes(routes!(health::readiness))
         .routes(routes!(meta::version))
@@ -101,7 +103,11 @@ pub fn app(state: AppState) -> Router {
         // TM 翻译建议
         .routes(routes!(suggestions::entry_suggestions))
         // 通知（收件人自助 + poke 发送）
-        .routes(routes!(notifications::list, notifications::unread_count))
+        // list 与 unread_count 路径不同（/notifications vs /notifications/unread_count），
+        // 必须各自 .routes()：utoipa-axum 的 routes!(a, b) 会把多个 handler 合并到**同一
+        // 路径**当作方法路由，两个 GET 同路径会「Overlapping method route」启动即 panic。
+        .routes(routes!(notifications::list))
+        .routes(routes!(notifications::unread_count))
         .routes(routes!(notifications::mark_read))
         .routes(routes!(notifications::poke))
         // 私信（会话列表 / 会话 / 发送 / 已读 / 未读数）
@@ -109,7 +115,14 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(messages::unread_count))
         .routes(routes!(messages::conversation))
         .routes(routes!(messages::mark_read))
-        .split_for_parts();
+}
+
+/// 装配完整应用路由（含状态与中间件）。
+///
+/// 端点经 `utoipa-axum` 注册，既挂载到 axum，也写入 OpenAPI 文档；
+/// Swagger UI 挂在 `/swagger-ui`，OpenAPI JSON 在 `/api-docs/openapi.json`。
+pub fn app(state: AppState) -> Router {
+    let (router, api) = api_router().split_for_parts();
 
     router
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api))
@@ -184,5 +197,17 @@ mod tests {
             .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(v["name"], "prts-api");
+    }
+
+    /// 装配全部业务路由，确保无路径/方法重叠导致 `app()` 启动即 panic。
+    ///
+    /// 路由注册在 `with_state` 之前，故无需真实 AppState/DB/Redis 即可校验。
+    /// 补此测试的动因：通知路由曾把 `/notifications` 与 `/notifications/unread_count`
+    /// 两个**不同路径** handler 并入一次 `routes!()`（被当作同路径两个 GET →
+    /// axum「Overlapping method route」），`public_router()` 未覆盖，致启动时才 panic
+    /// 而 CI 未捕获。
+    #[test]
+    fn full_router_assembles_without_route_conflicts() {
+        let _ = api_router().split_for_parts();
     }
 }

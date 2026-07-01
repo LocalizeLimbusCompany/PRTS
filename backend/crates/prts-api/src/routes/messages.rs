@@ -6,6 +6,10 @@
 //! - `POST /messages {to_user_id, content}`：发送一条私信并实时推送。
 //! - `POST /messages/{user_id}/read`：将与某用户的会话标记为已读。
 //!
+//! 注：每个不同路径的端点各占一次 `.routes()` 注册（见 `routes/mod.rs`）——
+//! `utoipa-axum` 的 `routes!(a, b)` 会把多个 handler 合并到**同一路径**当作方法路由，
+//! 仅用于同路径多方法（如 GET+POST /messages）；不同路径必须分开注册。
+//!
 //! **门限**：私信双方须**共享 ≥1 项目**（`memberships` 交集），否则 403（防陌生人骚扰，红线 §8）；
 //! `content` trim 后非空且 ≤2000 字；不允许给自己发私信。
 
