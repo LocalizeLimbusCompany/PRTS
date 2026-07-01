@@ -76,8 +76,21 @@
   },
   "poke": {
     "composeTitle": "向 {name} 发送提示",
-    "placeholder": "说点什么…（500 字以内）",
+    "placeholder": "说点什么…（140 字以内）",
     "send": "发送",
     "sent": "已发送提示"
+  },
+  "messages": {
+    "title": "私信",
+    "empty": "还没有私信。可在编辑器在场头像或项目成员列表里发起。",
+    "threadEmpty": "还没有消息，发送第一条吧。",
+    "you": "我",
+    "send": "发送",
+    "placeholder": "输入消息……（2000 字以内，Enter 发送，Shift+Enter 换行）",
+    "loadEarlier": "加载更早",
+    "unread": "未读"
+  },
+  "dm": {
+    "entry": "发私信"
   }
 }
