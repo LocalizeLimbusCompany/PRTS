@@ -1240,3 +1240,119 @@ async fn messages_repository_roundtrip() {
             .unwrap();
     }
 }
+
+/// 验证私信「共享项目」门限（端点层用同一 EXISTS 交集查询）+ 会话取回（迁移 0006）：
+/// - A、B 同属项目 P1（共享）；C 属另一项目 P2、与 A 无共享项目；
+/// - 交集查询 EXISTS(A,B) == true、EXISTS(A,C) == false（端点据此放行 / 返回 403）；
+/// - A→B 发送成功，`list_conversation(A,B)` 能取回该消息。
+#[tokio::test]
+async fn messages_share_project_gate() {
+    let pool = pool().await;
+
+    // —— 清理上次残留 ——
+    for slug in ["itest-msg-p1", "itest-msg-p2"] {
+        sqlx::query("DELETE FROM projects WHERE slug = $1")
+            .bind(slug)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    for uname in ["itest_msg_ga", "itest_msg_gb", "itest_msg_gc"] {
+        sqlx::query("DELETE FROM users WHERE username = $1")
+            .bind(uname)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let a = users::create_password_user(&pool, "itest_msg_ga", None, &hash, "active")
+        .await
+        .unwrap();
+    let b = users::create_password_user(&pool, "itest_msg_gb", None, &hash, "active")
+        .await
+        .unwrap();
+    let c = users::create_password_user(&pool, "itest_msg_gc", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— P1：A、B 同项目 ——
+    let p1 = projects::create(
+        &pool,
+        "itest-msg-p1",
+        "MsgP1",
+        "",
+        "public",
+        &["en".to_string()],
+        "zh-Hans",
+        a.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&pool, p1.id, a.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert(&pool, p1.id, b.id, "translator")
+        .await
+        .unwrap();
+
+    // —— P2：仅 C（A 不在其中） ——
+    let p2 = projects::create(
+        &pool,
+        "itest-msg-p2",
+        "MsgP2",
+        "",
+        "public",
+        &["en".to_string()],
+        "zh-Hans",
+        c.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&pool, p2.id, c.id, "owner")
+        .await
+        .unwrap();
+
+    // —— 共享项目交集查询（与端点 share_project 完全相同的 SQL） ——
+    let share_ab: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM memberships m1 JOIN memberships m2 ON m1.project_id = m2.project_id WHERE m1.user_id = $1 AND m2.user_id = $2)",
+    )
+    .bind(a.id)
+    .bind(b.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(share_ab, "A、B 同属 P1，应共享项目（端点放行）");
+
+    let share_ac: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM memberships m1 JOIN memberships m2 ON m1.project_id = m2.project_id WHERE m1.user_id = $1 AND m2.user_id = $2)",
+    )
+    .bind(a.id)
+    .bind(c.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!share_ac, "A、C 无共享项目，端点应返回 403");
+
+    // —— A→B 发送成功并可取回 ——
+    let m = messages::create(&pool, a.id, b.id, "hello from A")
+        .await
+        .unwrap();
+    let convo = messages::list_conversation(&pool, a.id, b.id, None, 50)
+        .await
+        .unwrap();
+    assert_eq!(convo.len(), 1, "A↔B 应有 1 条消息");
+    assert_eq!(convo[0].id, m.id);
+    assert_eq!(convo[0].content, "hello from A");
+
+    // —— 级联清理 ——
+    projects::delete(&pool, p1.id).await.unwrap();
+    projects::delete(&pool, p2.id).await.unwrap();
+    for uname in ["itest_msg_ga", "itest_msg_gb", "itest_msg_gc"] {
+        sqlx::query("DELETE FROM users WHERE username = $1")
+            .bind(uname)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}

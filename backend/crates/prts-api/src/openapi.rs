@@ -24,6 +24,7 @@ use utoipa::OpenApi;
         (name = "entry", description = "上传 / 词条 / 历史 / 导出"),
         (name = "search", description = "混合搜索（FTS + pg_trgm + RRF 融合）"),
         (name = "notification", description = "通知（收件人自助列表/已读 + poke 发送）"),
+        (name = "message", description = "私信（会话列表/会话/发送/已读/未读数，共享项目门限）"),
     ),
 )]
 pub struct ApiDoc;
