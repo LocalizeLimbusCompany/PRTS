@@ -6,6 +6,7 @@ import type {
   EntryVersionDto,
   ExternalAccountDto,
   MemberDto,
+  NotificationDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectTree,
@@ -198,5 +199,27 @@ export const adminApi = {
   },
   grantRole(userId: number, role: string | null) {
     return http.post(`/admin/users/${userId}/role`, { role })
+  },
+}
+
+/** 通知（键集分页 + 未读数 + 已读标记）。 */
+export const notificationsApi = {
+  list(before?: number, limit?: number) {
+    return http
+      .get<NotificationDto[]>('/notifications', { params: { before, limit } })
+      .then((r) => r.data)
+  },
+  unreadCount() {
+    return http.get<{ count: number }>('/notifications/unread_count').then((r) => r.data)
+  },
+  markRead(ids?: number[]) {
+    return http.post('/notifications/read', { ids })
+  },
+}
+
+/** 编辑器「戳一下」：向同项目成员发送即时提示。 */
+export const pokeApi = {
+  send(projectId: number, to_user_id: number, text: string) {
+    return http.post(`/projects/${projectId}/poke`, { to_user_id, text })
   },
 }

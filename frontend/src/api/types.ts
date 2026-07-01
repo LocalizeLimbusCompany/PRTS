@@ -161,3 +161,12 @@ export interface SuggestionDto {
   state: string
   similarity: number
 }
+
+/** 通知（收件人维度；`type` 为通知种类，如 "poke"）。 */
+export interface NotificationDto {
+  id: number
+  type: string
+  payload: Record<string, unknown>
+  read_at: string | null
+  created_at: string
+}
