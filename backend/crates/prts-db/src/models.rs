@@ -131,6 +131,22 @@ pub struct Entry {
     pub updated_at: DateTime<Utc>,
 }
 
+/// 通知行（收件人维度；`poke` 为第一种 type）。
+#[derive(Debug, Clone, FromRow)]
+pub struct Notification {
+    pub id: i64,
+    /// 收件人用户 id。
+    pub user_id: i64,
+    /// 通知类型（如 `poke`）。`type` 是 SQL 保留列名，映射到字段 `kind`。
+    #[sqlx(rename = "type")]
+    pub kind: String,
+    /// 类型相关的结构化载荷（如 poke 的 from_user_id / from_username / text）。
+    pub payload: serde_json::Value,
+    /// 已读时间；`None` 表示未读。
+    pub read_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// 词条历史行。
 #[derive(Debug, Clone, FromRow)]
 pub struct EntryVersion {

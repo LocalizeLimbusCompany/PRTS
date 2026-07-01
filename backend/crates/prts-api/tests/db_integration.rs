@@ -4,7 +4,7 @@
 //! 本地无 DB 时默认不编译；CI 会起 Postgres 服务后执行（见 .github/workflows/ci.yml）。
 #![cfg(feature = "db-tests")]
 
-use prts_db::{api_keys, entries, files, memberships, projects, settings, users};
+use prts_db::{api_keys, entries, files, memberships, notifications, projects, settings, users};
 
 async fn pool() -> prts_db::Db {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL 未设置");
@@ -759,6 +759,91 @@ async fn search_settings_set_and_get_normalizes_values() {
 
     // 清理
     sqlx::query("DELETE FROM settings WHERE key = 'search.config'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 验证 prts-db::notifications 仓储圆环（迁移 0005）：
+/// - 为收件人 `create` 两条通知 → `unread_count` == 2；
+/// - `mark_read` 其中一条 → `unread_count` == 1；
+/// - `list` 按 id 降序返回（较新的在前）。
+#[tokio::test]
+async fn notifications_repository_roundtrip() {
+    let pool = pool().await;
+
+    // —— 清理上次残留（级联删除该用户的通知） ——
+    sqlx::query("DELETE FROM users WHERE username = 'itest_notif_user'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // —— 建收件人 ——
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let user = users::create_password_user(&pool, "itest_notif_user", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— 创建两条通知 ——
+    let n1 = notifications::create(
+        &pool,
+        user.id,
+        "poke",
+        &serde_json::json!({ "text": "first" }),
+    )
+    .await
+    .unwrap();
+    let n2 = notifications::create(
+        &pool,
+        user.id,
+        "poke",
+        &serde_json::json!({ "text": "second" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(n1.kind, "poke");
+    assert!(n1.read_at.is_none());
+    assert!(n2.id > n1.id, "IDENTITY 应递增，n2.id 应大于 n1.id");
+
+    // —— 两条均未读 ——
+    assert_eq!(
+        notifications::unread_count(&pool, user.id).await.unwrap(),
+        2,
+        "创建后应有 2 条未读"
+    );
+
+    // —— 标记 n1 已读 → 剩 1 条未读 ——
+    notifications::mark_read(&pool, user.id, &[n1.id])
+        .await
+        .unwrap();
+    assert_eq!(
+        notifications::unread_count(&pool, user.id).await.unwrap(),
+        1,
+        "标记一条已读后应剩 1 条未读"
+    );
+
+    // —— list 按 id 降序（较新的 n2 在前） ——
+    let listed = notifications::list(&pool, user.id, None, 100)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 2, "应列出全部 2 条");
+    assert_eq!(listed[0].id, n2.id, "list 应按 id 降序：较新的 n2 在最前");
+    assert_eq!(listed[1].id, n1.id);
+    // n1 已读、n2 仍未读
+    let n1_listed = listed.iter().find(|n| n.id == n1.id).unwrap();
+    let n2_listed = listed.iter().find(|n| n.id == n2.id).unwrap();
+    assert!(n1_listed.read_at.is_some(), "n1 应已读");
+    assert!(n2_listed.read_at.is_none(), "n2 应仍未读");
+
+    // —— 键集游标：before_id = n2.id 只返回更旧的 n1 ——
+    let older = notifications::list(&pool, user.id, Some(n2.id), 100)
+        .await
+        .unwrap();
+    assert_eq!(older.len(), 1, "游标 before=n2 应只返回更旧的 n1");
+    assert_eq!(older[0].id, n1.id);
+
+    // —— 级联清理 ——
+    sqlx::query("DELETE FROM users WHERE username = 'itest_notif_user'")
         .execute(&pool)
         .await
         .unwrap();

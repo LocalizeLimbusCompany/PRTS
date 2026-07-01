@@ -8,6 +8,7 @@ pub mod entries;
 pub mod files;
 pub mod memberships;
 pub mod models;
+pub mod notifications;
 pub mod projects;
 pub mod search;
 pub mod search_settings;
