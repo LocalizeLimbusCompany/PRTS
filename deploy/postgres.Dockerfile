@@ -6,9 +6,6 @@
 FROM pgvector/pgvector:pg16
 
 RUN set -eux; \
-    # 网络操作快速失败：低速（<1KB/s 持续 60s）即中止，避免克隆停滞导致无限挂起。
-    git config --global http.lowSpeedLimit 1000; \
-    git config --global http.lowSpeedTime 60; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         build-essential ca-certificates git \
@@ -16,6 +13,9 @@ RUN set -eux; \
         postgresql-server-dev-16; \
     # 确保运行期 libxml2 保留（SCWS 运行期依赖；postgres 亦依赖，双保险，防被 auto-remove）。
     apt-get install -y --no-install-recommends libxml2; \
+    # 网络操作快速失败：低速（<1KB/s 持续 60s）即中止，避免克隆停滞导致无限挂起（git 已装）。
+    git config --global http.lowSpeedLimit 1000; \
+    git config --global http.lowSpeedTime 60; \
     # —— SCWS 1.2.3（GitHub 源码；无预生成 configure，需 autotools 引导）——
     git clone --branch 1.2.3 --single-branch --depth 1 https://github.com/hightman/scws.git /tmp/scws; \
     cd /tmp/scws; \
