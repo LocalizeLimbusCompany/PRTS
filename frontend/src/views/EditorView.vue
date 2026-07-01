@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n'
 import {
   apiErrorMessage,
   entriesApi,
+  pokeApi,
   projectsApi,
   searchApi,
   suggestionsApi,
@@ -306,6 +307,26 @@ function editorOf(entryId: number): MemberDto | null {
   return members.value.find((m) => m.user_id === uid) ?? null
 }
 
+/* —— 戳一下（点击在场头像 → 发即时提示）—— */
+const pokeText = ref('')
+const pokeSending = ref(false)
+
+/** 发送戳一下：对准该头像对应的成员，成功后清空输入并 toast 提示。 */
+async function sendPoke(target: MemberDto | null) {
+  const text = pokeText.value.trim()
+  if (!target || !text) return
+  pokeSending.value = true
+  try {
+    await pokeApi.send(props.id, target.user_id, text)
+    pokeText.value = ''
+    $q.notify({ type: 'positive', message: t('poke.sent'), timeout: 1500 })
+  } catch (e) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(e) })
+  } finally {
+    pokeSending.value = false
+  }
+}
+
 async function toggleFlag(flag: 'locked' | 'hidden') {
   if (!selected.value) return
   try {
@@ -413,13 +434,81 @@ onMounted(async () => {
               <q-icon v-if="item.locked" name="lock" size="14px" class="prts-dim" />
               <q-icon v-if="item.hidden" name="visibility_off" size="14px" class="prts-dim" />
               <template v-if="otherEditing(item.id)">
-                <q-avatar v-if="editorOf(item.id)?.avatar_url" size="18px">
+                <q-avatar
+                  v-if="editorOf(item.id)?.avatar_url"
+                  size="18px"
+                  class="poke-avatar"
+                  @click.stop
+                >
                   <img :src="editorOf(item.id)!.avatar_url!" :alt="editorOf(item.id)!.username" />
                   <q-tooltip>{{ editorOf(item.id)!.username }} · {{ editorOf(item.id)!.role }} · {{ t('editor.editingNow') }}</q-tooltip>
+                  <q-menu anchor="top right" self="bottom right">
+                    <div class="poke-compose" @click.stop>
+                      <div class="prts-label q-mb-xs">{{ t('poke.composeTitle', { name: editorOf(item.id)!.username }) }}</div>
+                      <q-input
+                        v-model="pokeText"
+                        dense
+                        outlined
+                        autofocus
+                        maxlength="500"
+                        :placeholder="t('poke.placeholder')"
+                        @keyup.enter="sendPoke(editorOf(item.id))"
+                      />
+                      <div class="row justify-end q-mt-sm">
+                        <q-btn
+                          v-close-popup
+                          unelevated
+                          no-caps
+                          dense
+                          color="primary"
+                          text-color="dark"
+                          :label="t('poke.send')"
+                          :loading="pokeSending"
+                          :disable="!pokeText.trim()"
+                          @click="sendPoke(editorOf(item.id))"
+                        />
+                      </div>
+                    </div>
+                  </q-menu>
                 </q-avatar>
-                <q-avatar v-else-if="editorOf(item.id)" size="18px" color="amber" text-color="dark">
+                <q-avatar
+                  v-else-if="editorOf(item.id)"
+                  size="18px"
+                  color="amber"
+                  text-color="dark"
+                  class="poke-avatar"
+                  @click.stop
+                >
                   {{ editorOf(item.id)!.username.charAt(0).toUpperCase() }}
                   <q-tooltip>{{ editorOf(item.id)!.username }} · {{ editorOf(item.id)!.role }} · {{ t('editor.editingNow') }}</q-tooltip>
+                  <q-menu anchor="top right" self="bottom right">
+                    <div class="poke-compose" @click.stop>
+                      <div class="prts-label q-mb-xs">{{ t('poke.composeTitle', { name: editorOf(item.id)!.username }) }}</div>
+                      <q-input
+                        v-model="pokeText"
+                        dense
+                        outlined
+                        autofocus
+                        maxlength="500"
+                        :placeholder="t('poke.placeholder')"
+                        @keyup.enter="sendPoke(editorOf(item.id))"
+                      />
+                      <div class="row justify-end q-mt-sm">
+                        <q-btn
+                          v-close-popup
+                          unelevated
+                          no-caps
+                          dense
+                          color="primary"
+                          text-color="dark"
+                          :label="t('poke.send')"
+                          :loading="pokeSending"
+                          :disable="!pokeText.trim()"
+                          @click="sendPoke(editorOf(item.id))"
+                        />
+                      </div>
+                    </div>
+                  </q-menu>
                 </q-avatar>
                 <q-icon v-else name="edit" size="13px" color="amber">
                   <q-tooltip>{{ t('editor.editingNow') }}</q-tooltip>
@@ -684,6 +773,15 @@ onMounted(async () => {
 :deep(.prts-translation) {
   font-size: 14px;
   line-height: 1.7;
+}
+
+/* 在场头像：可点击发「戳一下」 */
+.poke-avatar {
+  cursor: pointer;
+}
+.poke-compose {
+  width: 240px;
+  padding: 10px 12px;
 }
 
 /* 搜索结果相关度徽标 */
