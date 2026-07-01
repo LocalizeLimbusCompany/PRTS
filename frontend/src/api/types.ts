@@ -170,3 +170,24 @@ export interface NotificationDto {
   read_at: string | null
   created_at: string
 }
+
+/** 私信（一条消息）。 */
+export interface MessageDto {
+  id: number
+  sender_id: number
+  recipient_id: number
+  content: string
+  read_at: string | null
+  created_at: string
+}
+
+/** 会话摘要（会话列表项：对话方资料 + 最后一条 + 我方未读数）。 */
+export interface ThreadDto {
+  other_user_id: number
+  username: string
+  avatar_url: string | null
+  last_content: string
+  last_sender_id: number
+  last_created_at: string
+  unread: number
+}

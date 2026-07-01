@@ -6,7 +6,9 @@ import type {
   EntryVersionDto,
   ExternalAccountDto,
   MemberDto,
+  MessageDto,
   NotificationDto,
+  ThreadDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectTree,
@@ -61,6 +63,10 @@ export const usersApi = {
   },
   revokeApiKey(id: number) {
     return http.delete(`/me/api-keys/${id}`)
+  },
+  /** 公开用户资料（不含 email）：私信会话页展示对话方头名/头像。 */
+  getUser(id: number) {
+    return http.get<UserDto>(`/users/${id}`).then((r) => r.data)
   },
 }
 
@@ -221,5 +227,31 @@ export const notificationsApi = {
 export const pokeApi = {
   send(projectId: number, to_user_id: number, text: string) {
     return http.post(`/projects/${projectId}/poke`, { to_user_id, text })
+  },
+}
+
+/** 私信（会话列表 + 会话消息 + 发送 + 已读 + 未读数）。 */
+export const messagesApi = {
+  /** 我的会话列表（每个对话方最后一条 + 我方未读数）。 */
+  threads() {
+    return http.get<ThreadDto[]>('/messages').then((r) => r.data)
+  },
+  /** 与某用户的会话消息（键集分页：before 游标 + limit）。 */
+  conversation(userId: number, before?: number, limit?: number) {
+    return http
+      .get<MessageDto[]>(`/messages/${userId}`, { params: { before, limit } })
+      .then((r) => r.data)
+  },
+  /** 发送一条私信（须与收件人共享 ≥1 项目）。 */
+  send(to_user_id: number, content: string) {
+    return http.post<{ id: number }>('/messages', { to_user_id, content }).then((r) => r.data)
+  },
+  /** 将与某用户的会话标记为已读。 */
+  markRead(userId: number) {
+    return http.post(`/messages/${userId}/read`)
+  },
+  /** 我的未读私信总数（顶栏 ✉️ 红点）。 */
+  unreadCount() {
+    return http.get<{ count: number }>('/messages/unread_count').then((r) => r.data)
   },
 }
