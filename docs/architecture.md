@@ -80,6 +80,12 @@ q + 过滤(file/状态/排序) + 可见性(hidden 需编辑权限)
 多实例：节点间经 Redis pub/sub 同步房间事件
 ```
 
+### 3.5 通知与在场协调（Spec C）
+
+**通知底座**：`notifications(user_id 收件人, type, payload JSONB, read_at, created_at)`（键集分页；未读 = `read_at IS NULL`）。per-user 实时推送经 `prts-realtime` Hub 的**用户房间**（独立 Redis 频道 `prts:rt:user`，与项目房间并行、互不串扰）；前端 App 根部登录后常连 `GET /ws/user`，右上角铃铛显未读数 + 列表，收到即 toast。REST：`GET /notifications`、`/unread_count`、`POST /notifications/read`。
+
+**编辑器「戳一下」**（第一种通知 `type=poke`）：翻译编辑器点在场头像 → 写一段提示 → `POST /projects/{id}/poke {to_user_id, text}`（收发双方均需项目成员）→ 建通知 + `publish_user` 实时推。用于协调（如提醒占用文件的译者换文件）。持久私信页留后续（**Spec D**，复用此底座）。
+
 ## 4. 数据模型（ER 摘要）
 
 ```
