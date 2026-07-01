@@ -63,5 +63,21 @@
     "from": "Source",
     "similarity": "Similarity",
     "apply": "Apply"
+  },
+  "notifications": {
+    "bell": "Notifications",
+    "title": "Notifications",
+    "empty": "No notifications yet",
+    "markAllRead": "Mark all read",
+    "justNow": "just now",
+    "minutesAgo": "{n} min ago",
+    "hoursAgo": "{n} hr ago",
+    "daysAgo": "{n} d ago"
+  },
+  "poke": {
+    "composeTitle": "Send a poke to {name}",
+    "placeholder": "Say something… (up to 500 characters)",
+    "send": "Send",
+    "sent": "Poke sent"
   }
 }
