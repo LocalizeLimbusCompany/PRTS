@@ -103,6 +103,8 @@ pub fn app(state: AppState) -> Router {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", api))
         // 实时协作 WebSocket（不在 OpenAPI 文档内）
         .route("/ws/projects/{id}", get(ws::ws_handler))
+        // 用户通知流 WebSocket（不在 OpenAPI 文档内）
+        .route("/ws/user", get(ws::user_ws_handler))
         .fallback(handler_404)
         // P0：CORS 放开便于联调；生产环境按需收紧（见 plan §15）。
         .layer(CorsLayer::permissive())

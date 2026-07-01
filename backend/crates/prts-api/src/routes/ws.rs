@@ -1,7 +1,9 @@
-//! 实时协作 WebSocket：`GET /ws/projects/{id}?token=<access_jwt>`。
+//! 实时协作 WebSocket：`GET /ws/projects/{id}?token=<access_jwt>`；
+//! 用户通知流：`GET /ws/user?token=<access_jwt>`。
 //!
 //! 浏览器 WebSocket 无法设置 Authorization 头，故用查询参数传 access token。
-//! 鉴权 + 可见性校验后加入项目房间：转发房间事件给客户端，并接收客户端「正在编辑」通知。
+//! 项目房间：鉴权 + 可见性校验后加入，双向（转发事件 + 接收「正在编辑」）。
+//! 用户通知房间：仅鉴权，服务器→客户端单向推送，忽略客户端入站消息。
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -107,4 +109,45 @@ async fn handle_socket(socket: WebSocket, state: AppState, project_id: i64, user
     }
 
     state.realtime.leave(project_id, user_id).await;
+}
+
+/// 用户通知流 WebSocket 升级入口（`GET /ws/user?token=`）。
+///
+/// 仅要求 token 合法，不依赖项目成员关系。连接后持续将服务器推送的 wire payload 转发给客户端；
+/// 客户端发来的消息被忽略（用户通知房间为服务器→客户端单向）。
+pub async fn user_ws_handler(
+    State(state): State<AppState>,
+    Query(q): Query<WsQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let Some(user_id) = authenticate(&state, q.token.as_deref()) else {
+        return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    };
+    ws.on_upgrade(move |socket| handle_user_socket(socket, state, user_id))
+}
+
+async fn handle_user_socket(socket: WebSocket, state: AppState, user_id: i64) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut rx = state.realtime.join_user(user_id).await;
+
+    // 服务器推送 → 客户端（用户通知房间只有这一个方向）。
+    let mut send_task = tokio::spawn(async move {
+        while let Ok(payload) = rx.recv().await {
+            if sender.send(Message::Text(payload.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // 忽略客户端入站消息，但需 drain 接收端以防背压阻塞底层 TCP 读缓冲。
+    let mut recv_task = tokio::spawn(async move {
+        while receiver.next().await.is_some() {
+            // 入站消息全部丢弃
+        }
+    });
+
+    tokio::select! {
+        _ = &mut send_task => recv_task.abort(),
+        _ = &mut recv_task => send_task.abort(),
+    }
 }
