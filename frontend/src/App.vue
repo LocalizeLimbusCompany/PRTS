@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 
 import { useAuthStore } from '@/stores/auth'
+import { useUserStream } from '@/composables/useUserStream'
 import { useNotifications } from '@/composables/useNotifications'
 import NotificationBell from '@/components/NotificationBell.vue'
 
@@ -13,16 +14,22 @@ const $q = useQuasar()
 
 const initials = computed(() => auth.user?.username?.slice(0, 2).toUpperCase() ?? '')
 
-// 通知：登录态下在 App 根部保持一条 /ws/user 连接；登出即断开。
+// 实时：登录态下在 App 根部保持一条共享 /ws/user 连接（通知 + 私信共用）；登出即断开。
 // ensureReady() 尚未完成时 auth.user 为 null，watch 的 immediate 调用会因此
 // 跳过连接（connect() 内部也会因取不到 token 而直接返回），待恢复完成后
 // user 变化再次触发即可正常连上，无需额外等待。
-const { connect: connectNotifications, disconnect: disconnectNotifications } = useNotifications()
+const userStream = useUserStream()
+const notifications = useNotifications()
 watch(
   () => auth.user,
   (user) => {
-    if (user) connectNotifications()
-    else disconnectNotifications()
+    if (user) {
+      userStream.connect()
+      void notifications.refresh()
+    } else {
+      userStream.disconnect()
+      notifications.reset()
+    }
   },
   { immediate: true },
 )
