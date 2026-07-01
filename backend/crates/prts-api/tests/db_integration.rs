@@ -4,7 +4,9 @@
 //! 本地无 DB 时默认不编译；CI 会起 Postgres 服务后执行（见 .github/workflows/ci.yml）。
 #![cfg(feature = "db-tests")]
 
-use prts_db::{api_keys, entries, files, memberships, notifications, projects, settings, users};
+use prts_db::{
+    api_keys, entries, files, memberships, messages, notifications, projects, settings, users,
+};
 
 async fn pool() -> prts_db::Db {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL 未设置");
@@ -1140,6 +1142,97 @@ async fn poke_membership_gate_and_notification_created() {
     // —— 级联清理 ——
     projects::delete(&pool, proj.id).await.unwrap();
     for uname in ["itest_poke_a", "itest_poke_b", "itest_poke_c"] {
+        sqlx::query("DELETE FROM users WHERE username = $1")
+            .bind(uname)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// 验证 prts-db::messages 仓储圆环（迁移 0006）：
+/// - 建 A、B 两个用户；A→B 两条、B→A 一条；
+/// - `list_conversation(A, B)` 返回 3 条并按 id 降序（键集游标 before 生效）；
+/// - `unread_count(B)` == 2（A→B 两条对 B 未读）；`mark_read(B, A)` 后 == 0；
+/// - `list_threads(A)` 含与 B 的会话：username / 最后一条 / A 侧未读 == 1（B→A 那条）。
+#[tokio::test]
+async fn messages_repository_roundtrip() {
+    let pool = pool().await;
+
+    // —— 清理上次残留（级联删除其消息） ——
+    for uname in ["itest_msg_a", "itest_msg_b"] {
+        sqlx::query("DELETE FROM users WHERE username = $1")
+            .bind(uname)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+    let a = users::create_password_user(&pool, "itest_msg_a", None, &hash, "active")
+        .await
+        .unwrap();
+    let b = users::create_password_user(&pool, "itest_msg_b", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— A→B 两条、B→A 一条 ——
+    let m1 = messages::create(&pool, a.id, b.id, "hi B (1)")
+        .await
+        .unwrap();
+    let m2 = messages::create(&pool, a.id, b.id, "hi B (2)")
+        .await
+        .unwrap();
+    let m3 = messages::create(&pool, b.id, a.id, "hi A").await.unwrap();
+    assert!(m2.id > m1.id && m3.id > m2.id, "IDENTITY 应递增");
+    assert!(m1.read_at.is_none(), "新消息应未读");
+
+    // —— 会话（A↔B）返回 3 条，按 id 降序（最新在前） ——
+    let convo = messages::list_conversation(&pool, a.id, b.id, None, 100)
+        .await
+        .unwrap();
+    assert_eq!(convo.len(), 3, "A↔B 会话应有 3 条消息");
+    assert_eq!(
+        convo[0].id, m3.id,
+        "list_conversation 应按 id 降序：最新在前"
+    );
+    assert_eq!(convo[2].id, m1.id);
+
+    // —— 键集游标：before = m3 只返回更旧的 m2、m1 ——
+    let older = messages::list_conversation(&pool, a.id, b.id, Some(m3.id), 100)
+        .await
+        .unwrap();
+    assert_eq!(older.len(), 2, "游标 before=m3 应只返回更旧的两条");
+    assert_eq!(older[0].id, m2.id);
+
+    // —— B 未读 2（A→B 两条） ——
+    assert_eq!(
+        messages::unread_count(&pool, b.id).await.unwrap(),
+        2,
+        "B 应有 2 条未读（A→B 两条）"
+    );
+
+    // —— B 标记与 A 的会话已读 → 0 ——
+    messages::mark_read(&pool, b.id, a.id).await.unwrap();
+    assert_eq!(
+        messages::unread_count(&pool, b.id).await.unwrap(),
+        0,
+        "B 读完与 A 的会话后未读应为 0"
+    );
+
+    // —— A 的会话列表：含与 B 的会话，A 侧未读 == 1（B→A 那条 A 尚未读） ——
+    let threads = messages::list_threads(&pool, a.id).await.unwrap();
+    let with_b = threads
+        .iter()
+        .find(|t| t.other_user_id == b.id)
+        .expect("A 的会话列表应含与 B 的会话");
+    assert_eq!(with_b.username, "itest_msg_b");
+    assert_eq!(with_b.last_content, "hi A", "最后一条应为 B→A 的 'hi A'");
+    assert_eq!(with_b.last_sender_id, b.id);
+    assert_eq!(with_b.unread, 1, "A 侧未读应为 1（B→A 未读那条）");
+
+    // —— 级联清理 ——
+    for uname in ["itest_msg_a", "itest_msg_b"] {
         sqlx::query("DELETE FROM users WHERE username = $1")
             .bind(uname)
             .execute(&pool)

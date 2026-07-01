@@ -160,3 +160,37 @@ pub struct EntryVersion {
     pub editor_id: Option<i64>,
     pub created_at: DateTime<Utc>,
 }
+
+/// 私信行（一条消息；会话 = 一对用户之间的全部消息，无独立会话表）。
+#[derive(Debug, Clone, FromRow)]
+pub struct Message {
+    pub id: i64,
+    /// 发送者用户 id。
+    pub sender_id: i64,
+    /// 收件人用户 id。
+    pub recipient_id: i64,
+    /// 消息正文（应用层限制 ≤ 2000 字）。
+    pub content: String,
+    /// 收件人读取时间；`None` 表示未读。
+    pub read_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 会话摘要行（会话列表用）：对话方资料 + 该会话最后一条消息 + 我方未读数。
+#[derive(Debug, Clone, FromRow)]
+pub struct ConversationThread {
+    /// 对话方（对方）用户 id。
+    pub other_user_id: i64,
+    /// 对话方用户名。
+    pub username: String,
+    /// 对话方头像。
+    pub avatar_url: Option<String>,
+    /// 该会话最后一条消息正文。
+    pub last_content: String,
+    /// 最后一条消息的发送者 id（前端据此判断是否显示「你: 」前缀）。
+    pub last_sender_id: i64,
+    /// 最后一条消息时间。
+    pub last_created_at: DateTime<Utc>,
+    /// 我方在该会话中的未读消息数。
+    pub unread: i64,
+}
