@@ -76,8 +76,21 @@
   },
   "poke": {
     "composeTitle": "Send a poke to {name}",
-    "placeholder": "Say something… (up to 500 characters)",
+    "placeholder": "Say something… (up to 140 characters)",
     "send": "Send",
     "sent": "Poke sent"
+  },
+  "messages": {
+    "title": "Messages",
+    "empty": "No messages yet. Start one from a presence avatar in the editor or the project member list.",
+    "threadEmpty": "No messages yet — send the first one.",
+    "you": "You",
+    "send": "Send",
+    "placeholder": "Type a message… (up to 2000 chars; Enter to send, Shift+Enter for newline)",
+    "loadEarlier": "Load earlier",
+    "unread": "Unread"
+  },
+  "dm": {
+    "entry": "Message"
   }
 }
