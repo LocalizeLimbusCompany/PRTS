@@ -311,7 +311,10 @@ mod tests {
         // A 收到该事件且可解回 UserEvent。
         let got = rx_a.try_recv().expect("A 应收到发给自己的通知");
         let decoded: UserEvent = serde_json::from_str(&got).unwrap();
-        let UserEvent::Notification { id, kind, .. } = decoded;
+        // `UserEvent` 现有多个变体，解构需用 let...else（构造的即 Notification，else 不会命中）。
+        let UserEvent::Notification { id, kind, .. } = decoded else {
+            panic!("应解码为 Notification 变体");
+        };
         assert_eq!(id, 42);
         assert_eq!(kind, "poke");
 
