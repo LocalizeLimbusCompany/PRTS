@@ -6,6 +6,7 @@ import { useQuasar } from 'quasar'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStream } from '@/composables/useUserStream'
 import { useNotifications } from '@/composables/useNotifications'
+import { useMessages } from '@/composables/useMessages'
 import NotificationBell from '@/components/NotificationBell.vue'
 
 const auth = useAuthStore()
@@ -20,15 +21,18 @@ const initials = computed(() => auth.user?.username?.slice(0, 2).toUpperCase() ?
 // user 变化再次触发即可正常连上，无需额外等待。
 const userStream = useUserStream()
 const notifications = useNotifications()
+const { unread: messagesUnread, refresh: refreshMessages, reset: resetMessages } = useMessages()
 watch(
   () => auth.user,
   (user) => {
     if (user) {
       userStream.connect()
       void notifications.refresh()
+      void refreshMessages()
     } else {
       userStream.disconnect()
       notifications.reset()
+      resetMessages()
     }
   },
   { immediate: true },
@@ -77,6 +81,21 @@ async function logout() {
         <NotificationBell v-if="auth.isAuthed" />
 
         <q-btn
+          v-if="auth.isAuthed"
+          flat
+          round
+          dense
+          class="q-mr-xs"
+          icon="mail"
+          :to="{ name: 'messages' }"
+        >
+          <q-badge v-if="messagesUnread > 0" color="negative" floating rounded>
+            {{ messagesUnread }}
+          </q-badge>
+          <q-tooltip>私信</q-tooltip>
+        </q-btn>
+
+        <q-btn
           flat
           round
           dense
@@ -100,6 +119,13 @@ async function logout() {
               <q-item v-close-popup clickable :to="{ name: 'me' }">
                 <q-item-section avatar><q-icon name="person" /></q-item-section>
                 <q-item-section>个人主页</q-item-section>
+              </q-item>
+              <q-item v-close-popup clickable :to="{ name: 'messages' }">
+                <q-item-section avatar><q-icon name="mail" /></q-item-section>
+                <q-item-section>私信</q-item-section>
+                <q-item-section v-if="messagesUnread > 0" side>
+                  <q-badge color="negative" rounded>{{ messagesUnread }}</q-badge>
+                </q-item-section>
               </q-item>
               <q-item v-if="auth.isAdmin" v-close-popup clickable :to="{ name: 'admin' }">
                 <q-item-section avatar><q-icon name="shield" /></q-item-section>
