@@ -7,6 +7,7 @@ pub mod entries;
 pub mod files;
 pub mod health;
 pub mod meta;
+pub mod notifications;
 pub mod projects;
 pub mod search;
 pub mod suggestions;
@@ -97,6 +98,9 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(search::search_entries))
         // TM 翻译建议
         .routes(routes!(suggestions::entry_suggestions))
+        // 通知（收件人自助）
+        .routes(routes!(notifications::list, notifications::unread_count))
+        .routes(routes!(notifications::mark_read))
         .split_for_parts();
 
     router
