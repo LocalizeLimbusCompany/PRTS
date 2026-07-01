@@ -214,6 +214,11 @@ async function removeMember(m: MemberDto) {
     $q.notify({ type: 'negative', message: apiErrorMessage(e, '移除失败') })
   }
 }
+
+/** 跳转到与该成员的私信会话页（成员列表「私信」按钮）。 */
+function openDm(m: MemberDto) {
+  router.push({ name: 'message-thread', params: { userId: m.user_id } })
+}
 </script>
 
 <template>
@@ -366,8 +371,29 @@ async function removeMember(m: MemberDto) {
                   <q-item-label>{{ m.username }}</q-item-label>
                   <q-item-label caption>{{ roleLabel(m.role) }}</q-item-label>
                 </q-item-section>
-                <q-item-section v-if="canManage" side>
-                  <q-btn flat round dense size="sm" icon="close" @click="removeMember(m)" />
+                <q-item-section v-if="m.user_id !== auth.user?.id || canManage" side>
+                  <div class="row items-center no-wrap">
+                    <q-btn
+                      v-if="m.user_id !== auth.user?.id"
+                      flat
+                      round
+                      dense
+                      size="sm"
+                      icon="mail"
+                      @click="openDm(m)"
+                    >
+                      <q-tooltip>私信</q-tooltip>
+                    </q-btn>
+                    <q-btn
+                      v-if="canManage"
+                      flat
+                      round
+                      dense
+                      size="sm"
+                      icon="close"
+                      @click="removeMember(m)"
+                    />
+                  </div>
                 </q-item-section>
               </q-item>
             </q-list>

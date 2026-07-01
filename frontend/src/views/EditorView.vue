@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
@@ -29,6 +29,7 @@ import { computeSaveButton } from '@/lib/saveButton'
 
 const props = defineProps<{ id: number }>()
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const $q = useQuasar()
 const { t } = useI18n()
@@ -311,6 +312,12 @@ function editorOf(entryId: number): MemberDto | null {
 const pokeText = ref('')
 const pokeSending = ref(false)
 
+/** 跳转到与该成员的私信会话页（编辑器在场头像菜单里的「发私信」）。 */
+function openDm(target: MemberDto | null) {
+  if (!target) return
+  router.push({ name: 'message-thread', params: { userId: target.user_id } })
+}
+
 /** 发送戳一下：对准该头像对应的成员，成功后清空输入并 toast 提示。 */
 async function sendPoke(target: MemberDto | null) {
   const text = pokeText.value.trim()
@@ -450,11 +457,21 @@ onMounted(async () => {
                         dense
                         outlined
                         autofocus
-                        maxlength="500"
+                        counter
+                        maxlength="140"
                         :placeholder="t('poke.placeholder')"
                         @keyup.enter="sendPoke(editorOf(item.id))"
                       />
-                      <div class="row justify-end q-mt-sm">
+                      <div class="row justify-end q-mt-sm q-gutter-xs">
+                        <q-btn
+                          v-close-popup
+                          flat
+                          no-caps
+                          dense
+                          icon="mail"
+                          :label="t('dm.entry')"
+                          @click="openDm(editorOf(item.id))"
+                        />
                         <q-btn
                           v-close-popup
                           unelevated
@@ -489,11 +506,21 @@ onMounted(async () => {
                         dense
                         outlined
                         autofocus
-                        maxlength="500"
+                        counter
+                        maxlength="140"
                         :placeholder="t('poke.placeholder')"
                         @keyup.enter="sendPoke(editorOf(item.id))"
                       />
-                      <div class="row justify-end q-mt-sm">
+                      <div class="row justify-end q-mt-sm q-gutter-xs">
+                        <q-btn
+                          v-close-popup
+                          flat
+                          no-caps
+                          dense
+                          icon="mail"
+                          :label="t('dm.entry')"
+                          @click="openDm(editorOf(item.id))"
+                        />
                         <q-btn
                           v-close-popup
                           unelevated
