@@ -7,6 +7,7 @@ pub mod api_keys;
 pub mod entries;
 pub mod files;
 pub mod memberships;
+pub mod messages;
 pub mod models;
 pub mod notifications;
 pub mod projects;
