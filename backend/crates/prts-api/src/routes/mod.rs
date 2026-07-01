@@ -64,6 +64,7 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(auth::oauth_callback))
         // 用户自助
         .routes(routes!(users::me, users::update_me))
+        .routes(routes!(users::get_user))
         .routes(routes!(users::my_accounts))
         .routes(routes!(users::create_api_key, users::list_api_keys))
         .routes(routes!(users::revoke_api_key))

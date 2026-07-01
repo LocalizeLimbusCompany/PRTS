@@ -158,14 +158,14 @@ pub async fn mark_read(
 pub struct PokeReq {
     /// 收件人用户 id（必须是该项目成员）。
     pub to_user_id: i64,
-    /// 提示文本（trim 后非空，最多 500 字）。
+    /// 提示文本（trim 后非空，最多 140 字）。
     pub text: String,
 }
 
 /// 给项目内某成员发「戳一下」通知（实时推送 + 持久化）。
 ///
 /// 发送者须能访问该项目（`require_view`）且是项目成员；收件人也须是项目成员，否则 400。
-/// `text` trim 后非空且 ≤500 字，否则 400。成功后向收件人实时推送 `UserEvent::Notification`。
+/// `text` trim 后非空且 ≤140 字，否则 400。成功后向收件人实时推送 `UserEvent::Notification`。
 #[utoipa::path(
     post,
     path = "/projects/{id}/poke",
@@ -210,8 +210,8 @@ pub async fn poke(
     if text.is_empty() {
         return Err(Error::bad_request("text 不能为空").into());
     }
-    if text.chars().count() > 500 {
-        return Err(Error::bad_request("text 不能超过 500 字").into());
+    if text.chars().count() > 140 {
+        return Err(Error::bad_request("text 不能超过 140 字").into());
     }
 
     // 查询发送者用户名（CurrentUser 不携带 username，需回查 DB）。
