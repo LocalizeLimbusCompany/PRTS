@@ -6,6 +6,7 @@ pub mod auth;
 pub mod entries;
 pub mod files;
 pub mod health;
+pub mod messages;
 pub mod meta;
 pub mod notifications;
 pub mod projects;
@@ -103,6 +104,11 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(notifications::list, notifications::unread_count))
         .routes(routes!(notifications::mark_read))
         .routes(routes!(notifications::poke))
+        // 私信（会话列表 / 会话 / 发送 / 已读 / 未读数）
+        .routes(routes!(messages::list_threads, messages::send))
+        .routes(routes!(messages::unread_count))
+        .routes(routes!(messages::conversation))
+        .routes(routes!(messages::mark_read))
         .split_for_parts();
 
     router
