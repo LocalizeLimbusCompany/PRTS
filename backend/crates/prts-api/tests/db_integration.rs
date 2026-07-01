@@ -1038,3 +1038,112 @@ async fn suggestions_trgm_membership_scoped() {
         .await
         .unwrap();
 }
+
+/// 验证 poke 端点的成员门限逻辑（仓储层）：
+/// - 建项目 + 两个成员（A=owner、B=translator）；
+/// - A 向 B 创建 `poke` 通知 → B 有 1 条 `poke` 通知；
+/// - 非成员 C 的成员查询返回 `None`（端点层据此拒绝，此处验证仓储层门限调用结果）。
+#[tokio::test]
+async fn poke_membership_gate_and_notification_created() {
+    let pool = pool().await;
+
+    // —— 清理上次残留 ——
+    sqlx::query("DELETE FROM projects WHERE slug = 'itest-poke-proj'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for uname in ["itest_poke_a", "itest_poke_b", "itest_poke_c"] {
+        sqlx::query("DELETE FROM users WHERE username = $1")
+            .bind(uname)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    let hash = prts_auth::password::hash_password("password123").unwrap();
+
+    // —— 建两个成员 A、B 和非成员 C ——
+    let user_a = users::create_password_user(&pool, "itest_poke_a", None, &hash, "active")
+        .await
+        .unwrap();
+    let user_b = users::create_password_user(&pool, "itest_poke_b", None, &hash, "active")
+        .await
+        .unwrap();
+    let user_c = users::create_password_user(&pool, "itest_poke_c", None, &hash, "active")
+        .await
+        .unwrap();
+
+    // —— 建项目，A 为 owner，B 为 translator ——
+    let proj = projects::create(
+        &pool,
+        "itest-poke-proj",
+        "ITest Poke Project",
+        "",
+        "public",
+        &["en".to_string()],
+        "zh-Hans",
+        user_a.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&pool, proj.id, user_a.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert(&pool, proj.id, user_b.id, "translator")
+        .await
+        .unwrap();
+
+    // —— 验证 A 是成员，B 是成员，C 不是成员 ——
+    let role_a = memberships::find_role(&pool, proj.id, user_a.id)
+        .await
+        .unwrap();
+    assert!(role_a.is_some(), "A 应是项目成员");
+
+    let role_b = memberships::find_role(&pool, proj.id, user_b.id)
+        .await
+        .unwrap();
+    assert!(role_b.is_some(), "B 应是项目成员");
+
+    let role_c = memberships::find_role(&pool, proj.id, user_c.id)
+        .await
+        .unwrap();
+    assert!(role_c.is_none(), "C 不是项目成员，端点层应据此返回 400");
+
+    // —— A poke B：创建通知 ——
+    let payload = serde_json::json!({
+        "from_user_id": user_a.id,
+        "from_username": "itest_poke_a",
+        "project_id": proj.id,
+        "text": "嘿，看一下第 3 行",
+    });
+    let n = notifications::create(&pool, user_b.id, "poke", &payload)
+        .await
+        .unwrap();
+    assert_eq!(n.kind, "poke", "通知类型应为 poke");
+    assert_eq!(n.user_id, user_b.id, "收件人应为 B");
+    assert!(n.read_at.is_none(), "新通知应未读");
+
+    // —— B 有 1 条 poke 通知 ——
+    let count = notifications::unread_count(&pool, user_b.id).await.unwrap();
+    assert_eq!(count, 1, "B 应有 1 条未读通知");
+
+    let listed = notifications::list(&pool, user_b.id, None, 10)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1, "B 的通知列表应有 1 条");
+    assert_eq!(listed[0].kind, "poke");
+    assert_eq!(
+        listed[0].payload.get("text").and_then(|t| t.as_str()),
+        Some("嘿，看一下第 3 行")
+    );
+
+    // —— 级联清理 ——
+    projects::delete(&pool, proj.id).await.unwrap();
+    for uname in ["itest_poke_a", "itest_poke_b", "itest_poke_c"] {
+        sqlx::query("DELETE FROM users WHERE username = $1")
+            .bind(uname)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}

@@ -98,9 +98,10 @@ pub fn app(state: AppState) -> Router {
         .routes(routes!(search::search_entries))
         // TM 翻译建议
         .routes(routes!(suggestions::entry_suggestions))
-        // 通知（收件人自助）
+        // 通知（收件人自助 + poke 发送）
         .routes(routes!(notifications::list, notifications::unread_count))
         .routes(routes!(notifications::mark_read))
+        .routes(routes!(notifications::poke))
         .split_for_parts();
 
     router
