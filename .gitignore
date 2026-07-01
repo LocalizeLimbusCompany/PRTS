@@ -86,3 +86,6 @@ desktop.ini
 *.tmp
 .cache/
 tmp/
+
+# Visual Companion / brainstorm mockups
+.superpowers/
