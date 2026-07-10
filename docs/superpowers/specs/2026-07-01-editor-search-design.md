@@ -1,97 +1,152 @@
-# 编辑器（工作台 + 搜索重构 + 删 context）· 工作流 E — 设计 Spec
+# 编辑器（工作台 + 搜索重构 + 删 context）· 工作流 E — 校准版设计 Spec
 
 | 项 | 值 |
 | --- | --- |
-| 阶段 | 大改造 6 工作流之 **E**（最大）；前置 **A**（每文件状态计数）、**C**（任务→文件，供「当前任务」范围）、**D**（术语，供编辑器匹配，见 §1 不做） |
-| 基线 | `master` @ `e6c213e`（D spec 提交后） |
-| 日期 | 2026-07-01 · 作者 ZengXiaoPi · 设计协作 Claude |
-| 前置 | A–D spec、P3 实时编辑器、P4 混合搜索 |
+| 历史阶段 | 2026-07-01 大改造工作流 E |
+| 校准日期 | 2026-07-10 |
+| 规范总纲 | [`2026-07-10-project-workspace-overhaul-design.md`](./2026-07-10-project-workspace-overhaul-design.md) |
 
-> 已与作者确认（含逐张 mockup）：**工作台**——撤左下状态 combobox，右下「状态下拉 + 智能按钮」并排；按钮随「改动+状态+权限」变：未翻译·改动→`翻译`(靛)、已翻译·改动→`保存`(蓝)、已翻译·未改→`检查`(青)、已检查·未改→`审核`(绿)、他人编辑·管理→`强制保存`(红)、终态/无权→禁用；状态下拉设任意**有权限**状态、无权灰掉；列表里**自己**编辑的词条显示**自己头像**。**搜索**——移到列表上方；`Enter` 全项目 / `Shift+Enter` 当前文件；筛选图标下拉=单选本文件状态 + 高级筛选入口；高级弹窗=**AND** 多条件（字段：原文·各源语言 / 原文·全部源语言 / 译文 / 键名；操作符：包含·不包含·开头是·结尾是·等于·正则）+ 范围（全项目 / 指定文件·目录 / 当前文件 / 当前任务）+ 多选状态 + 向量开关（默认关，开启才出「语义查询」）。**删除词条 `context`**（数据丢失，作者已确认「删了吧」）。**全站图标统一 MDI**。
-
----
+> 2026-07-01 版本确认了智能动作、搜索位置、AND 条件、删 context 与 MDI。本文件保留编辑器交互细节；精确 search scope DTO、资源验证、可见性和 context/history 清理契约只以规范总纲 §3、§8 为准。
 
 ## 1. 范围
 
-**做**：① 工作台底栏智能按钮 + 状态下拉 + 自编头像；② 搜索重构（位置 + 快捷键 + 筛选下拉 + 高级筛选弹窗 + 结构化搜索端点）；③ 删除 `entries.context`；④ 全站图标改 MDI。
+工作流 E 完成：
 
-**不做（后续/别处）**：编辑器内**术语匹配高亮/建议**（D 数据已具，匹配 UI 可作为 E 后续小增或单列，本 spec 不含）；OR 条件组合（仅 AND）；保存乐观锁本身（P3 已有，不改）；审计（P5）。
+1. 删除词条 `context` 的数据库、DTO、上传、前端、测试和权威文档引用；
+2. 右下“状态下拉 + 一个智能按钮”；
+3. 列表上方快捷搜索、状态菜单和高级结构化搜索；
+4. active 术语高亮/建议；
+5. 公开项目游客只读编辑器；
+6. 本人 editing avatar 展示但不提供 poke/DM。
 
-## 2. 决策要点
+## 2. 智能动作
 
-1. **按钮语义**（精化现 `lib/saveButton.ts`）：`未翻译+dirty→翻译(置已翻译)`；`有译文+dirty→保存(不改状态)`；`未 dirty` 时按状态与权限给推进动作 `检查(→已检查)/审核(→已审核)`；他人编辑且本人管理→`强制保存`；否则禁用。标签/色/图标随 mode。
-2. **状态下拉**紧邻按钮：列全部工作流状态，按角色权限灰掉不可设项（翻译只可 未翻译/已翻译/有疑问；校对/管理可全部）；选中=保存并置该状态。
-3. **自编头像**：列表行的「正在编辑」头像**含本人**（现仅显示他人）；复用实时 editingMap。
-4. **搜索位置/快捷键**：列表上方；`Enter`=全项目、`Shift+Enter`=当前文件。
-5. **筛选下拉**：单选本文件状态 + 「高级筛选…」。
-6. **高级筛选**：AND 多条件（字段/操作符/值）+ 范围 + 多选状态 + 向量开关（默认关）。范围选「当前文件/当前任务」时禁用文件·目录选择。
-7. **删 context**：迁移 drop 列 + 前后端清理 + 上传忽略该字段。
-8. **MDI**：Quasar 图标集改 `mdi-v7`，替换现有 Material 图标名。
+删除左下状态 combobox。右下角恰好保留状态下拉与一个主按钮，按钮真值表固定为：
 
-## 3. 数据模型 · 迁移 `0010_drop_context.sql`
+| 条件 | 标签 | 保存后的状态 |
+| --- | --- | --- |
+| dirty 且当前 `untranslated` | 翻译 | `translated` |
+| dirty 且当前为其它状态 | 保存 | 状态不变 |
+| clean、当前 `translated`、有 `review_entry` capability | 检查 | `checked` |
+| clean、当前 `checked`、有 `review_entry` capability | 审核 | `reviewed` |
+| 他人 presence 占用、本人有 `force_save_presence` capability | 强制保存 | 按 dirty 规则；仍校验 expected version |
+| 其它 | 禁用 | 无请求 |
 
-```
-ALTER TABLE entries DROP COLUMN context;   -- 数据丢失（作者已确认）
-```
-`entry_versions` 无 context 列，不受影响。搜索**无新表**；复用 P4 的 `source_text/source_tsv/translation_tsv/embedding` 及 trgm/GIN/HNSW 索引。
+- 状态下拉列出完整工作流状态，无设置能力的选项置灰。
+- 服务端继续校验 capability、状态机、locked 和乐观锁版本。
+- owner 与 manager 获得 `force_save_presence`；前后端只检查 capability。“强制保存”只越过 presence 占用提示，不绕过 version mismatch；过期版本仍返回 409。
+- 自己正在编辑的列表行显示自己的头像；点击自己不显示 poke 或私信菜单。
 
-## 4. 后端
+## 3. 公开游客只读
 
-**结构化搜索** `POST /projects/{id}/search`（取代/扩展现 GET /search）：
-```
-body: {
-  q?: string,                       // 关键词：FTS+trgm；vector=true 时兼作语义查询
-  conditions?: [{ field, op, value }],   // AND；field=source:<lang> | source_any | translation | key
-  scope?: { type: all|path|file|task, file_id?, folder_id?, task_id? },
-  states?: string[], vector?: bool = false,
-  sort?: relevance|key|updated, after?, limit?
+- 公开项目的 editor 路由不要求登录；匿名可读取项目、文件、词条、普通搜索和术语只读数据。
+- 匿名不建立可写 presence，不发送 editing、poke、DM 或其它协作事件。
+- 匿名不显示/调用保存、状态、locked、hidden、history rollback 等 mutation。
+- 私有项目匿名访问仍拒绝；登录成员能力由 API `capabilities` 决定，前端不从角色字符串推断。
+
+## 4. context 清理
+
+计划迁移 `0013_editor_search.sql` 不改写已应用的 `0003`，并在同一迁移中完成：
+
+- `ALTER TABLE entries DROP COLUMN context`，并从 `prts-db::Entry`、UploadEntry、API DTO、Swagger、前端类型和 editor UI 移除字段；
+- 创建/更新结构化 POST search 所需 metadata、indexes 和 functions；
+- 从既有 `file_change_items.before/after` 的 entry JSONB payload scrub `context` key。
+
+从 B 的 file-history 首次发布起，entry change-set payload 就只能序列化 `key/original/translation/state/locked/hidden/deleted_at`；不得等到 `0013` 才停止捕获 context。
+
+- 旧上传兼容期若请求仍携带 context，反序列化层忽略未知字段，不写库、不回显。
+- 权威蓝图与 architecture 同步删除“保留/展示上下文”的描述。
+
+## 5. 快捷与高级搜索
+
+### 5.1 快捷搜索
+
+- 输入框位于词条列表上方。
+- IME composing 期间 Enter/Shift+Enter 不触发。
+- `Enter`：全项目 scope；`Shift+Enter`：当前文件 scope。
+- 筛选图标菜单只提供当前文件单一 state 选择和“高级筛选”入口。
+
+### 5.2 结构化 POST
+
+`POST /projects/{id}/search` 请求模型：
+
+```rust
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum SearchScope {
+    All,
+    Path { path: String },
+    File { file_id: i64 },
+    CurrentFile { file_id: i64 },
+    CurrentTask { task_id: i64 },
+}
+
+struct StructuredSearchRequest {
+    query: Option<String>,
+    conditions: Vec<SearchCondition>,
+    scope: SearchScope,
+    states: Vec<EntryState>,
+    #[serde(default)]
+    include_hidden: bool,
+    #[serde(default)]
+    vector: bool,
+    after: Option<String>,
+    limit: u16,
 }
 ```
-- **条件→WHERE**（参数化）：`source:<lang>` = `original->>'<lang>'`；`source_any` = 对项目 `source_langs` 各值 OR（或对 `source_text` 匹配）；`translation`、`key` 直列。操作符：`包含`→`ILIKE '%v%'`、`不包含`→`NOT ILIKE`、`开头是`→`ILIKE 'v%'`、`结尾是`→`ILIKE '%v'`、`等于`→`=`、`正则`→`~`。
-- **范围**：`file`→`file_id=`；`path`→`files.path LIKE '<folder>/%'`（连表或先查 file_ids）；`task`→ 取该任务 `task_files.file_id ∈`；`all`→ 项目内。
-- **状态**：`state = ANY(states)`。
-- **排序/召回**：有 `q` 或 `vector` → 走 `prts-search` 混合编排（`vector=false` 时只 FTS+trgm；`true` 且平台已配 Embedding 时加向量路，RRF），在其上叠加 conditions/scope/states 过滤；无 `q` → 纯过滤，键集分页（`key,id`）。
-- **正则安全**：`~` 交给 PG；设 `statement_timeout` 兜底防病态正则；`value` 参数化。
-- 保留/弃用旧 `GET /search`：前端快捷框也走 `POST`（`{q, scope}`）；GET 可保留兼容或移除（实现时定）。
 
-**删 context**：移除 `prts-db` 实体、`UploadEntry`、`EntryDto`、`bulk_upsert` 与 upload 对 context 的读写；上传体若含 `context` 字段则**忽略**（不报错）。Swagger 更新。
+字段：
 
-**工作台**：无新端点；复用 `PUT /entries/{id}`（改译文/状态，权限已校验）。
+- `source:<bcp47>`：指定源语言；tag 先通过共享 `language-tags` canonicalizer 规范化，invalid/非项目 source set 拒绝；
+- `source_any`：任意源语言；
+- `translation`；
+- `key`。
 
-## 5. 前端
+操作符仅：`contains`、`not_contains`、`starts_with`、`ends_with`、`equals`。所有 conditions 为 AND，不支持 regex，也不提供 OR 分组。
 
-**工作台（`EditorView` + `lib/saveButton.ts`）**
-- 重构 `computeSaveButton`：新增 `translate` mode（未翻译+dirty），mode→{label, color, mdiIcon}：翻译=`primary/indigo·mdi-translate`、保存=`blue·mdi-content-save`、检查=`cyan·mdi-check-circle-outline`、审核=`green·mdi-shield-check`、强制=`negative·mdi-flash`、禁用=灰·`mdi-lock`。
-- 右下：`q-btn`（主动作）+ 紧邻 `q-btn-dropdown`/`q-select`（状态，按权限 `disable` 项）；**移除**左下状态 combobox。
-- 列表行「正在编辑」头像逻辑加入本人（`editingMap` 含自己 → 显示自己头像）。
+scope 的 JSON 形状：
 
-**搜索（`EditorView` + 新 `SearchBar` / `AdvancedFilterDialog`，替换现 `SearchFilters`）**
-- 列表上方 `SearchBar`：输入框 + 筛选图标；`Enter`=全项目、`Shift+Enter`=当前文件（IME 合成中不触发）；结果态显示范围 chip + 清除。
-- 筛选下拉：单选本文件状态（全部/未翻译/…）+「高级筛选…」。
-- `AdvancedFilterDialog`：AND 条件行（字段 select[原文·各源语言 / 原文·全部源语言 / 译文 / 键名] + 操作符 select + 值 + 删除 + 添加条件）；范围（全项目 / 指定文件·目录[选择器] / 当前文件 / 当前任务，后两者禁用选择器）；多选状态 chips；向量开关（默认关，开启显「语义查询」输入）；重置/搜索。调 `POST /search`。
-- **MDI**：`quasar.config` 用 `iconSet: 'mdi-v7'` + 装 `@quasar/extras`；把现有 `name="person/mail/shield/logout/…"` 换成 `mdi-*`。
-- 删 context：移除编辑器原文块的「注释」展示；`api`/类型去 context。
-- i18n 双语（按钮标签、操作符、字段、范围、向量）；样式少圆角、状态全称、**无 emoji**。
+- `{ "type": "all" }` 全项目；
+- `{ "type": "path", "path": "chapter/01" }` 指定 active 文件夹/路径；
+- `{ "type": "file", "file_id": 41 }` 指定任意 active file；
+- `{ "type": "current_file", "file_id": 41 }` 明确指定当前编辑 file；
+- `{ "type": "current_task", "task_id": 73 }` 指定 task 当前 active files，不限 snapshot IDs。
 
-## 6. 性能
+file/task ID 沿用现有 PostgreSQL `BIGINT`/Rust `i64`；path 仍为 string，不做 UUID migration。tagged union 拒绝未知字段，因此 `{ "type": "all", "file_id": 41 }`、variant 多余字段、缺 payload、未知 type 和错误 ID 类型都必须返回 400。
 
-- 条件过滤走参数化 SQL；`contains` 命中 P4 的 `source_text/translation/key` trgm GIN；`source:<lang>`（`original->>lang`）与 `等于/开头/结尾/正则` 可能走顺扫——大项目下建议限定范围（文件/目录/任务）后再跑，UI 提示；必要时后续加按源语言的表达式索引（未决）。
-- 有排序（q/vector）→ 复用 P4 融合上限 + offset 窗口；纯过滤→键集分页。
-- 正则设 `statement_timeout` 兜底。
+项目 route 先用共享 file-path canonicalizer 规范化 path，再验证 path/file/task 属于 URL project 且对 caller 可见；`current_task` 还验证 task/project 可见。deleted file/folder/ancestor/task 一律排除。服务端不从 session 或其它 query 参数推断 current context。
 
-## 7. 测试
+path 解析按 segment boundary：精确解析为 active file 时仅该 file；解析为 active folder 时包含 active descendant files，只允许 exact path 或 `folder/` subtree，禁止 naive prefix。歧义、跨项目与 deleted ancestor 稳定拒绝。
 
-- **单元**：`computeSaveButton` 各分支（翻译/保存/检查/审核/强制/禁用 × 角色/dirty/他人编辑）；条件→SQL 片段构造（各字段/操作符，参数化，正则转义）；范围解析（file/path/task/all）。
-- **db-test**：结构化搜索（单/多条件 AND、各操作符、source:lang vs source_any、范围 file/path/task、states 多选、vector 开关降级）；删 context 迁移后上传/CRUD 正常；`PUT` 改状态权限门。
-- **前端**：CI build/lint；Enter/Shift+Enter（含 IME 合成）；工作台按钮态快照。
+### 5.3 P4 管线与兼容
 
-## 8. 涉及文件
+- query 继续进入现有 FTS + trgm + 可选 pgvector + RRF；conditions/scope/states 在召回和取行时一致应用。
+- `vector=false` 是默认，不调用 EmbeddingProvider。provider 缺失/失败时安全降级词法路径。
+- 普通搜索使用规范 `effective_visible`。只有 owner/manager 有 `include_hidden` capability；它只覆盖 hidden，永不包含 tombstone/deleted file/folder；越权请求 true 返回 403。
+- 主源 lexical 重建期间返回稳定 `PROJECT_SEARCH_REBUILDING` 与 job 引用；lexical ready 后恢复 FTS/trgm，即使 embedding 仍 degraded。
+- 旧 `GET /projects/{id}/search` 映射到同一 service：有 i64 `file_id` 时只映射为 `file {file_id}`，否则只映射为 `all`；绝不制造 `current_file/current_task`。保留一个兼容周期，OpenAPI 标 deprecated，响应加入 Deprecation/Sunset；不得维护第二套 SQL。
+- POST 唯一默认排序为 `(rrf_score DESC, entry_id ASC)`，limit 默认 50、允许 1..=100；响应包含 `items` 与 `next_after`。opaque `after` cursor 版本化并绑定 URL `project_id`、canonical query/filter/scope fingerprint、最后 score+id；错误/未知版本/跨 project 或跨查询 cursor 返回 400。新增 sort 必须逐一声明稳定 tie-break。
 
-迁移 `0010_drop_context.sql`；`prts-db`（entries 去 context、search 结构化查询构造）、`prts-search`（编排接入 conditions/scope/states）、`prts-api`（`routes/search.rs` 改 POST 结构化、`entries.rs`/DTO 去 context、Swagger）、`prts-core`（若状态推进逻辑辅助）；前端（`EditorView`、`lib/saveButton.ts`、`SearchBar`、`AdvancedFilterDialog`（替换 `SearchFilters`）、`api`（search POST/去 context）、`quasar.config`（mdi-v7）+ 全站图标名、`i18n`）；`docs/architecture.md`。
+## 6. 术语高亮与建议
 
-## 9. 红线 / 未决
+- 只请求 D 定义的当前主源 active terms；归档或其它 source_lang 不匹配。
+- 对当前 primary source 文本做可定位高亮，并在译文区展示 translation、POS、notes。
+- 点击建议：有 selection 时替换 selection；无 selection 时插入 cursor。
+- 点击只更新本地 translation draft，不发送保存请求、不改变 state、不获取 CP。
 
-- 删 context **不可逆**（已确认）；迁移前无需备份（作者定）。
-- 搜索全程参数化；正则/大范围加 `statement_timeout` 与 UI 提示，避免热路径病态查询；键集分页不深翻。
-- 权限：状态设置/推进过 `entry.edit`/`entry.review` 节点；`locked` 词条仅管理/拥有者。
-- **未决（实现时）**：`source:<lang>` 等非 trgm 命中的**表达式索引**是否加（先不加，靠范围收窄）；旧 `GET /search` 保留兼容或移除；编辑器**术语匹配高亮**是否本阶段附带（默认否，留后续）；MDI 切换后逐一核对现有图标名映射。
+## 7. 前端结构
+
+- `SearchBar.vue`：快捷输入、IME、安全快捷键、scope chip。
+- `AdvancedFilterDialog.vue`：AND 条件、五种操作符、五种 scope、多状态、include_hidden、vector。
+- `TermSuggestions.vue`：active matches 与插入行为。
+- `saveButton.ts`：纯函数实现真值表；EditorView 只消费 mode/label/color/icon/disabled。
+- 图标统一 MDI；中文字体、2–4px 圆角、浅/深主题和 zh-CN/en 使用共享基础。
+
+## 8. 验收
+
+- `saveButton` 覆盖 dirty/state/review/manage/presence/version 组合；force + stale version 必须 409。
+- 状态下拉按 capability 灰显，服务端拒绝伪造越权 state。
+- 搜索测试覆盖各 field/op、AND、tagged union 五 variant、i64 ID、path file/folder/segment-boundary、缺 payload/未知 type/未知字段、跨项目/deleted path-file-task、多状态、hidden overlay、vector 降级、稳定 score+id keyset、next_after、limit 边界、cursor tamper/version/fingerprint mismatch、同过滤跨 URL project cursor 400 和 GET file/all 映射。
+- Enter/Shift+Enter 在 composition 期间不触发；普通按键触发正确 scope。
+- context 在代码、API schema、数据库、历史 JSONB 和权威文档中移除；B 首发历史不捕获它，旧上传带字段仍可兼容。
+- 游客公开只读、私有拒绝、无 WS mutation；术语点击不自动保存/改状态。
+- 阶段结束执行测试、verify、Conventional Commit、推 master、等待 CI 与 GHCR。

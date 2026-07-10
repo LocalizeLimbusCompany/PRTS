@@ -2,6 +2,7 @@
 
 > 本文件由 `26-06-28-init_system_raw.md` 精修而来，是 PRTS 项目的**权威蓝图**。
 > 原始草稿保留于 `plan/26-06-28-init_system_raw.md` 作为历史。
+> 2026-07-10 项目工作区大改造的直接作者决定见 [`docs/superpowers/specs/2026-07-10-project-workspace-overhaul-design.md`](../docs/superpowers/specs/2026-07-10-project-workspace-overhaul-design.md)；该总纲是精确生命周期、状态矩阵、可见性谓词和 API truth table 的唯一规范源，对本蓝图相关摘要具有更高优先级。
 
 | 项 | 值 |
 | --- | --- |
@@ -134,28 +135,32 @@ PRTS/
 
 ### 5.1 核心实体
 
-- `user`：`id`、`username`、`email`、`password_hash?`、`avatar_url`、`description`、`uid`(展示用)、`joined_at`、`cp`(累计贡献分)。
+- `user`：`id`、`username`、`email`、`password_hash?`、`password_change_required`、`avatar_url`、`description`、`uid`(展示用)、`joined_at`、`cp_tenths`（未来贡献分的精确 0.1 单位，`BIGINT`）。
 - `external_account`：`user_id`、`provider`(github/zoot…)、`external_id`、`raw`(JSONB)；用于"关联账号"。
 - `api_key`：`user_id`、`name`、`key_hash`、`scopes`、`created_at`、`last_used_at`（明文仅创建时展示一次）。
-- `project`：`id`、`slug`、`name`、`visibility`(public/private)、`source_langs`(BCP-47 数组)、`target_lang`(BCP-47)、`owner_id`、`created_at`。
-- `folder`：`id`、`project_id`、`parent_id?`(自引用树)、`name`、`path`。
-- `file`：`id`、`project_id`、`folder_id?`、`name`、`format`、`stats`(词条数/各状态计数，物化)。
+- `project`：`id`、`slug`、`name`、`visibility`(public/private)、`source_langs`(BCP-47 数组)、`primary_source_lang`、`target_lang`(BCP-47)、唯一 `owner_id`、搜索重建状态、头像 key、待删除时间、`created_at`。
+- `folder`：`id`、`project_id`、`parent_id?`(自引用树)、`name`、`path`、软删除与 `deletion_change_set_id`。
+- `file`：`id`、`project_id`、`folder_id?`、`name`、`format`、软删除与 `deletion_change_set_id`、`stats`（可见词条数/各状态计数，物化）。
 - `entry`（最小翻译单位）：
-  - `id`、`file_id`、`key`、`original`(JSONB：`{ "<bcp47>": "源文本" }`)、`context`、`translation`、
-  - `state`（工作流枚举，见 §6）、`locked`(bool)、`hidden`(bool)、
+  - `id`、`file_id`、`key`、`original`(JSONB：`{ "<bcp47>": "源文本" }`)、`translation`、
+  - `state`（工作流枚举，见 §6）、`locked`(bool)、`hidden`(bool)、`deleted_at?`、
   - `version`(乐观锁递增)、`updated_by`、`updated_at`。
 - `entry_version`：每次改动的快照（`entry_id`、`version`、`translation`、`state`、`editor_id`、`diff`、`created_at`）。
-- `audit_log`：追加式全操作历史（见 §8）。
-- `membership`：`project_id`、`user_id`、`role`(owner/manager/reviewer/translator)。
+- `audit_log`：追加式、action allowlisted 的安全审计（见 §8）。
+- `membership`：`project_id`、`user_id`、`role`(owner/manager/reviewer/translator)、`cp_tenths BIGINT NOT NULL DEFAULT 0`（本轮只建未来基础，不评分）。
 - `platform_role`：`user_id`、`role`(super_admin/admin/maintainer)。
-- `setting`：平台配置（SMTP、注册开关、OAuth 模式、Embedding 开关等），分类存储。
+- `setting`：平台运行时配置（SMTP、注册开关、OAuth 模式、Embedding 开关、上传的文件数/单文件大小/批次大小/浏览器并发等），分类存储。
+- `job`：上传、主源 lexical、Embedding、文件清理与项目清除的持久化状态/阶段/进度/租约/重试；`project_id` 可空并 `ON DELETE SET NULL`，删除后所需 project/media snapshot 存 payload。
+- `task` / `task_file` / `task_baseline_entry`：immutable file/entry snapshot IDs + nullable live FKs（永久删除 SET NULL），历史基线可解释且 NULL live ref 退出分母。
+- `term` / `pos_preset`：带任意合法 canonical `source_lang`/归档状态的项目术语与 zh-CN/en 全局词性；非当前主源语言只能 archived，legacy old-primary 保持 migration-ready。
+- `project_stats` / `file_stats`：排除 hidden 与 soft-deleted 的可见状态计数。
 
 ### 5.2 应对单项目 20w+ 词条的性能策略
 
 - **键集分页（keyset / cursor）**：列表按 `(file_id, id)` 游标翻页，避免大 `OFFSET`。
 - **索引**：`entry(file_id, state)`、`entry(key)`、`original/translation` 的 `tsvector` GIN、`pg_trgm` GIN、`pgvector` 的 IVFFlat/HNSW。
-- **统计物化**：文件/项目各状态计数增量维护（触发器或应用层），避免实时 `COUNT(*)`。
-- **批量上传**：分批事务 + `COPY`；解析与入库分离，超大文件后台任务化。
+- **统计物化**：文件/项目按总纲 §3 的 effective visibility 集合增量维护；hidden overlay 不包含 entry tombstone、deleted file 或 deleted ancestor folder；正常读路径不实时 `COUNT(*)`/`GROUP BY entries`。
+- **批量上传**：原始 JSON 文件流式进入后端临时卷，持久化 batch/job 后逐文件原子解析与完整替换；浏览器不解析内容。
 - **只读浏览缓存**：公开项目的列表/统计走 Redis 缓存。
 
 ---
@@ -189,33 +194,37 @@ PRTS/
 
 | 角色 | 能力 |
 | --- | --- |
-| 总管理员 super_admin | 全部；可任免管理员 |
-| 管理员 admin | 创建/删除/管理所有项目；平台设置 |
+| 总管理员 super_admin | 全部平台级能力；可任免管理员，并按平台管理能力跨项目操作；但不能冒充项目拥有者执行主源变化或项目删除 |
+| 管理员 admin | 创建项目、按平台管理能力管理所有项目、管理平台设置；但不能冒充项目拥有者执行主源变化或项目删除 |
 | 维护者 maintainer | 创建项目 |
 
 ### 7.2 项目级
 
 | 角色 | 能力 |
 | --- | --- |
-| 拥有者 owner | 项目内全部，含删除项目、改被锁词条 |
-| 管理 manager | 同拥有者，但**不可删除项目**；可改被锁词条 |
+| 拥有者 owner | 项目内全部，含主源变化、删除项目、改被锁词条；本轮不提供拥有者转让 |
+| 管理 manager | 项目内管理能力，含改被锁词条；**不含主源变化、项目删除或拥有者转让** |
 | 校对 reviewer | 设 `已检查/已审核`、修改已审核文本；翻译能力 |
 | 翻译 translator | 编辑 `未翻译/已翻译/有疑问` 词条并设这三种状态；**不可**设 `已检查/已审核`，不可改被锁词条 |
 
 > 补全了草稿中被截断的「翻译」角色定义。
+>
+> 2026-07-10 增补：`projects.owner_id` 是唯一拥有者。拥有者只可授予 manager/reviewer/translator，管理只可授予 reviewer/translator；任何端点不直接授予 owner，本轮不提供 owner 转让。API 返回 capabilities，前端不得从角色字符串自行推导。主源变化与项目删除只认 `owner_id`，平台管理员不能替代。
 
 ### 7.3 权限节点示例
 
-`platform.admin.grant`、`platform.project.create`、`project.manage`、`project.delete`、`project.member.manage`、`project.entry.edit`、`project.entry.review`、`project.entry.lock`、`project.entry.hide`、`project.file.upload`、`project.download`、`project.history.purge` …
+`platform.admin.grant`、`platform.project.create`、`project.manage`、`project.delete`、`project.member.manage`、`project.entry.edit`、`project.entry.review`、`project.entry.lock`、`project.entry.hide`、`project.file.upload`、`project.download`、`project.history.view`、`project.history.rollback` …
 
 ---
 
 ## 8. 历史与审计
 
-- **所有操作**（登录、上传、编辑、状态变更、权限变更、删除等）写入追加式 `audit_log`：`actor_id`、`action`、`target`(project/file/entry…)、`payload`(JSONB)、`ip`、`created_at`。
+- 登录/登出/认证失败、成功令牌签发与所有业务 mutation 写入追加式 `audit_log`；普通读取不审计，敏感管理员导出/清除除外。
 - 词条改动额外写 `entry_version`，展示**变更与差异（diff）**。
-- 管理后台可**按时间段 + 按项目**清除操作历史（受 `project.history.purge` / 平台权限约束）。
-- 设计为高写入：分区表（按月）或批量写入队列，避免阻塞主流程。
+- 文件操作与重传写行为完整、字段 allowlisted 的 change set/delta；entry payload 永不捕获 context。成员可查看，owner/manager 可回滚。恢复 payload 只保留到 deleted file/folder 永久清除，之后不可恢复；audit 元数据无恢复正文。
+- `audit_log` 保持追加式，不因项目清除而级联删除；项目清除后保留必要目标快照元数据。
+- 审计 payload 按 action allowlist 脱敏，不存密码/hash、OAuth/token/API key、challenge answer、raw upload 或完整源文/译文。所有 repository writer 提供 transaction-scoped 接口，route 不写裸 SQL；业务 mutation 与审计同 PostgreSQL 事务。`0007` 建 DB-authoritative auth session/intents/outbox，只存 refresh hash/opaque handle；refresh/rotation/revoke 先查 DB state，Redis 仅缓存。issuance/rotation commit 后才返回 token，logout/revoke DB commit 即失效，Redis 清理失败由 durable worker 重试。
+- 上传、主源重建、Embedding、文件保留期清理与项目清除使用持久化 `job`，记录阶段、进度、租约、错误和同一 job 重试。
 
 ---
 
@@ -243,31 +252,36 @@ trait AuthProvider {
 ### 9.2 注册与会话
 
 - 开放注册；**管理后台可配置 SMTP，并可开关"是否要求邮箱验证"**（未配 SMTP 即跳过验证）。
-- 会话：自签 **JWT access**（短期）+ **不透明 refresh**（存 Redis，可吊销）。
+- 会话：自签 **JWT access**（短期）+ **不透明 refresh**；refresh hash/state 以 PostgreSQL 为权威，Redis 仅缓存/加速，可吊销且 crash 后由 durable intent/outbox 收敛。
 - 密码哈希用 Argon2id。
 
 ### 9.3 用户页面
 
-- 自身：描述、API-Key（创建/吊销，明文仅一次）、翻译语言偏好。
-- 展示：参与的项目、关联账号（先支持 GitHub）、UID、加入时间、CP。
+- 自身：描述、API-Key（创建/吊销，明文仅一次）、翻译语言偏好、修改密码。
+- 管理员直接建号带持久化初始密码提醒；提醒不阻止使用，成功修改密码后清除。
+- 展示：参与的项目、关联账号（先支持 GitHub）、UID、加入时间。CP 在真实计分阶段上线前不显示虚假 0 列/榜单。
 
 ---
 
 ## 10. CP（贡献分）
 
-- 触发：所有翻译、编辑、校对操作。
-- 公式：`CP_gain = weight × levenshtein(prev_translation, new_translation)`
+- 长期公式保持：`CP_gain = weight × levenshtein(prev_translation, new_translation)`
   - 首次翻译：`prev` 视为空串，`d = len(new_translation)`。
   - 权重：翻译/编辑 `1.0`，校对 `0.3`。
 - **不设任何抗刷分机制**（无封顶、无短时合并、无每日上限）—— 按作者要求保持纯线性。
-- 用户 `cp` 字段累加；提供项目贡献榜。
+- 2026-07-10 大改造本轮只把平台/项目 CP 存储统一为 exact tenths integer：`users.cp_tenths BIGINT` 与 `memberships.cp_tenths BIGINT NOT NULL DEFAULT 0`，一单位代表 0.1 CP；不接入评分、不生成真实排行榜、不增加全为 0 的管理列，也不引入十进制 crate/sqlx decimal feature。
+- 未来排序直接使用 `cp_tenths`，UI 显示时四舍五入为整数。回滚与恢复固定 0 CP，不追扣旧 CP。
 
 ---
 
 ## 11. 翻译语言
 
 - 一个项目：**多源语言 + 单一目标语言**（如 `en, ja, ko -> zh-Hans`，或 `en -> zh-Hans`）。
-- 语言码采用 **BCP-47**（`en` / `ja` / `ko` / `zh-Hans` / `zh-Hant` …），界面显示本地化名称，天然区分简繁与地区，并支持其他主流语言。
+- 语言码采用 **BCP-47**（`en` / `ja` / `ko` / `zh-Hans` / `zh-Hant` …），后端以 `language-tags` 统一校验/规范化：language 小写、script Titlecase、region 大写，variant/extension/private-use 按 parser 规范序列化；界面显示本地化名称。
+- 项目 create/update 的 source/primary/target、上传 original JSON keys、term import/CRUD、search source selector 和用户语言偏好全部在入口规范化；invalid 或 canonical duplicate 拒绝。foundation durable repair 按批规范化 legacy project/entry/term/user 数据；冲突或 invalid 数据标 `needs_language_resolution`，禁用 search/普通语言 edits，只有 owner resolution UI/API 可显式处理，平台 admin 只有无正文诊断/retry。
+- 每个 repair-ready 项目有非空 canonical `primary_source_lang` 且属于 `source_langs`；legacy unresolved 行只在条件约束下暂存且不进入普通 search/语言管理。`0008+0009`、language repair、primary search trigger/backfill 与 lexical worker 必须同一 foundation release 完成；`0009` exact JSON lookup 只处理 repair-ready 项目，之后才开放非首主源或已有项目更新。
+- 已有项目只有唯一 `owner_id` 可改主源，真正变化 7 天冷却；相同值无副作用。lexical 与 embedding 使用独立 job/state；lexical ready 即恢复 FTS/trgm，provider 未配置标 degraded/skipped，配置 provider 失败只重试原 embedding stage。精确矩阵见总纲 §4.3。
+- 移除当前主源必须同请求给替代值；项目已有词条后目标语言不可改。
 - 用户可设置个人翻译语言偏好，翻译面板按偏好顺序展示源语言。
 
 ---
@@ -279,15 +293,20 @@ trait AuthProvider {
   2. `pg_trgm` 模糊匹配（容错/子串）
   3. `pgvector` 语义检索
 - 向量化：`EmbeddingProvider` 抽象，默认 **Qwen 云 API**（密钥仅服务端；不可用时自动降级为 FTS+trgm）。
-- **高级筛选**：所在文件/目录、词条状态、源/译文关键字、键名；多条件组合 + 多种排序方式。
+- 主接口为结构化 `POST /projects/{id}/search`；旧 GET 适配同一 service 并保留一个兼容周期。
+- 默认稳定分页 `(rrf_score DESC, entry_id ASC)`，opaque versioned cursor 绑定 URL project_id + query/filter/scope fingerprint + score/id；错误、跨项目或跨查询 cursor 400，limit 1..100，响应含 next_after。path 精确解析 file 或 segment-boundary folder subtree，禁 naive prefix。
+- **高级筛选**：AND 条件；字段和操作符同既定范围；scope 使用总纲 §8.2 的 `type` tagged union（path/file/current_file/current_task 均带必需 payload），项目 route 校验归属/可见性/deletion；vector 默认 false。
+- 普通搜索使用总纲 §3 effective visibility；owner/manager 的 include_hidden 只覆盖 hidden，绝不包含 entry/file/folder deletion。主源 lexical 重建中暂停，lexical ready 后先恢复 FTS+trgm。
 
 ---
 
 ## 13. 实时翻译编辑器（WebSocket）
 
-- 布局：左侧词条列表（键集分页 + 搜索/筛选），中间翻译面板（按用户偏好显示源语言、上下文、键值）。
+- 布局：左侧词条列表（键集分页 + 搜索/筛选），中间翻译面板（按用户偏好显示源语言与键值）；词条模型不保留 context。
 - 实时：WebSocket + Redis pub/sub 跨实例广播 —— 在线状态、"他人正在编辑此词条"、词条变更实时刷新。
 - 并发安全：保存时**乐观锁版本校验**（`version` 不匹配则提示冲突）；`locked` 词条对非管理/拥有者只读。
+- 右下恰好为状态下拉 + 一个智能按钮；服务端给 owner/manager 下发 `force_save_presence` capability，按钮只检查该 capability；强制保存仅越过 presence 占用提示，仍校验版本。
+- 公开项目游客可进入只读编辑器，不保存、改状态、加入可写 presence、poke 或私信。
 
 ---
 
@@ -300,25 +319,33 @@ trait AuthProvider {
   {
     "key": "1234",
     "original": { "ko": "韩文原文", "ja": "日文原文" },
-    "context": "可选上下文",
     "translation": "",
     "state": "untranslated"
   }
 ]
 ```
 
-- 至少需 `key` + `original`（建议含 `context`）。
-- **key 相同 → 覆盖原文、`state` 重置为 `untranslated`，并在词条历史记录更改与差异（diff）。**
+- 最终 UI 上传原始 JSON 文件/文件夹，不提供粘贴文本框；浏览器不解析内容。上传四项限制由设置 API 下发。V1 不支持 Range/offset 续传；重试在同 logical file 新建 attempt 并从 byte zero 开始，batch 可取消，未完成 batch 默认 24h 过期并由 durable cleanup 清 temp。
+- 同路径重传是完整 replacement：缺失旧 key 可恢复软删除；既有平台译文保留；源文变化时状态重置未翻译；上传 translation/state 只 seed 从未存在的新 key。
+- 每文件流式解析并原子提交，batch 允许部分成功；重复 key 拒绝该文件并返回位置。原始上传文件只作临时任务输入，不进入历史。
+- `0008` foundation 仅预建 nullable deletion columns；legacy delete 仍硬删除并维护 stats，deletion_change_set_id 全 NULL，不提供恢复。`0010` 断言全 NULL并创建历史/FK后才切换：文件夹删除以同一 change-set 标记 subtree/descendant files，restore 只清本操作标记且不清 entry tombstone。FK 使用 RESTRICT/SET NULL；软删除默认 30 天，到期按业务行叶到根→items→sets 清除。
 
 ### 14.2 下载
 
 - 项目详情页下载 zip：**保留文件夹结构**，每文件输出 JSON，仅含 `key` / `original` / `translation`。
+- 普通导出使用总纲 §3 effective visibility；owner/manager 的 include_hidden 也不穿透 entry/file/folder deletion。
+
+### 14.3 项目删除
+
+- 删除 UI 先确认不可逆后果/24h/待删除只读，再要求完整项目 slug 精确匹配，之后才请求数学 challenge；两次确认只是前端门槛。仅唯一 `owner_id` 可通过绑定 user+project、短 TTL、一次性消费的 Redis 整数 challenge 安排删除；平台设置选择标准整数高数题或简单整数算术题，后端最终校验 owner 与答案。
+- 正确答案安排 24 小时后的持久化 purge，不立即级联。待删除项目从列表消失、只读、普通 jobs 暂停；唯一 owner 可看倒计时并取消。
+- 到期先在 DB 事务写 audit、detach/cancel 其它 jobs，按文件 30 天 purge 的兼容顺序显式清理全部 file history/tree，再清 tasks/terms/memberships 等关系并删除项目；不得依赖含糊 cascade 穿过 RESTRICT FK。purge job 以 nullable project_id 存活。提交后幂等清 media/temp，外部失败只重试同 job 且不复活项目；audit 保留无恢复正文的删除元数据。
 
 ---
 
 ## 15. 配置与安全
 
-- **分层配置**：环境变量（密钥、连接串）+ 数据库存储的运行时设置（SMTP、注册开关、OAuth 模式、Embedding 开关等），并分类管理。
+- **分层配置**：环境变量（密钥、连接串、媒体/临时卷路径）+ 数据库存储的运行时设置（SMTP、注册开关、OAuth 模式、Embedding、上传限制、文件保留期、删除题型等），并分类管理。
 - 密钥（DB/Redis/JWT/Qwen/OAuth secret）仅经环境变量注入，**绝不下发前端**，`.gitignore` 完全覆盖 `.env`。
 - 安全：全程 HTTPS、CSRF/CORS 策略、输入校验、SQL 参数化（sqlx）、限流、最小权限、审计留痕。
 - 写 **verify 验证代码**（见 §17）。
@@ -335,6 +362,7 @@ trait AuthProvider {
 ## 17. 工程规范
 
 - **代码全注释且符合规范**：后端 `cargo fmt` + `clippy`；前端 ESLint + Prettier；前端文案面向用户。
+- **界面约束**：交互 UI 只用 Vue 3 + Quasar；浅/深主题、MDI、方角/2–4px；中文用 Noto Sans SC 同类 sans，JetBrains Mono 仅 code/key/number 且以 CJK sans fallback，不使用 SimSun/serif UI。
 - **提交规范**：Conventional Commits（`feat:` / `fix:` / `docs:` / `refactor:` / `chore:` …）。
 - **测试 + verify**：单元/集成测试；关键路径写验证脚本（含 20w 词条性能验证）。
 - **`.gitignore` 完全**：Rust `target/`、Node `node_modules/`、构建产物、`.env`、IDE、日志等。
@@ -344,7 +372,7 @@ trait AuthProvider {
 
 ## 18. 部署（Docker / GHCR）
 
-- `docker-compose`：`backend` + `frontend(nginx)` + `postgres(含扩展)` + `redis`；另有 `docker-compose.dev.yml` 供本地开发。
+- `docker-compose`：`backend` + `frontend(nginx)` + `postgres(含扩展)` + `redis`，并挂载 media/upload-temp 持久卷；另有 `docker-compose.dev.yml` 供本地开发。
 - 各服务独立 Dockerfile（后端多阶段构建静态二进制；前端构建后 nginx 托管）。
 - **每完成一个阶段：测试 → verify → 提交(规范) → 推 GitHub → 构建并推 GHCR 镜像**，供生产（`prts.zeroasso.top`）拉取。
 
@@ -353,6 +381,8 @@ trait AuthProvider {
 ## 19. 实施路线图
 
 > 每阶段验收闭环：通过测试与 verify → 规范提交 → 推 GitHub → 推 GHCR 镜像。
+>
+> 原始 P0–P7 用于系统首轮建设。2026-07-10 工作区大改造按 [`docs/superpowers/plans/2026-07-10-project-workspace-overhaul.md`](../docs/superpowers/plans/2026-07-10-project-workspace-overhaul.md) 执行：基线/文档 → foundation（含不可拆分 `0008+0009`、trigger/backfill worker）→ A route/UI exposure → B → C → D → E → F → 全量发布。
 
 | 阶段 | 内容 |
 | --- | --- |
@@ -361,18 +391,18 @@ trait AuthProvider {
 | **P2 项目与文件系统** | 项目/文件夹/文件/词条 模型、上传（解析 + key 覆盖 + 历史 diff）、下载导出、词条 CRUD、状态机 + locked/hidden |
 | **P3 实时编辑器** | 词条列表（键集分页 + 搜索）、翻译面板、WebSocket 实时协作与在线状态、乐观锁 |
 | **P4 混合搜索** | FTS + pg_trgm + pgvector（Qwen Embedding 可插拔）+ RRF + 高级筛选 |
-| **P5 历史与审计** | 全操作审计日志、按时间/项目清除、词条历史与差异 |
-| **P6 CP 与贡献** | 编辑距离计分、用户 CP、项目贡献榜 |
+| **P5 历史与审计** | 追加式安全审计、词条历史、文件行为 change set/delta 与保留期内可逆回滚 |
+| **P6 CP 与贡献** | 未来按既定编辑距离公式计分并上线项目贡献榜；工作区大改造本轮仅准备精确存储 |
 | **P7 完善** | i18n 全量、文档（README 中英 + docs）、安全加固、20w 词条性能压测、verify |
 
 ---
 
-## 20. 未决细节（实现时再与作者确认）
+## 20. 后续范围边界
 
-- 权限节点的**完整清单**与各角色默认集合的最终勾选。
-- 贡献榜的展示口径（时间范围、按项目/全平台）。
-- 上传支持的**文件格式集合**（先 JSON；是否需要 i18n properties / PO / CSV 等导入器）。
-- 邮件模板与多语言；通知体系是否纳入 v1。
-- `pgvector` 索引类型（IVFFlat vs HNSW）与维度，依所选 Qwen 模型确定。
+- 权限节点以服务端 capabilities 和 2026-07-10 owner/manager/terms/tasks/history 规则为当前基线；扩大能力须另作作者决定。
+- 排行榜本轮只显示明确功能占位；时间范围、项目/平台口径在真实 CP 计分阶段单独设计。
+- 工作区上传本轮只支持 PRTS JSON 文件；properties/PO/其它格式属于独立导入器范围。
+- SMTP 邮件模板与更广泛的通知策略不属于本轮工作区改造；现有通知/私信功能不得回退。
+- 当前搜索使用 HNSW 与 1024 维 Qwen 配置；更换索引或维度须迁移数据并单列 ADR。
 
 > 遵循草稿要求：实现细节有不确定的，一律先询问作者。

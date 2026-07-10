@@ -1,104 +1,103 @@
-# 术语（Terminology）· 工作流 D — 设计 Spec
+# 术语（Terminology）· 工作流 D — 校准版设计 Spec
 
 | 项 | 值 |
 | --- | --- |
-| 阶段 | 大改造 6 工作流之 **D**；前置 **A**（`primary_source_lang` 主源语言字段）；平台后台 POS 管理与 F 同处 |
-| 基线 | `master` @ `1cc1a33`（C spec 提交后） |
-| 日期 | 2026-07-01 · 作者 ZengXiaoPi · 设计协作 Claude |
-| 前置 | A/B/C spec、CLAUDE.md |
+| 历史阶段 | 2026-07-01 大改造工作流 D |
+| 校准日期 | 2026-07-10 |
+| 规范总纲 | [`2026-07-10-project-workspace-overhaul-design.md`](./2026-07-10-project-workspace-overhaul-design.md) |
 
-> 已与作者确认（含可视化 mockup）：**术语项目级**——原文（**主源语言**）→ 翻译（目标语言）+ 备注 + 词性；**词性 = 平台全局预设**（内置一套完整默认集，平台后台增删 + CSV/JSON 导入导出）；**术语与词性都支持 CSV+JSON 导入导出**；术语维护权限 = **owner/manager/校对**（新增节点 `project.term.manage`），其余成员只读；术语列表**键集分页 + 后端搜索**（注意翻页，术语可上千）；词性 UI 用文字描述放平台后台；**编辑器术语匹配/高亮属 E**（本阶段仅提供数据）。
+> 2026-07-01 版本确定了项目级术语、平台 POS、CSV/JSON 与 reviewer 管理权。本文件保留术语工作流细节；主源切换的精确发布门和 lexical/embedding 状态只以规范总纲 §4 为准。
 
----
+## 1. 范围与权限
 
-## 1. 范围
+- 术语属于项目，保存真实源语言，不假定英语。
+- owner/manager/reviewer 通过 `manage_terms` capability 创建、修改、删除、导入和迁移；其它项目可见者只读/导出。
+- 全局 POS 只有平台管理员可管理；maintainer、项目 owner 和普通成员均不可写。
+- 所有 mutation 写追加式 audit；私有项目术语遵循项目可见性。
 
-**做**：项目级术语表（CRUD + 键集分页 + 搜索 + CSV/JSON 导入导出）；平台全局词性预设（默认集 + 平台后台管理 + CSV/JSON 导入导出）；术语分区 UI + 平台后台词性管理 UI。
+## 2. 数据模型
 
-**不做（后续/别处）**：编辑器内**术语匹配高亮 / 建议**（属 E，D 仅提供术语数据与查询）；词性**双语名**（暂单名 `name`，见 §10）；术语与译文的自动一致性校验/告警。
+计划迁移 `0012_terminology.sql`：
 
-## 2. 决策要点
+```text
+pos_presets
+  id, name_zh_cn, name_en, sort_order, created_at, updated_at
+  CHECK(name_zh_cn 非空 OR name_en 非空)
 
-1. 词性预设 = **平台全局**（无 `project_id`），迁移内置默认集；平台管理员（`platform.settings`）增删改 + CSV/JSON 导入导出。
-2. 术语 = 项目级：`source_text`（主源语言）、`translation`（目标语言）、`notes`、`pos_id?`（引用全局预设）。允许**同形异性**（同原文不同词性并存）。
-3. 权限：查看/导出 = 可查看项目者；增/改/删/导入 = 新节点 **`project.term.manage`**（owner/manager/reviewer）。
-4. 列表 **键集分页**（`after` 游标 + `limit`）+ 后端搜索（原文/翻译 `ILIKE`/trgm）。
-5. 导入导出：术语与词性均支持 **CSV 与 JSON**；术语导入按 `(project_id, source_text, pos_id)` **upsert**（命中更新译文/备注，否则插入），返回 created/updated 计数。
-
-## 3. 数据模型 · 迁移 `0009_terminology.sql`
-
-```
-pos_presets(                              -- 平台全局词性预设
-  id BIGINT IDENTITY PK,
-  name TEXT NOT NULL UNIQUE,
-  sort_order INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)
--- 迁移内置默认集（按 sort_order）：名词/动词/形容词/副词/代词/数词/量词/
---   介词/连词/助词/叹词/专有名词/短语/习语/拟声词/其他
-terms(
-  id BIGINT IDENTITY PK,
-  project_id BIGINT NOT NULL REFERENCES projects ON DELETE CASCADE,
-  source_text TEXT NOT NULL,              -- 主源语言原文
-  translation TEXT NOT NULL DEFAULT '',   -- 目标语言译文
-  notes TEXT NOT NULL DEFAULT '',
-  pos_id BIGINT REFERENCES pos_presets ON DELETE SET NULL,
-  created_by BIGINT REFERENCES users ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)
-索引：terms(project_id, source_text, id)（键集 + 排序）；GIN trgm on terms.source_text（搜索 + E 匹配）；可选 GIN trgm on translation。
+terms
+  id, project_id, source_lang, source_text, translation, notes,
+  pos_id, archived_at, created_by, created_at, updated_at
 ```
 
-## 4. 后端（`prts-api` + `prts-db`，进 Swagger）
+唯一键为：
 
-**术语（项目级）**
-- `GET /projects/{id}/terms?q=&after=&limit=` — 键集分页 + 搜索（原文/译文）。可查看项目者。
-- `POST /projects/{id}/terms` `{source_text, translation, notes, pos_id?}` — 建。`project.term.manage`。
-- `PUT /projects/{id}/terms/{term_id}` — 改。`project.term.manage`。
-- `DELETE /projects/{id}/terms/{term_id}` — 删。`project.term.manage`。
-- `POST /projects/{id}/terms/import?format=csv|json` — multipart 上传，upsert（按 `(source_text,pos_id)`），未知词性名→`pos_id=null` + 计入告警；返回 created/updated/warnings。`project.term.manage`。
-- `GET /projects/{id}/terms/export?format=csv|json` — 全量导出。可查看项目者。
+```sql
+UNIQUE NULLS NOT DISTINCT (project_id, source_lang, source_text, pos_id)
+```
 
-**词性预设（平台全局）**
-- `GET /pos-presets` — 列表（任意登录者；术语编辑下拉用）。
-- `POST/PUT/DELETE /admin/pos-presets[/{pos_id}]` — 平台管理（`platform.settings`）。
-- `POST /admin/pos-presets/import?format=csv|json`、`GET /admin/pos-presets/export?format=csv|json` — 平台管理。
+因此同语言、同原文、同 POS 只能一条，`pos_id=NULL` 也不会重复；不同 POS 允许同形术语。
 
-**权限**：新增 `project.term.manage` 节点，加入 owner/manager/reviewer 的默认节点集（`prts-core/permission.rs`）。POS 管理走平台 `platform.settings`。
+POS 响应按 `Accept-Language` 优先返回 zh-CN 或 en 名称，缺少当前语言时回退到另一名称。内置默认 POS 同时提供两种名称。
 
-## 5. 前端
+## 3. active、归档与迁移
 
-- **`ProjectGlossaryView`（术语分区）**：表格（原文/翻译/词性/备注）+ 顶部搜索（后端）+ **键集分页**（滚动加载或分页器）+ `新建/编辑`对话框（原文/翻译/词性下拉[GET /pos-presets]/备注）+ 删除 + `导入▾`/`导出▾`（CSV·JSON）。写操作/导入按 `project.term.manage` 显隐；导出对可查看者开放；翻译成员只读。
-- **平台后台（`AdminView`）词性管理**：全局词性列表（增删改 + 拖拽排序）+ CSV/JSON 导入导出。仅平台管理员。
-- **`api`**：`termsApi`（list/create/update/delete/import/export）、`posPresetsApi`（list；admin：manage/import/export）。
-- 信息页「术语数」统计（A 暂隐）本阶段可点亮（GET terms 计数）。
-- i18n 双语；样式少圆角、状态全称。
+- 任意合法 canonical BCP-47 `source_lang` 都可存储，不要求属于项目 `source_langs`。
+- active set = `source_lang = projects.primary_source_lang AND archived_at IS NULL`。非当前主源语言术语只能 archived；创建/更新若请求 `archived=false` 且 source_lang 不是当前 primary，返回稳定校验错误，不得静默改成 archived。
+- 主源变化事务中，旧主源 active terms 设置 archived_at；新主源已有归档术语取消归档。legacy old-primary 术语继续保留为 archived/migration-ready。
+- 归档术语停止搜索匹配和编辑器建议，但仍可在术语区查看、导出和人工迁移。
+- “迁移术语”复制/映射到当前主源并按唯一键 upsert，不篡改旧归档记录；源文本变化必须由用户在预览中确认。
+- 混合列表/导出包含 current + archived，始终显式返回 `source_lang` 和 `archived`。
 
-## 6. 导入导出格式
+## 4. API
 
-- **术语 CSV**：表头 `source_text,translation,pos,notes`（`pos`=词性名，导入时映射到 `pos_id`，未知→空 + 告警）。**术语 JSON**：`[{source_text, translation, pos, notes}]`。
-- **词性 CSV**：`name,sort_order`。**词性 JSON**：`[{name, sort_order}]`。
-- 术语导入 upsert（`(project_id, source_text, pos_id)`）；词性导入 upsert（`name`）。导出为当前全量。
+### 项目术语
 
-## 7. 性能
+- `GET /projects/{id}/terms?q=&set=current|archived|mixed&after=&limit=`：键集分页，原文/译文搜索。
+- `POST /projects/{id}/terms`：创建，必须带 BCP-47 `source_lang`。
+- `PUT /projects/{id}/terms/{term_id}`：修改。
+- `DELETE /projects/{id}/terms/{term_id}`：删除。
+- `GET /projects/{id}/terms/matches?entry_id=`：只返回当前主源 active matches，供 E 使用。
+- `POST /projects/{id}/terms/migrate`：把选定归档术语预览并 upsert 到当前主源。
+- `GET /projects/{id}/terms/export?format=csv|json&set=...`：流式导出。
 
-- 术语列表**键集分页**（`(source_text, id)` 游标），禁用大 OFFSET；搜索走 trgm GIN。
-- 导入分批事务（沿用上传批处理思路）；导出流式/分页拉取避免大内存。
-- 术语规模通常百~千级，索引足够；E 的编辑器匹配复用 `source_text` trgm 索引。
+### POS
 
-## 8. 测试
+- `GET /pos-presets`：按 locale 返回名称与两种原始名称。
+- `POST/PUT/DELETE /admin/pos-presets[/{id}]`：仅平台管理员。
+- POS CSV/JSON 同样使用预览确认导入与流式导出。
 
-- **单元**：CSV/JSON 解析与序列化（术语、词性）；导入 upsert 语义（命中更新/新插/未知词性告警）；键集游标。
-- **db-test**：术语 CRUD + 键集分页 + 搜索；导入导出往返一致；权限门（非 `term.manage` 增删导入→403、非成员私有项目查看→403）；词性全局 CRUD + 平台权限门；`pos_id` 删除置空（ON DELETE SET NULL）。
-- **前端**：CI build/lint。
+全部端点进入 Swagger，错误返回 code + 本地化 message。
 
-## 9. 涉及文件
+所有 term CRUD/migrate/import 的 `source_lang` 先调用共享 `language-tags` canonicalizer；language 小写、script Titlecase、region 大写，variant/extension/private-use 按 parser 输出。无效 tag 与 canonicalization 后重复拒绝，但合法 canonical tag 不受项目 `source_langs` 限制。`archived=false` 只允许当前 primary；非主源 active 请求稳定失败。`needs_language_resolution` 项目禁用普通 term mutation，不能借术语端点绕过 owner resolution。
 
-迁移 `0009_terminology.sql`（建表 + 默认词性种子）；`prts-core/permission.rs`（`project.term.manage` 节点 + 角色集）；`prts-db/terms.rs`、`prts-db/pos.rs`；`prts-api/routes/terms.rs`、`routes/pos.rs`（或并入 admin）、`mod.rs`、Swagger；前端（`ProjectGlossaryView`、术语对话框、`AdminView` 词性管理、`api` termsApi/posPresetsApi、`router`、`i18n`）；`docs/architecture.md`（补术语）。
+## 5. CSV/JSON 预览确认
 
-## 10. 红线 / 未决
+### 5.1 格式
 
-- 导入严格校验列/字段；参数化 SQL；键集分页不深翻；导入分批事务。
-- 权限：写/导入过 `project.term.manage`，词性过 `platform.settings`；私有项目术语按可见性鉴权。
-- **未决（实现时）**：词性**双语名**（当前单 `name`，默认集用中文；若英文界面需本地化再加 `name_en` 或 i18n key）；术语导入的“覆盖 vs 追加”是否需要用户可选（默认 upsert）；编辑器术语匹配在 E 落地（可能加 `GET /projects/{id}/terms/match?entry_id=` 或前端本地匹配）。
+- 术语 CSV：`source_lang,source_text,translation,pos,notes,archived`。
+- 术语 JSON：对象数组，字段同 CSV。
+- POS CSV：`name_zh_cn,name_en,sort_order`。
+- POS JSON：对象数组，字段同 CSV。
+
+### 5.2 两阶段导入
+
+1. `POST .../imports/preview` 解析文件，先 canonicalize source_lang，再返回行预览、created/updated 数、错误、警告和一次性 token，不写业务表。token 由 CSPRNG 生成、熵至少 128 bit、TTL 15 分钟，绑定 `actor_id + project_id + import_kind(term|pos) + canonical content digest`。
+2. `POST .../imports/{token}/confirm` 原子校验并一次性消费 token，重新检查当前 permission 与项目状态，然后在事务内按唯一键 upsert并写 audit。actor/project/kind/digest 不匹配、过期、重放、并发二次消费或权限撤销全部拒绝且不写业务表。
+
+未知 POS 置 `pos_id=NULL` 并返回带行号的 warning，不拒绝其它合法行。无效 BCP-47、缺少 source_text、重复输入唯一键冲突，以及 `archived=false` 的非主源行都在预览中明确标出；合法非项目 source-set tag 的 archived 行允许通过。
+
+## 6. 前端与编辑器联动
+
+- `ProjectTermsView` 提供 current/archived/mixed、键集加载、搜索、CRUD、迁移、预览导入与 CSV/JSON 导出。
+- POS 下拉按 locale 显示并回退；未知 POS 的预览行显示警告。
+- E 必须实现 active term 高亮与建议，不再作为可选范围：匹配当前主源文本；点击时替换 selection，无 selection 时插入 cursor；只改本地 draft，不保存、不改 state。
+- 前端完全依据 capabilities 控制写操作，覆盖 zh-CN/en、浅/深主题、MDI 和小圆角。
+
+## 7. 性能与验收
+
+- 术语列表使用 `(source_text,id)` 或稳定 id cursor，禁止大 OFFSET；搜索走 trgm 索引。
+- 导入分批解析、确认时事务 upsert；导出流式响应，避免全量内存拼接。
+- 测试覆盖 NULL POS 唯一、同形异性、任意合法 canonical source_lang 可存、非主源 active 稳定拒绝、主源归档/激活、legacy old-primary archived/migration-ready、canonical duplicate 拒绝、混合导出、未知 POS warning、双语 fallback、token 绑定/15 分钟过期/重放/并发消费/权限撤销、权限和私有可见性。
+- CSV/JSON preview→confirm→export 往返保持 source_lang、archived、POS 与备注。
+- E 验收必须包含 active-only 匹配、selection/cursor 插入和不改变状态。
+- 阶段结束执行测试、verify、Conventional Commit、推 master、等待 CI 与 GHCR。

@@ -1,106 +1,102 @@
-# 任务（Tasks）· 工作流 C — 设计 Spec
+# 任务（Tasks）· 工作流 C — 校准版设计 Spec
 
 | 项 | 值 |
 | --- | --- |
-| 阶段 | 大改造 6 工作流之 **C**；前置 **A**（任务分区外壳 + 文件列表组件 + 每文件状态计数） |
-| 基线 | `master` @ `d0177bc`（B spec 提交后） |
-| 日期 | 2026-07-01 · 作者 ZengXiaoPi · 设计协作 Claude |
-| 前置 | A spec、B spec、CLAUDE.md |
+| 历史阶段 | 2026-07-01 大改造工作流 C |
+| 校准日期 | 2026-07-10 |
+| 规范总纲 | [`2026-07-10-project-workspace-overhaul-design.md`](./2026-07-10-project-workspace-overhaul-design.md) |
 
-> 已与作者确认（含可视化 mockup）：任务 = 一组项目文件 + 标题 + **Markdown 介绍** + 进度；进度用**快照基线**——加入文件时快照该文件「未翻译数」为分母，`进度 = Σ max(0, 基线未翻译 − 当前未翻译) / Σ 基线未翻译`；文件**可属多任务**（多对多）；**独立「管理任务」界面**统一设 标题/介绍/增删文件（勾选项目文件加入、勾文件夹=其下整体、加入即快照）；任务详情的文件用**文件管理器样式**展示（下钻、点文件进编辑器）；管理权限**复用 `project.manage`**（owner/manager），其余成员只读；创建流程 = 新建 → 进管理界面 → 保存。
+> 2026-07-01 版本确认了标题、Markdown、多对多文件与快照进度方向。精确有效可见性与 `current_task` tagged scope 由规范总纲 §3、§6、§8.2 定义；本文保留任务工作流细节。
 
----
+## 1. 范围与权限
 
-## 1. 范围
+任务包含标题、Markdown 介绍、多对多文件关系、基线快照和进度。owner/manager 通过 `manage_tasks` capability 创建、修改、删除、增移文件；其它项目可见者只读。
 
-**做**：任务分区（列表 / 详情 / 管理界面）；`tasks` + `task_files` 数据模型与端点；快照基线进度计算；Markdown 介绍（渲染 + 编辑预览）；任务文件的文件管理器式展示与勾选式增删。
+Markdown 只保存源文，使用共享净化组件渲染。所有 mutation 与文件集合变化写 audit。
 
-**不做（后续/别处）**：「在此任务翻译」的**搜索/过滤**实现（属 **E**，本阶段仅留入口 + 传 `task_id`）；任务与 CP/排行榜关联（无）；任务级新权限节点（复用 `project.manage`）；任务的历史/审计（P5）。
+## 2. 基线快照
 
-## 2. 决策要点
+### 2.1 加入文件
 
-1. 进度 = 快照基线：`task_files.baseline_untranslated` 加入时快照；`完成 = Σ_file max(0, baseline − 当前未翻译)`；`进度 = 完成 / Σ baseline`（`Σbaseline=0` → 视为 100%）。当前未翻译 = 该文件 `state='untranslated'` 实时计数（复用 A 的每文件状态计数口径）。
-2. 文件↔任务**多对多**（`task_files` 联结表，主键 `(task_id, file_id)`）。
-3. 「管理任务」界面统一保存：标题 + Markdown 介绍 + 文件成员集合（勾选）。保存以**期望成员集合**协调：新增的快照基线、取消的移除、既有的**保留原基线**。
-4. 权限：查看=可查看项目者；建/改/删/增移文件 = `project.manage`。
-5. Markdown 介绍：存**源文**（TEXT），前端 `markdown-it` 渲染 + `DOMPurify` 净化。
+文件加入任务时，在同一事务创建新的 `task_files.id`，并把当时满足以下条件的 entry id 写入 `task_baseline_entries`：
 
-## 3. 数据模型 · 迁移 `0008_tasks.sql`
-
-```
-tasks(
-  id BIGINT IDENTITY PK,
-  project_id BIGINT NOT NULL REFERENCES projects ON DELETE CASCADE,
-  title TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '',      -- Markdown 源文
-  created_by BIGINT REFERENCES users ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)
-task_files(
-  task_id BIGINT NOT NULL REFERENCES tasks ON DELETE CASCADE,
-  file_id BIGINT NOT NULL REFERENCES files ON DELETE CASCADE,
-  baseline_untranslated INTEGER NOT NULL,    -- 加入时快照
-  added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (task_id, file_id)
-)
-索引：tasks(project_id)；task_files(file_id)（供「文件删除级联」与反查）。
-```
-文件删除 → `task_files` 级联移除（该文件退出所有任务）。
-
-## 4. 后端（`prts-api` + `prts-db`，进 Swagger）
-
-**`prts-db/tasks.rs`**：`create`、`get`、`list_with_progress`、`update_meta`、`set_files`（协调成员：新增项 `baseline = 当前未翻译计数`，移除缺席项，保留既有基线）、`delete`、`list_files_with_progress`（任务详情用：每文件 baseline + 当前未翻译 + 完成度）。
-
-**进度查询**（列表一条 SQL 汇总）：
-```sql
-SELECT t.id, COALESCE(SUM(tf.baseline_untranslated),0) AS base,
-       COALESCE(SUM(GREATEST(0, tf.baseline_untranslated - COALESCE(cur.untrans,0))),0) AS done
-FROM tasks t
-LEFT JOIN task_files tf ON tf.task_id = t.id
-LEFT JOIN (SELECT file_id, COUNT(*) FILTER (WHERE state='untranslated') AS untrans
-           FROM entries WHERE project_id=$1 GROUP BY file_id) cur ON cur.file_id = tf.file_id
-WHERE t.project_id=$1 GROUP BY t.id;
+```text
+file_id = joined_active_file
+state = untranslated
+effective_visible(entry, file, include_hidden=false)
 ```
 
-**端点**
-- `GET /projects/{id}/tasks` — 列表（title、description、base、done、file_count）。可查看项目者。
-- `POST /projects/{id}/tasks` `{title?, description?}` — 建空任务，返回 id（`project.manage`）。
-- `GET /projects/{id}/tasks/{task_id}` — 详情（meta + 进度 + 文件列表，每文件 baseline/当前未译/完成度）。
-- `PUT /projects/{id}/tasks/{task_id}` `{title, description, file_ids:[i64]}` — 统一保存（改 meta + 协调成员）。`project.manage`。
-- `DELETE /projects/{id}/tasks/{task_id}` — 删除（`task_files` 级联）。`project.manage`。
-- 「在此任务翻译」不新增端点：前端带 `task_id` 进编辑器，过滤逻辑属 E（E 的搜索支持「在当前任务」）。
+不能只保存数量。保存 ID 后才能正确处理隐藏、删除、恢复、状态回退和 key 重传。
 
-## 5. 前端
+### 2.2 有效分母与完成数
 
-**路由**：`/projects/:id/tasks`（列表）、`/projects/:id/tasks/:taskId`（详情浏览）、`/projects/:id/tasks/:taskId/manage`（管理，owner/manager）。新建 → `POST` → 跳 `…/manage`。
+- 有效分母 = snapshot IDs 中当前满足规范 `effective_visible(..., false)` 的数量。
+- 完成数 = 有效分母中当前 state 不等于 `untranslated` 的数量。
+- hidden、entry tombstone、file/folder delete 使 snapshot entry 暂时离开分母；只有符合各自恢复规则时才返回。file/folder restore 不清除 reupload tombstone。
+- 完成 entry 退回 `untranslated` 时，完成数和百分比同步回退。
+- 文件加入后的新 entry 不进入旧 snapshot。
+- 从任务移除文件会删除该 task_file 与 snapshot；重新加入创建新 task_file id 和新 snapshot。
+- 有效分母为 0 时，任务显示 100% 与“无需处理”。文件、文件夹和项目自身的空进度仍显示“—”。
 
-- **`TaskListView`**：任务卡（标题、介绍摘要、单色进度条 = done/base、文件数）+ `新建任务`（manager）。
-- **`TaskDetailView`**（浏览）：标题 + **渲染 Markdown 介绍** + 进度条（`done/base`，`base=0`→100%）+ 文件**文件管理器样式**（复用 A 面包屑列表，数据=任务文件子集；每文件显示 基线/当前未译/完成度；点文件进编辑器）+ `管理任务`（manager）/`在此任务翻译` 入口。
-- **`TaskManageView`**（manager）：标题输入；**Markdown 介绍**编辑器（源 + 实时预览）；**文件勾选**——复用 A 面包屑文件浏览器加勾选框，勾=加入（保存时对新增项快照基线）、勾文件夹=其下文件整体加入、取消=移出；`保存`（PUT）/`删除任务`。
-- **`api` tasksApi**：list/create/get/update(含 file_ids)/remove。
-- **依赖**：`markdown-it` + `dompurify`（轻量、标准）用于介绍渲染；封装 `<MarkdownView>` / `<MarkdownEditor>` 组件（术语 D 若需也可复用）。
-- i18n 双语；样式少圆角、状态全称；进度条单色（完成比例，非 5 状态）。
+## 3. 数据模型
 
-## 6. 性能
+计划迁移 `0011_tasks.sql`：
 
-- 列表进度一条聚合 SQL（按 `entries(project_id)` + `file_id` 分组）；任务数量级小，可接受，无需物化。
-- 详情每文件进度同口径；文件浏览器前端过滤（任务文件子集，规模小）。
-- `set_files` 协调在单事务内完成（新增快照 + 删除）。
+```text
+tasks
+  id, project_id, title, description_markdown, created_by, created_at, updated_at
 
-## 7. 测试
+task_files
+  id, task_id, file_id_snapshot BIGINT NOT NULL,
+  live_file_id BIGINT NULL REFERENCES files(id) ON DELETE SET NULL,
+  added_by, added_at
+  UNIQUE(task_id, live_file_id) WHERE live_file_id IS NOT NULL
 
-- **单元**：进度公式（含 `base=0`→100%、`current>baseline` 钳位 0）；成员协调（新增快照/移除/既有保留基线）。
-- **db-test**：建任务、PUT 改 meta + file_ids（新增项 baseline = 当时未翻译数、移除生效、既有基线不变）、列表进度 SQL 正确、删除级联、权限门（非 manage → 403）、文件删除→task_files 级联。
-- **前端**：CI build/lint；Markdown 渲染净化（XSS 输入被清理）。
+task_baseline_entries
+  task_file_id REFERENCES task_files(id) ON DELETE CASCADE,
+  entry_id_snapshot BIGINT NOT NULL,
+  live_entry_id BIGINT NULL REFERENCES entries(id) ON DELETE SET NULL
+  PRIMARY KEY(task_file_id, entry_id_snapshot)
 
-## 8. 涉及文件
+task_stats
+  task_id, effective_baseline, completed, updated_at
+```
 
-迁移 `0008_tasks.sql`；`prts-db/tasks.rs`(+`lib`)；`prts-api/routes/tasks.rs`（5 端点）、`mod.rs`、Swagger；前端（`TaskListView`/`TaskDetailView`/`TaskManageView`、`MarkdownView`/`MarkdownEditor`、复用文件浏览器（勾选变体）、`api` tasksApi、`router`、`i18n`、依赖 `markdown-it`/`dompurify`）；`docs/architecture.md`（补任务）。
+`task_stats` 由 task file、entry state/hidden/tombstone 和 file/folder deletion exposure 变化集合更新。任务列表正常读路径不扫描项目全部 entries 做实时 `COUNT(*)`；离线 rebuild/verify 使用规范 effective-visible predicate。
 
-## 9. 红线 / 未决
+文件软删除不会删除 task_files 或 snapshot，因此恢复后 live relationship 与分母自然返回。文件/entry 永久清除时，`live_file_id/live_entry_id` 由 FK 置 NULL，snapshot ID 仍保留以解释历史基线；NULL live refs 永久退出有效分母。显式从任务移除文件才删除 task_file，并由 CASCADE 删除该成员关系自己的 baseline rows。
 
-- Markdown 介绍**必须净化**（DOMPurify）防 XSS；渲染只在前端，存源文。
-- 进度查询避免 N+1（列表一条聚合 SQL）；不实时全表 COUNT 热路径。
-- 权限：写操作过 `project.manage`；查看随项目可见性。
-- **未决（实现时）**：`base=0`（加入时文件已全译）UI 呈现（100% 还是「—」，mockup 用「—」于单文件、任务总体用 100%）；「在此任务翻译」的过滤在 E 落地。
+## 4. API
+
+- `GET /projects/{id}/tasks`：键集列表，返回标题、介绍摘要、有效分母、完成数、百分比、文件数和 capabilities。
+- `POST /projects/{id}/tasks`：创建任务；owner/manager。
+- `GET /projects/{id}/tasks/{task_id}`：详情、净化所需源 Markdown、统计和当前文件集合。
+- `PUT /projects/{id}/tasks/{task_id}`：原子保存标题、Markdown 与期望 file_ids；新增文件建立 snapshot，既有文件保留 snapshot，缺席文件移除。
+- `DELETE /projects/{id}/tasks/{task_id}`：删除任务与 snapshot；写 audit。
+
+所有端点进入 Swagger，使用稳定错误码与 Accept-Language 本地化消息。前端不从 role 推断管理权。
+
+## 5. 当前任务搜索
+
+“在此任务翻译”进入编辑器并传 task_id。E 发送 `{ "type": "current_task", "task_id": ... }`，项目 search route 验证 task 属于 URL project 且 task/project 对 caller 可见，再使用任务当前 active `task_files` 搜索 effective-visible entries：
+
+- 不限于 snapshot IDs；
+- `include_hidden` 只覆盖 hidden；entry/file/folder deletion 始终排除；
+- 支持多状态、结构化条件和 vector=false 默认规则；
+- 文件移出任务后立即不再属于该 scope。
+
+## 6. 前端
+
+- `TaskListView`：标题、净化摘要、完成/分母、进度和文件数；零基线显示“无需处理”。
+- `TaskDetailView`：净化 Markdown、进度、共享文件浏览器、“在此任务翻译”和 capability 控制的管理入口。
+- `TaskManageView`：标题、Markdown 编辑/预览、文件勾选。勾文件夹只展开为保存时的后代 file ids。
+- 点任务文件进入全屏 editor，携带 file 与 task 参数。
+- zh-CN/en、Quasar、MDI、小圆角与浅/深主题全部沿用共享基础。
+
+## 7. 验收
+
+- 数据库测试覆盖 snapshot 条件、隐藏/删除离开、恢复返回、完成/回退、新 entry 排除、移除重加和零基线。
+- 随机变更后 task_stats 等于离线 snapshot join 校验；列表 SQL 不做项目 entries 全表实时聚合。
+- 权限测试覆盖 owner/manager 写、reviewer/translator/游客只读、私有非成员拒绝。
+- Markdown XSS、文件集合协调、当前任务搜索范围和前端 capability 均有测试。
+- 阶段结束执行测试、verify、Conventional Commit、推 master、等待 CI 与 GHCR。

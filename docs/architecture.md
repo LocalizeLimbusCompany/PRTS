@@ -1,146 +1,252 @@
 # PRTS 架构文档
 
-> 本文是面向开发者的架构详述，与权威蓝图 [`plan/26-06-28-init_system.md`](../plan/26-06-28-init_system.md) 配套。决策依据见蓝图 §0「决策记录」。
+> **状态：目标架构，不代表当前仓库已经实现全部组件。** 当前实施状态以已应用迁移、已发布 feature gate 和 [`2026-07-10 实施计划`](./superpowers/plans/2026-07-10-project-workspace-overhaul.md) 的阶段为准。精确生命周期、状态矩阵、可见性谓词与 API truth table 以 [`2026-07-10 规范总纲`](./superpowers/specs/2026-07-10-project-workspace-overhaul-design.md) 为唯一规范源；本文只描述目标组件及其组合方式。
+>
+> 本文与权威蓝图 [`plan/26-06-28-init_system.md`](../plan/26-06-28-init_system.md) 配套。迁移/阶段未完成前，不应以本文的现在时描述推断某项能力已经上线。
 
-## 1. 分层与 crate 职责
+## 1. 分层、依赖与 composition root
 
-| Crate | 职责 | 不应包含 |
+| Crate | 目标职责 | 不应包含 |
 | --- | --- | --- |
-| `prts-api` | axum 路由、中间件（鉴权/权限/限流/CORS）、WS 入口、utoipa 文档聚合、错误→HTTP/i18n 映射 | 领域规则 |
-| `prts-core` | 领域逻辑：项目/文件/词条/状态机/CP/权限判定/历史。**纯逻辑，不依赖 axum/sqlx 细节** | HTTP、SQL 方言 |
-| `prts-auth` | `AuthProvider` 框架 + `password`/`oauth2`/`zoot` 实现、JWT 签发/校验、API-Key | 业务权限 |
-| `prts-search` | 混合检索编排（FTS+trgm+vector、RRF）、`EmbeddingProvider` 抽象与 Qwen 实现 | 路由 |
-| `prts-realtime` | WS 连接管理、房间（按文件/项目）、在线状态、Redis pub/sub 广播 | 持久化 |
-| `prts-db` | sqlx 连接池、迁移、查询、实体映射 | 领域规则 |
-| `prts-common` | 错误类型、分层配置加载、i18n、通用工具 | 任何具体业务 |
+| `prts-api` | axum 路由、中间件、WS 入口、worker 编排、utoipa、错误→HTTP/i18n；应用 composition root | 领域规则、手写 SQL |
+| `prts-core` | 项目/文件/词条/状态机/权限/能力/任务/术语/历史/删除挑战的框架无关逻辑与 ports | axum、sqlx、HTTP、SQL 方言、`prts-db` |
+| `prts-auth` | `AuthProvider`、password/oauth2/zoot、JWT、API-Key 与认证 ports | 项目业务权限 |
+| `prts-search` | FTS+trgm+vector/RRF 编排、`EmbeddingProvider` 与搜索 ports | 路由、业务持久化 |
+| `prts-realtime` | WS 房间、在线状态、Redis pub/sub adapter | 业务数据库写入 |
+| `prts-db` | sqlx 连接池、迁移、查询、行模型，以及 core/search/auth persistence ports 的 adapter | HTTP 与 UI 规则 |
+| `prts-common` | 错误、配置、i18n、框架无关通用类型/工具 | 具体业务 |
 
-**依赖方向**：`api → {core, auth, search, realtime} → {db, common}`；`core` 不反向依赖 `api`。
+依赖/组合规则明确如下：
 
-## 2. 请求生命周期（REST）
+- `prts-api` 是 composition root，显式组合 `prts-core`、`prts-auth`、`prts-search`、`prts-realtime`、`prts-db` 与 `prts-common`。
+- `prts-core` 只依赖框架无关类型、traits/ports 与 `prts-common`；它永不依赖 `prts-db`、axum 或 sqlx。
+- 数据库 adapters 位于 core 外部，由 `prts-db` 实现 core/search/auth 声明的 ports；axum handlers 依赖 port 接口并由 `prts-api` 注入具体 adapter。
+- `prts-auth`、`prts-search` 与 `prts-realtime` 不通过 `prts-core` 反向获得 Web/DB 细节；跨 crate 共享数据使用稳定 DTO/domain types。
 
+## 2. 请求、审计与持久化任务
+
+### 2.1 REST mutation
+
+```text
+请求
+ → CORS/限流
+ → 可选或必需鉴权（JWT/API-Key → Identity）
+ → 项目可见性 + 权限节点校验
+ → prts-core 领域校验
+ → prts-db 参数化事务
+ → 业务变更 + action-specific redacted audit 同事务提交
+ → 返回 capabilities + {code, message(Accept-Language), details}
 ```
-请求 → CORS/限流 → 鉴权(JWT/API-Key→Identity) → 权限节点校验 → 处理器
-     → prts-core 领域逻辑 → prts-db(sqlx 事务) → 响应(DTO)
-     → 错误统一映射为 {code, message(i18n), details}
-     → 写 audit_log（旁路，不阻塞主流程）
+
+公开项目只读端点可使用匿名 Identity；私有项目、mutation 与协作动作要求相应 capability。所有 `prts-db` writer 提供接受 `&mut PgConnection` 的 `_tx`/transaction-scoped 入口；route 只开事务、调用 domain/repository、写 audit 并提交，不写裸 SQL。成功 mutation 的 audit 失败时同事务回滚并返回本地化 `AUDIT_UNAVAILABLE` 503/内部错误。
+
+成功认证/令牌签发使用 `0007` 的 DB-authoritative `auth_sessions` + intent/outbox：只存 token hash/opaque handle，state 与 audit 同事务；refresh/rotation/revoke 先查 DB active state，Redis 仅缓存。issuance/rotation DB commit 后才返回 raw token；logout/revoke DB commit 即失效，Redis DEL 失败由 durable outbox 重试且 stale cache 不能绕过 DB。失败认证 audit 写失败时返回通用 503。
+
+Audit payload 按 action 使用 allowlist，只存 ID、允许的路径、计数、结果/错误码、actor/IP/time 与脱敏 metadata；不存密码/hash、OAuth/refresh/access/API secrets、challenge answer、raw upload body 或完整源文/译文。普通 read 不审计，敏感管理员导出/清除除外。完整规则见总纲 §2.3。
+
+### 2.2 持久化任务
+
+通用状态为：
+
+```text
+queued → running → succeeded
+             ├→ failed → retry same job
+             ├→ paused → queued
+             └→ cancelled
 ```
+
+worker 使用 `FOR UPDATE SKIP LOCKED`、租约续期和崩溃接管，并持久化 stage/progress/error/retry。`jobs.project_id` 可空且 `ON DELETE SET NULL`；需要在项目删除后继续工作的 job 把不可变 project snapshot、media/temp keys 与 deadline 放入 payload。
+
+主源切换明确拆为 lexical reindex 与 embedding backfill 两个 job；provider 禁用/未配置只让 embedding 进入 degraded/skipped，不阻塞 lexical search。上传 file retry 复用 logical processing job，但每次 byte-zero 传输/处理使用新的 attempt 行。项目待删除时，除 `project_purge` 外的任务暂停。
 
 ## 3. 关键数据流
 
 ### 3.1 ZOOT 登录（OAuth2 + PKCE）
 
-```
-前端「用 ZOOT 登录」
- → prts-auth(zoot.begin)：生成 state+PKCE，存 Redis，返回 authorize URL
- → 浏览器跳 ZOOT 授权 → 回调带 code
- → zoot.complete：校验 state → /oauth/token 换 token → /oauth/userinfo
- → 映射：profile(username/picture/role)、work(work_scope/content→翻译类别)、external(github_id→external_account)
- → upsert user → 签发 PRTS 自有 JWT(access)+refresh(Redis)
-```
-
-ZOOT 端点与字段详见 [`external/oauth_integration.md`](./external/oauth_integration.md)。其它 OAuth 源只需以不同配置实例化通用 `OAuth2Provider`。
-
-### 3.2 文件上传
-
-```
-上传 JSON [{key, original:{lang:text}, context, translation?, state?}]
- → 校验 + 分批解析
- → 对每个 key：存在则比对 → 覆盖原文、state=untranslated、写 entry_version(diff)
-                 不存在则插入
- → COPY/批量事务入库 → 增量更新文件/项目状态计数 → 写 audit_log
+```text
+前端选择 ZOOT
+ → prts-auth 生成 state+PKCE，state 存 Redis
+ → 浏览器授权回调 code
+ → 校验 state → token → userinfo
+ → 映射 profile/work/external
+ → 同 PostgreSQL 事务 upsert user/external_account + auth session active state + redacted audit/outbox
+ → DB commit 后返回 access/refresh
+ → Redis populate/invalidate 由 durable outbox 收敛；stale cache 始终受 DB session state 否决
 ```
 
-### 3.3 混合搜索（P4）
+ZOOT 字段见 [`external/oauth_integration.md`](./external/oauth_integration.md)。ZOOT 是通用 `OAuth2Provider` 的配置实例与映射器；code/verifier/token 永不进入 audit payload。
 
-**列与索引**（迁移 `0004`，触发器维护）：`entries` 增 `source_text`（主源语言文本）、`source_tsv`/`translation_tsv`（按语言选 `regconfig`，中文经 **zhparser**）、`embedding vector(1024)`、`embed_attempts`。索引：tsv GIN、`source_text`/`translation`/`key` 的 trgm GIN、`embedding` 的 HNSW(cosine)。触发器仅在**源文变化**时作废 `embedding`（译文编辑不触发重嵌）。
+### 3.2 项目工作区与主源语言
 
-`GET /projects/{id}/search`：
+项目工作区目标分区为信息/文件/任务/术语/排行榜/下载/管理，编辑器是独立全屏路由。项目/任务 Markdown 保存源文、净化展示。
 
-```
-q + 过滤(file/状态/排序) + 可见性(hidden 需编辑权限)
- → 查询期对 q 取一次 embedding（向量启用且配 key 时）
- → 并行三路：FTS(source_tsv/translation_tsv) | trgm(source_text/translation/key) | pgvector kNN
- → RRF 融合(k=60, 每路 top-100) → 有界 top-200 → offset/limit 窗口 → 取行返回(含 relevance)
-（向量默认关闭 / key 缺失 / 调用失败 → 自动降级为 FTS+trgm）
-```
+语言入口共享 `language-tags` canonicalizer：language 小写、script Titlecase、region 大写，variant/extension/private-use 按 parser 规范序列化。项目 source/primary/target、上传 original keys、term source_lang、search source selector 与用户语言偏好都先规范化；invalid/规范化后重复拒绝。
 
-**向量化**：`EmbeddingProvider`（默认 `QwenProvider`，DashScope OpenAI 兼容端点）。**默认关闭**；管理后台 `GET|PUT /admin/settings/search` 开关并配置 model/base_url/batch 与 TM 参数（存 `settings` 表 `search.config`，运行时热生效）；**API Key 仅经 env，绝不下发前端**（后台只显示「已配置:是/否」）。后台 **sweep worker** 分批回填 `embedding IS NULL` 的词条（batch ≤10，失败退避），覆盖 20w 存量，不阻塞主流程。
+`0008_workspace_meta_stats.sql` 与 `0009_primary_source_search.sql` 必须在同一 foundation release 部署。durable repair 先按键集批次规范化 legacy project/entry/term/user language data；冲突或 invalid 数据把 project 标 `needs_language_resolution`，禁用 search 与普通语言写，只有 owner resolution UI/API 可选择 mapping/value，platform admin 只有无正文诊断/retry。repair-ready search trigger/function、既有行 backfill/reconciliation 与 lexical worker readiness 完成之前，不开放非首主源创建或已有项目主源更新。部署边界与状态矩阵以总纲 §2.5、§4.2–§4.3 为准。
 
-**TM 翻译建议** `GET /projects/{id}/entries/{entry_id}/suggestions`：从**当前用户已加入**、`target_lang` 一致的项目里，按源文相似度（向量 cosine，关则 trgm）召回状态≥已翻译、译文非空的词条（排除自身），≤ `tm_top_n`(默认 3) 条，供编辑器译文面板下方展示、点击填入。
+主源变化的目标数据流：
 
-### 3.4 实时编辑
-
-```
-进入文件 → WS 加入房间(file_id)
- → 广播 presence；编辑中广播「正在编辑」
- → 保存：乐观锁校验 version
-        命中→更新+version+1+entry_version+CP+audit，向房间广播变更
-        冲突→返回最新版本，前端提示合并
- → locked=true 的词条仅 manager/owner 可写
-多实例：节点间经 Redis pub/sub 同步房间事件
+```text
+校验 owner/cooldown/languages/无 active 或 unresolved failed jobs
+ → 同事务写新 primary source + terms archive/activate
+ → lexical=rebuilding, embedding=pending
+ → 创建 lexical job + redacted audit
+ → lexical 按 keyset backfill source_text/source_tsv
+ → lexical=ready，恢复 FTS/trgm，创建 embedding job
+ → embedding ready | degraded(skipped) | failed(retry same stage)
 ```
 
-### 3.5 通知与在场协调（Spec C）
+相同值无副作用、不消费冷却。配置了 provider 的 embedding 失败做有界指数退避，耗尽后手动重试同一 embedding job，不重新提交主源变更。
 
-**通知底座**：`notifications(user_id 收件人, type, payload JSONB, read_at, created_at)`（键集分页；未读 = `read_at IS NULL`）。per-user 实时推送经 `prts-realtime` Hub 的**用户房间**（独立 Redis 频道 `prts:rt:user`，与项目房间并行、互不串扰）；前端 App 根部登录后常连 `GET /ws/user`，右上角铃铛显未读数 + 列表，收到即 toast。REST：`GET /notifications`、`/unread_count`、`POST /notifications/read`。
+### 3.3 有效可见性、删除继承与统计
 
-**编辑器「戳一下」**（第一种通知 `type=poke`）：翻译编辑器点在场头像 → 写一段提示 → `POST /projects/{id}/poke {to_user_id, text}`（收发双方均需项目成员）→ 建通知 + `publish_user` 实时推。用于协调（如提醒占用文件的译者换文件）。poke 文本上限 **140** 字；持久私信见 §3.6（复用此底座）。
+普通读、统计、search、export 与 task 统一使用总纲 §3 的 `effective_visible`：entry 未 tombstone、file active、无 deleted ancestor folder，且普通流要求 entry 非 hidden。`include_hidden` 只移除 hidden 条件，永不穿透任何删除层。
 
-### 3.6 私信（Spec D）
+`0008` 仅预建 nullable deletion columns/effective-visible stats；foundation legacy delete 继续硬删除并同事务维护 stats，所有 deletion_change_set_id 为 NULL，不提供 restore/history。`0010` 断言该列全 NULL、创建 change-set schema/FK 后，才原子切换 soft-delete writer：folder delete 为 active subtree/descendant files 写同一 operation，restore 只清匹配 ID 且不触碰 entry tombstone。
 
-**持久私信**：独立 `/messages` 页（会话列表 + 会话线程），复用 §3.5 的 per-user 实时底座。
+### 3.4 头像与可见性
 
-- **数据**：`messages(id, sender_id→users, recipient_id→users, content, read_at, created_at)`（迁移 0006）。会话 = 一对用户间的消息，无独立会话表；键集分页（正反双向复合索引 + 收件人未读部分索引）。
-- **门限**：私信双方须**共享 ≥1 项目**（`memberships` 交集 `EXISTS`）否则 403（防陌生人骚扰）；`content` ≤ 2000 字、不可自发；消息仅收发双方可见（端点按 user 鉴权）。
-- **实时**：`prts-realtime` 用户频道加 `UserEvent::DmMessage`；`POST /messages` 落库后 `publish_user` 推给收件人 → 在线即时追加 + 顶栏 ✉️ 红点（独立于铃铛）；离线经 `GET /messages` / `/messages/unread_count` 补看（持久 DB）。
-- **REST**：`GET /messages`、`GET /messages/{user_id}`（键集会话）、`POST /messages`、`POST /messages/{user_id}/read`、`GET /messages/unread_count`；另 `GET /users/{id}`（公开资料，**不含 email**）供会话页展示对话方头名。
-- **前端**：单一 `/ws/user` 共享连接（`useUserStream`）按事件 `type` 分发给通知（`useNotifications`）与私信（`useMessages`）；`MessagesView`（会话列表）、`MessageThreadView`（会话线程：气泡 + 发送 + 实时追加 + 进入即已读）；编辑器在场头像菜单与项目成员列表均可「发私信」。
+项目头像使用 `MediaStore` 的本地 Docker volume adapter。前端 canvas 1:1 裁剪，目标输出 256×256 WebP；服务端校验签名和可解码内容，并要求正方形、宽高各 `<=1024`、总像素 `<=1,048,576`、编码体积 `<=512KB`。公开项目头像公开读；私有项目头像鉴权；项目 DB purge 提交后按 purge job payload 幂等清理媒体。
 
-## 4. 数据模型（ER 摘要）
+### 3.5 上传、完整替换与文件历史
 
+最终 UI 上传原始 JSON 文件/文件夹，不粘贴 JSON，浏览器不解析内容。上传限制来自 `UploadConfigDto`，不内置浏览器并发常量。
+
+```text
+create logical batch/files
+ → 为每个 file 创建 byte-zero attempt
+ → PUT 原始流到 upload temp volume（V1 无 Range/offset resume）
+ → complete batch
+ → durable job 逐文件流式解析到事务临时表
+ → 重复 key/结构校验
+ → 集合 SQL 原子 replacement
+ → effective stats + allowlisted change set + redacted audit
+ → 成功立即清理 raw temp；其它 temp 由 durable cleanup 清理
 ```
+
+retry 在同一 logical batch file 下创建新 attempt，并保留旧 attempt/error；cancel 先进入 `cancelling`，取消 queued/temp items，已开始的单文件事务允许原子完成或回滚，最后进入 `cancelled`。未完成/abandoned batch 默认 24h 过期。精确状态见总纲 §5.1。
+
+同路径重传是完整 replacement：缺失 key 形成独立 entry tombstone；旧译文/locked/hidden/history 保留；源文变化重置未翻译；上传 translation/state 只 seed 全新 key。file/folder restore 不清除 entry tombstone。
+
+这些 transition 由 `prts-core` typed plans 决定；prts-db 执行计划，API/worker 仅编排。SQL 不重新定义 translation preserve、reset、tombstone、restore/rollback 真值。
+
+上传 `original` JSON keys 在解析阶段 canonicalize；invalid、规范化后重复或不属于项目 source set 会拒绝该文件。文件历史只保存 allowlisted change set，不存 raw upload 或 context。`files/folders.deletion_change_set_id -> file_change_sets(id)` 使用 RESTRICT/NO ACTION，`file_change_sets.file_id/folder_id` 可空且 ON DELETE SET NULL。30 天内 restore 后 change set 保留为普通历史；到期 purge 按 entries/files/folders 叶到根→显式 delete items→delete change set 顺序移除 restoration payload，之后 rollback/restore 不可能，只剩无恢复正文的 audit metadata。
+
+### 3.6 混合搜索（P4 扩展）
+
+搜索列与索引使用 `source_text`、`source_tsv`、`translation_tsv`、trgm GIN 与 vector HNSW；foundation release 后所有触发器/函数只读取 `primary_source_lang`。
+
+`POST /projects/{id}/search` 的 `scope` 是拒绝未知字段、以 `type` 为 discriminator 的 tagged union：`all`、`path {path:string}`、`file {file_id:i64}`、`current_file {file_id:i64}`、`current_task {task_id:i64}`。file/task 沿用数据库 BIGINT，无 UUID migration；`{type:"all",file_id:...}` 必须拒绝。route 验证引用资源属于 URL project 且 caller 可见，并排除 deleted file/folder/task。旧 GET 只把 i64 `file_id` 映射为 `file`，没有时映射为 `all`，绝不猜 current context。完整 DTO/examples/tests 见总纲 §8.2。
+
+path resolver 精确区分 file 与 folder；folder 仅包含 segment-boundary descendants，禁止 naive prefix。默认稳定 keyset 为 `(rrf_score DESC, entry_id ASC)`；opaque v1 cursor 绑定 URL project_id、query/filter/scope fingerprint 与最后 score/id，错误、跨项目或跨查询 cursor 400。limit 默认 50、最大 100，响应返回 `next_after`。
+
+```text
+query + AND conditions + tagged scope + states + include_hidden + vector(false)
+ → project/resource visibility + lexical state
+ → FTS | trgm | optional vector
+ → RRF
+ → effective-visible/scope/condition 一致过滤
+ → keyset/bounded result
+```
+
+lexical ready 后立即恢复 FTS/trgm；embedding degraded/failed 只关闭 vector 并以 trgm 提供 TM。GET 与 POST 复用同一 service/SQL。
+
+### 3.7 实时编辑与游客只读
+
+```text
+登录成员进入 active file → WS file room → presence/editing
+ → 保存携带 expected version
+ → 命中：translation/state/version + entry_version + stats + redacted audit
+ → 冲突：409 最新版本，前端合并
+```
+
+locked 修改和“强制保存”由 capability 控制；强制保存只越过 presence 提示，仍校验 version。右下只有状态下拉 + 一个智能按钮，真值表以总纲 §8.1 为准。公开游客只用只读 REST，不建立可写 presence 或 mutation/协作动作。
+
+### 3.8 任务与术语
+
+任务加入 active file 时快照 effective-visible+untranslated entry IDs。有效分母动态使用 effective-visible；文件/文件夹删除使 exposure 离开，符合 deletion change-set 的 restore 后返回。`current_task` 搜索使用 task 当前 active files，而不是 snapshot 子集。
+
+术语保存任意合法 canonical source_lang/source_text/translation/notes/POS/archived，不要求 source_lang 属于项目 source set；active 术语必须精确匹配当前 primary，非主源 active 请求稳定拒绝，legacy old-primary 保持 archived/migration-ready。CSV/JSON 先 preview 后 NULL-safe upsert；preview token 至少 128-bit entropy、15 分钟 TTL，绑定 actor/project/import kind/content digest，confirm 原子一次性消费并重验权限。编辑器建议只改本地 draft。
+
+### 3.9 通知与私信
+
+通知使用 `notifications(user_id,type,payload,read_at,created_at)` 与 `/ws/user`；列表键集分页。poke 仅项目成员间，文本上限 140。
+
+私信使用 `messages(sender_id,recipient_id,content,read_at,created_at)`；双方须共享至少一个项目，内容 `<=2000`，仅收发双方可见。通知与私信复用用户 WS，并按 event type 分发。
+
+### 3.10 24 小时项目删除
+
+删除对话框先展示后果/24h/只读并要求显式继续，再要求完整 slug 精确匹配，之后才向服务端请求数学 challenge。challenge 仍由后端 owner-only 校验，绑定 user+project、短 TTL、一次性消费；正确答案返回 202 并安排 purge。`projects.deletion_job_id` 为可空非级联关系。
+
+purge 到期后先在数据库事务中锁 job/project、写 audit metadata、detach/cancel 其它 jobs，再对每棵文件树执行 entries/files/folders 叶到根业务行清理，随后显式删除全部 project-scoped file_change_items/change_sets、tasks/terms/memberships/其它关系与 project，并持久化 `external_cleanup_pending` stage；不得依赖 project cascade 穿过 RESTRICT FK。purge job 以 `project_id=NULL` 存活。提交后按 immutable payload 删除 media/temp，成功后标 job succeeded。外部清理失败只重试同一 job 的 external-cleanup stage，绝不恢复 DB project。精确顺序见总纲 §9.3。
+
+## 4. 数据模型摘要
+
+```text
 user 1─* external_account
 user 1─* api_key
-user *─* project   (membership: role=owner|manager|reviewer|translator)
-user 1─* platform_role (super_admin|admin|maintainer)
+user *─* project (membership: owner|manager|reviewer|translator)
+project.owner_id = 唯一拥有者
 
-project 1─* folder (parent_id 自引用树)
-project 1─* file
-folder  1─* file
-file    1─* entry
-entry   1─* entry_version
+project 1─* folder 1─* file 1─* entry 1─* entry_version
+folder/file -- deleted_at + deletion_change_set_id
+project 1─1 project_stats
+file    1─1 file_stats
 
-audit_log  (actor_id, action, target, payload, created_at)  -- 追加式
-setting    (分类的平台运行时配置：SMTP/注册/OAuth 模式/Embedding…)
+project 1─* task *─* file
+task_file 1─* task_baseline_entry
+
+project 1─* term *─0..1 pos_preset
+
+upload_batch 1─* upload_batch_file 1─* upload_file_attempt
+upload_batch_file → reusable processing job
+file_change_set 1─* file_change_item
+
+job        -- nullable project_id, durable state/stage/progress/retry/lease/payload snapshot
+audit_log  -- append-only redacted allowlisted event
+setting    -- runtime non-secret configuration
 ```
 
-`entry`：`key`、`original`(JSONB `{bcp47:text}`)、`context`、`translation`、`state`(枚举)、`locked`、`hidden`、`version`。
+`entry` 不含 context；entry history payload 只允许总纲 §5.3 列出的字段。`projects.owner_id` 是 owner 真源；CP 使用 `users.cp_tenths/memberships.cp_tenths BIGINT`（一单位 0.1 CP）为未来计分准备，本轮不评分且不引入 decimal 依赖。
 
-## 5. 性能要点（20w+ 词条）
+## 5. 权限与能力
 
-- 列表：键集分页 `WHERE (file_id,id) > (:f,:cursor) ORDER BY id LIMIT n`。
-- 索引：`entry(file_id,state)`、`entry(key)`、`tsvector` GIN、`pg_trgm` GIN、`pgvector` HNSW/IVFFlat。
-- 计数：状态计数物化于 `file.stats` / `project`，增量维护，避免实时 `COUNT(*)`。
-- 写放大：`audit_log` 按月分区或队列批写。
+- owner 授 manager/reviewer/translator；manager 授 reviewer/translator；任何 API 不授 owner，本轮不转让 owner。
+- 主源变化与项目删除只认 owner_id，平台管理员不能替代。
+- 任务 owner/manager 写；术语 owner/manager/reviewer 写；历史成员读、owner/manager 回滚；hidden overlay owner/manager。
+- 平台用户管理严格按秩；API 返回 capabilities，前端不自行推导。
 
-## 6. 配置与密钥
+## 6. 性能要点（20 万+ 词条）
 
-- 启动期配置（连接串、JWT 密钥、OAuth secret、Qwen key）→ **环境变量 / `.env`（不入库、不进前端）**。
-- 运行时可调配置（SMTP、是否邮箱验证、注册开关、OAuth 模式、Embedding 开关）→ `setting` 表，管理后台维护。
+- 列表、terms、tasks、admin users 与清理扫描使用 keyset/cursor，禁止大 OFFSET。
+- project/file 五状态与 visible total 物化；正常详情不实时 COUNT/GROUP BY entries。
+- 上传流式解析、每文件原子、batch 部分成功/cancel；不在浏览器或后端整文件内存解析。
+- lexical backfill 按 entry id 批次断点；搜索使用 GIN/HNSW 与有界 RRF。
+- audit 可按时间分区但保持追加式；job worker 使用租约与 `SKIP LOCKED`。
 
-## 7. 部署拓扑
+## 7. 配置、安全与 UI
 
+- DB/Redis/JWT/OAuth/Qwen 等密钥只经环境变量，不入库、不下发前端。
+- 运行时非密钥设置包括搜索、上传四项限制、batch 默认 24h 过期、文件默认 30 天保留、删除题型等。
+- sqlx 参数化、HTTPS、最小权限、输入/签名/大小校验、稳定错误码和 fail-closed audit。
+- 交互 UI 仅 Vue 3 + Quasar，浅/深主题、MDI、方角/2–4px；中文使用 Noto Sans SC 同类 sans；前端 zh-CN/en，后端按 Accept-Language 本地化。
+
+## 8. 部署
+
+```text
+nginx ── frontend(Quasar 静态)
+      └─ /api,/ws → backend(axum + workers)
+backend ─ PostgreSQL 16(pg_trgm+pgvector+zhparser)
+        ├ Redis(session/refresh/limit/ws/challenge)
+        └ media/upload-temp Docker volumes
 ```
-nginx ──┬── frontend(静态, Quasar 构建)
-        └── /api, /ws → backend(axum)
-backend ── PostgreSQL(pg_trgm+pgvector)
-        └── Redis(session/refresh/限流/WS pubsub)
-镜像：GHCR；编排：deploy/docker-compose.yml
-```
 
-## 8. 测试策略
+foundation release 必须把 `0008+0009`、language repair、primary search trigger/backfill 和 worker readiness 作为一个部署门。镜像发布到 GHCR，docker-compose 编排；media 与 upload temp 使用独立持久卷。
 
-- `prts-core` 纯逻辑单测（状态机、权限判定、CP 计分、RRF）。
-- API 集成测试（鉴权、权限、上传覆盖、搜索）。
-- 性能验证：20w 词条的上传与分页/搜索基准。
-- verify 脚本随阶段交付。
+## 9. 测试与交付
+
+- `prts-core`：状态机、权限/能力、主源 gate/state、任务 snapshot、术语、数学题纯逻辑。
+- API/db：audit fail-closed/redaction、job 恢复/FK、effective visibility、upload cancel/expiry/attempt、history retention、tagged search scope、purge 顺序。
+- 前端：智能按钮、IME、capabilities、Markdown 净化、游客只读、上传取消/重试、字体/主题/i18n。
+- 性能：20 万词条 stats reconciliation、lexical backfill、100MB 单文件、500-file batch、五种 scope 和 task progress。
+- 每阶段测试 → verify → Conventional Commit → 推 master → 等待 CI → 推 GHCR；替代能力稳定前保留兼容入口。

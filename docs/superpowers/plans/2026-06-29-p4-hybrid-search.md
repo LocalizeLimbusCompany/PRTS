@@ -8,7 +8,9 @@
 
 **Tech Stack:** Rust (axum, sqlx, tokio, reqwest), PostgreSQL 16 (pgvector + zhparser), Vue 3 + Quasar + Pinia, Docker/GHCR.
 
-**Authoritative spec:** [`docs/superpowers/specs/2026-06-29-p4-hybrid-search-design.md`](../specs/2026-06-29-p4-hybrid-search-design.md). Read it before starting.
+**Historical status:** This plan records the already-applied P4/`0004_search.sql` implementation. Do not execute its `source_langs[1]` trigger/backfill snippets as current design; [`2026-07-10-project-workspace-overhaul-design.md`](../specs/2026-07-10-project-workspace-overhaul-design.md) and `0009_primary_source_search.sql` supersede them with `primary_source_lang` and the foundation release gate.
+
+**Historical spec:** [`docs/superpowers/specs/2026-06-29-p4-hybrid-search-design.md`](../specs/2026-06-29-p4-hybrid-search-design.md).
 
 ---
 
@@ -1583,7 +1585,7 @@ git push
 - §12 tests → unit (Tasks 1, 6, 12, 13); db (Tasks 5, 8, 10, 15, 16, 19, 20); perf (Task 23).
 - §13 files → covered across tasks.
 
-**Placeholder scan** — no TBD/"handle edge cases"/"similar to". Where existing symbol names are uncertain (admin guard extractor, `load_access`, `primary_langs`, `parse_states`), tasks explicitly say to find the real name in the named file and reuse/extract it — these are lookups, not placeholders.
+**Placeholder scan** — no unresolved markers or generic “handle edge cases”/“similar to” steps. Where historical symbol names were uncertain (admin guard extractor, `load_access`, `primary_langs`, `parse_states`), tasks explicitly required locating and reusing the real symbol in the named file.
 
 **Type consistency** — `SearchConfig` (Task 13) is reused verbatim in Tasks 14/15/17; `QwenProvider::embed_batch(base_url, model, texts)` signature consistent across Tasks 12/16/17; `SuggestionRow`→`SuggestionDto` field names align (Tasks 19/20); `vector_ids: Option<Vec<i64>>` slot defined in Task 9, filled in Task 16. `Entry.source_text` field dependency flagged in Task 20.
 

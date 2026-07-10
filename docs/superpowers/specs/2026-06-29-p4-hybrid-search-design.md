@@ -5,9 +5,11 @@
 | 阶段 | P4（搜索）+ 翻译建议（TM），同一 spec |
 | 基线 | `master` @ `a4ec807` |
 | 日期 | 2026-06-29 · 作者 ZengXiaoPi · 设计协作 Claude |
-| 前置阅读 | [`CLAUDE.md`](../../../CLAUDE.md)、蓝图 [`plan/26-06-28-init_system.md`](../../../plan/26-06-28-init_system.md) §12，接力 [`plan/26-06-29-next_steps.md`](../../../plan/26-06-29-next_steps.md) §2 |
+| 前置阅读 | [`CLAUDE.md`](../../../CLAUDE.md)、蓝图 [`plan/26-06-28-init_system.md`](../../../plan/26-06-28-init_system.md) §12；原接力文件未随当前仓库保留 |
 
-> 设计约束以蓝图为准。本 spec 已与作者逐条确认（见「决策摘要」）。实现阶段如再遇不确定 → 先问作者（蓝图 §8）。
+> **历史实现基线：** 本文件描述已落地 `0004_search.sql` 的 P4 设计，不是当前主源生命周期规范。其中 `source_langs[1]` 只说明旧迁移/旧触发器行为，已由 [`2026-07-10 规范总纲`](./2026-07-10-project-workspace-overhaul-design.md) 与计划中的 `0009_primary_source_search.sql` 明确取代；不得把该表达复制到新运行时代码。
+>
+> 其余设计约束以蓝图为准。实现阶段如再遇不确定 → 先问作者。
 
 ---
 

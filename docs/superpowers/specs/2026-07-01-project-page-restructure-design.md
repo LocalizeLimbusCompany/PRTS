@@ -1,103 +1,87 @@
-# 项目页重构 · 工作流 A（骨架 + 信息 + 文件）— 设计 Spec
+# 项目页重构 · 工作流 A（骨架 + 信息 + 文件）— 校准版设计 Spec
 
 | 项 | 值 |
 | --- | --- |
-| 阶段 | 大改造 6 工作流之 **A**（地基）；后续 B 上传/文件管理 · C 任务 · D 术语 · E 编辑器 · F 平台杂项 |
-| 基线 | `master` @ `6b19657` |
-| 日期 | 2026-07-01 · 作者 ZengXiaoPi · 设计协作 Claude |
-| 前置 | CLAUDE.md、`plan/26-06-28-init_system.md`、`docs/architecture.md` |
+| 历史阶段 | 2026-07-01 大改造工作流 A |
+| 校准日期 | 2026-07-10 |
+| 规范总纲 | [`2026-07-10-project-workspace-overhaul-design.md`](./2026-07-10-project-workspace-overhaul-design.md) |
 
-> 已与作者确认（含可视化 mockup 逐张过）：**骨架方案 A**（左侧栏含身份，默认落地「信息」）；分区顺序 `信息·文件·任务·术语·排行榜·下载·管理`；**编辑器不占分区**，从文件页点文件进入；**信息页只读**，一切编辑集中「管理→项目设置」；**主源语言**限源语言之一（新字段 `primary_source_lang`）；**头像上传到磁盘存储**（`MediaStore` 可插拔，本地磁盘 + Docker 卷）；**文件浏览器方案 1**（面包屑单栏），状态筛选按「是否仍含某状态词条」，排序 名称/进度/词条数/最近更新；**slug 可编辑**（不在 URL 内，仅展示 + zip 文件名，校验唯一即可）。样式：**少用圆角**、词条状态**用全称**（未翻译/已翻译/有疑问/已检查/已审核）、计数用「万」。
-
----
+> 本文件保留 2026-07-01 的工作流拆分与交互背景。精确主源状态矩阵、发布门、有效可见性和统计真值只在规范总纲 §3–§4 定义；本文不构成第二份生命周期规范。
 
 ## 1. 范围
 
-**做**：把当前单页 `ProjectDetailView` 拆成「侧栏骨架 + 分区」的项目工作区外壳，落地其中 4 个分区（信息 / 文件 / 下载 / 管理→项目设置）+ 2 个占位（任务 / 排行榜，术语分区亦占位）。新增 2 个项目字段（主源语言、头像）与其所需的媒体存储、每文件进度数据。另附带全局顶栏**界面语言切换器**（与 A 的 i18n/外壳同批做）。
+工作流 A 建立项目工作区外壳、只读信息页、文件浏览、下载和项目设置，并提供后续 B–F 使用的路由、文件浏览器、能力 DTO、物化统计、主源语言与媒体接口。
 
-**不做（属后续工作流，本阶段仅占位或不动）**：任务功能实现（C）、术语功能实现（D）、管理→成员管理 / 文件管理（B/E）、排行榜真实榜单（P6）、编辑器改造与搜索重构（E）、删除词条 context（E）、平台用户管理与删项目数学门（F）、字体回退修复（F）。**编辑器 `/editor` 本阶段不改**，仅调整「从文件页进入」的入口与传参。
+固定分区顺序为 `信息·文件·任务·术语·排行榜·下载·管理`。任务与术语在 C/D 完成后再开放，开放时必须是可用成品；排行榜是本轮唯一明确保留的功能占位。编辑器保持独立全屏路由。
 
-## 2. 决策要点（已确认，逐条落地）
+旧项目页的上传与其它已存在能力在替代入口就绪前继续可用，不能因拆 Shell 而回退。
 
-1. 外壳 = 左侧栏（顶部小头像＋项目名＋语言对）+ 右侧分区内容区；默认 `信息`。
-2. 分区固定 7 项，顺序 `信息·文件·任务·术语·排行榜·下载·管理`；`任务/术语/排行榜` 渲染占位（「该功能在后续阶段实现」）。
-3. 信息页**只读**；无「编辑信息」按钮。
-4. 编辑器从**文件页点文件**进入（`/projects/:id/editor?file=<fileId>`）；侧栏不放翻译直达。
-5. `主源语言 primary_source_lang`：限 `source_langs` 之一；`null` 时隐含取 `source_langs[0]`（与现搜索一致）。
-6. 头像：上传**磁盘存储**，`MediaStore` trait（本地磁盘实现，配置化 media 根目录 + Docker 卷），日后可换对象存储；未设时前端按项目名首字生成默认块。
-7. 文件浏览器**方案 1**：面包屑 + 当前目录单栏列表；搜索文件名/目录名（前端过滤，命中即拍平显示完整路径）；排序 名称/进度/词条数/最近更新；状态筛选「含某状态词条」= 全部 / 含未翻译 / 含有疑问 / 已译完 / 已审完；每文件与每文件夹显示进度；点文件进编辑器。维护操作（建夹/上传/移动/删除/历史）**不在此**，留「管理」。
-8. slug 可编辑，校验唯一。
-9. 样式令牌：小圆角；状态标签全称；数字用「万」；进度定义沿用 `进度 =（总数 − 未翻译）/ 总数`，分段条按 5 状态。
+## 2. 已确认决策
 
-## 3. 前端设计
+1. `/projects/:id` 默认进入 `info`；信息页只读，编辑集中在 `manage`。
+2. 编辑器从文件或任务文件进入 `/projects/:id/editor?file=<id>`，不嵌套在 Shell。
+3. slug 可编辑、保持唯一，不进入项目 URL；下载文件名使用 slug。
+4. 项目简介保存 Markdown 源文并通过共享净化组件展示。
+5. 交互 UI 只用 Vue 3 + Quasar，保留浅/深主题，图标统一 MDI，普通控件为方角或 2–4px 小圆角。
+6. 中文 UI 只使用 Noto Sans SC 同类无衬线字体；JetBrains Mono 仅用于代码、键和数字，并以 CJK sans 承接中文；不使用宋体或其它衬线 UI。
+7. 前端完整 zh-CN/en，API 请求携带当前 locale 的 `Accept-Language`。
+8. 公共项目游客可浏览文件并进入只读编辑器；游客不能保存、改状态或发起协作动作。私有项目限获授权主体。
 
-**路由（hash，数字 id 不变）**：`ProjectShell` 承载嵌套子路由——
-- `/projects/:id(\d+)` → **302 到 `…/info`**（兼容旧书签；旧 `ProjectDetailView` 退役后此路径仍可达）
-- 子路由：`info` `files` `tasks` `glossary` `leaderboard` `download` `manage`（`<router-view>` 挂在 Shell 内容区）
-- `/projects/:id(\d+)/editor` 保持独立**全屏**路由（不套 Shell），由文件页跳入并带 `?file=`。
+## 3. 主源语言
 
-**组件**
-- `ProjectShell.vue`：拉取 project 详情（复用 `GET /projects/{id}`）；侧栏身份 + 导航；响应式——窄屏侧栏折叠为顶部下拉/抽屉。分区高亮由当前子路由决定。
-- `ProjectInfoView.vue`（只读）：头像（`GET …/avatar` 失败→默认块）+ 名称 + 公开/私有；语言行（源语言 chips，主源标 `主源` → 目标）；简介；总进度（分段条 + 全称图例 + 「万」计数 + 「进度 X%」头条）；统计卡（文件/词条/成员；术语数待 D，本阶段不显示）。
-- `ProjectFilesView.vue`（方案 1）：顶部搜索框 + 排序下拉 + 状态筛选下拉；面包屑；当前目录行列表（文件夹在前，含聚合进度；文件含进度条 + 词条数）；点文件夹下钻/面包屑返回；**搜索态**拍平全树匹配项显示完整路径。全部前端过滤/排序，数据来自扩展后的 tree 接口。空态/加载态。
-- `ProjectDownloadView.vue`：迁移现有导出（`GET …/export` → `{slug}.zip`），保留下载按钮 + 说明。
-- `ProjectLeaderboardView.vue` / `ProjectTasksView.vue` / `ProjectGlossaryView.vue`：占位组件（统一「后续阶段实现」空态）。
-- `ProjectManageView.vue`：子标签 `项目设置`（本阶段）·`成员管理`·`文件管理`（后二者占位）。**项目设置表单**：头像（上传/移除 + 提示 ≤512KB、PNG/JPG/WebP、方形建议、客户端预压缩）、名称、slug（可编辑，失焦查重）、简介、可见性（公开/私有）、源语言（多 chip 增删，BCP-47）、主源语言（下拉，选项 = 当前源语言）、目标语言（单，BCP-47）、保存/重置。仅 `project.manage` 可见可用。
-- 现 `ProjectDetailView.vue` 拆解退役：文件树逻辑迁 `ProjectFilesView`，进度/统计迁 `ProjectInfoView`，导出迁 `ProjectDownloadView`，删除/上传/成员相关入口迁「管理」（占位挂钩，B/E 实现）。
+- ready 项目的 `source_langs`、`primary_source_lang` 与 `target_lang` 先经共享 `language-tags` canonicalizer：language 小写、script Titlecase、region 大写，variant/extension/private-use 按 parser 规范序列化；无效 tag 与规范化后重复拒绝。primary 是非空 canonical BCP-47 且必须属于最终 `source_langs`。单源创建自动选择唯一值；多源创建必须显式提供。legacy unresolved 行只允许在 repair state 条件约束下暂存，不能进入普通管理/search。
+- 不存在 `null → source_langs[0]` 的永久回退规则。旧项目只在迁移时以当前首个源语言回填一次。
+- `0008_workspace_meta_stats.sql` 与 `0009_primary_source_search.sql` 必须随同一 foundation release 部署；legacy project arrays/target/primary、entry original keys、term source_lang 与用户语言偏好先由 durable batched repair canonicalize。冲突/无效数据进入 `needs_language_resolution`，search 与普通语言 edits 保持 gated；owner 用专用 UI/API 解决，platform admin 只有无正文诊断/retry。trigger/function、repair-ready backfill/reconciliation 与 lexical worker readiness 完成前，不开放非首主源或更新路由。任何独立发布都不得让 API 使用新字段而 search 仍读取 `source_langs[1]`。
+- 已有项目只有 `projects.owner_id` 能更改主源；平台管理员不能代替。相同值直接成功，不触发 7 天冷却或新 job。
+- 真正变化从请求被接受时开始 7 天冷却；下一次变化还要求没有 active/unresolved failed lexical 或 embedding job。失败只重试原阶段 job。
+- 移除当前主源时必须在同一保存提交替代主源。已有词条的项目不得修改目标语言。
+- 接受变化后立即切换主源并暂停 search/TM。独立 lexical job 完成后恢复 FTS/trgm，再创建/运行 embedding job；provider 禁用/未配置标 degraded/skipped，不阻塞词法。配置了 provider 的失败有界退避，耗尽后手动重试同一 embedding job。
+- 项目/job API 按规范总纲 §4.3 返回两个阶段各自的状态、job id、进度、重试和错误/降级原因。D 落地后，同一事务还会归档旧主源术语并激活新主源术语。
 
-**附带 · 界面语言切换器（全局顶栏）**：`App.vue` 顶栏右侧加 🌐 下拉（变体 2，可扩展多语言），切换即时设 `i18n.global.locale` + 存 `localStorage`（键 `prts.locale`；初始化读取，缺省跟随浏览器→回落 zh-CN）；API 客户端按当前 locale 带 `Accept-Language`，后端本地化消息同步。
+## 4. 头像、文件浏览与统计
 
-**i18n**：新增分区/字段/状态筛选/排序文案，zh-CN + en 双语。**样式**：抽 `--radius`（小）与状态色令牌到 `theme.scss`，状态标签常量统一全称。
+### 4.1 头像
 
-## 4. 后端设计
+- 使用 `MediaStore` + 本地 Docker volume；默认 key 为 `projects/{id}/avatar.webp`。
+- 前端 Quasar 对话框配合原生 canvas 做 1:1 裁剪，目标输出 256×256 WebP。
+- 服务端校验真实签名与可解码内容，要求正方形、宽高各 `<=1024`、总像素 `<=1,048,576`、编码体积 `<=512KB`，不信任 MIME/扩展名。
+- 公开项目头像公开读取；私有项目头像遵循项目可见性与认证，前端以鉴权 blob 展示。
+- 写入、替换和移除都写追加式审计；项目清除时清理媒体。
 
-**迁移 `0007_project_meta.sql`**
-```
-ALTER TABLE projects
-  ADD COLUMN primary_source_lang TEXT,               -- 须 ∈ source_langs；null=隐含 source_langs[0]
-  ADD COLUMN avatar_path         TEXT,               -- MediaStore 相对键，含扩展名；null=未设
-  ADD COLUMN avatar_updated_at   TIMESTAMPTZ;         -- 作 ETag / 缓存击穿
-```
-（`primary_source_lang` 的「∈ source_langs」在应用层校验：数组成员随 source_langs 变动，跨列 CHECK 维护成本高。）
+### 4.2 文件浏览器
 
-**每文件进度**：扩展 `GET /projects/{id}/tree`，文件节点新增 `state_counts: {state→count}`（一次 `SELECT file_id, state, COUNT(*) FROM entries WHERE project_id=$1 GROUP BY file_id, state`，与项目级 state_counts 口径一致——计全部词条）。文件夹聚合在前端做。索引：现有 `entries(file_id)` 足够；必要时加 `entries(project_id, file_id, state)`。20w 量级单次分组扫描可接受，无需实时 COUNT 热路径。
+- 面包屑 + 当前目录单栏；文件夹在前；支持名称搜索、名称/进度/词条数/最近时间排序和状态筛选。
+- 文件夹统计由前端聚合后代文件物化统计。文件夹最近时间为后代文件 `updated_at` 最大值；空文件夹使用 `created_at`。
+- 点文件进入编辑器；维护操作由 B 在管理区加入。
 
-**媒体存储**：`MediaStore` trait（`put/get/delete(key)`）+ `LocalDiskStore`（根目录来自 `prts-common` 配置 `PRTS__MEDIA__DIR`，默认 `./data/media`）。放 `prts-api::media` 模块（暂不新起 crate；日后接对象存储再提升）。avatar key = `projects/{id}/avatar.<ext>`。
+### 4.3 统计口径
 
-**端点（`prts-api`，全部进 utoipa/Swagger）**
-- `POST /projects/{id}/avatar`（`project.manage`；multipart 单图；校验 MIME ∈ {png,jpg,webp} 且 ≤512KB；写 MediaStore + 置 `avatar_path/avatar_updated_at`）。
-- `DELETE /projects/{id}/avatar`（`project.manage`；删文件 + 清列）。
-- `GET /projects/{id}/avatar`（**公开读**：流式返回图 + `Cache-Control` + `ETag=avatar_updated_at`；未设→404，前端回落默认块。取公开是因 `<img>` 不便带 JWT，且头像本身低敏；若作者要私有项目头像也鉴权，则前端改带鉴权 blob 拉取——见 §9）。
-- 扩展 `PUT /projects/{id}`：接受 `primary_source_lang`（校验 ∈ 最终 `source_langs`，否则 400）与 `slug`（变更时查重，冲突 409）。
-- axum 启用 `multipart` feature（无重依赖）；上传大小限流。
-- **跨域/部署**：`<img>` 跨源加载头像无需 CORS，但 nginx 须正确反代该端点并回传 `Content-Type`/缓存头；若日后前端改 `fetch` blob 则需 `Access-Control-Allow-Origin`。P0 现放开 CORS，P7 收紧时白名单勿漏头像端点。
+- `project_stats` 与 `file_stats` 按规范总纲 §3 的 `effective_visible` 物化可见总数和五状态计数。详情和 tree 正常读路径禁止实时扫描 entries 做 `COUNT(*)`/`GROUP BY`。
+- 普通统计同时排除 hidden、entry tombstone、deleted file 和 deleted ancestor folder。`include_hidden` 不穿透删除；file/folder restore 也不清除 reupload tombstone。
+- 总数为零显示“—”。进度仍定义为 `(visible_total - visible_untranslated) / visible_total`，状态分段使用五种完整状态名。
 
-**审计**：`audit_log` 属 P5 尚未落地——本阶段编辑/上传处**预留** audit 调用点（TODO 注释），P5 接入时补。
+## 5. API 与前端边界
 
-## 5. 权限
+### 后端
 
-- 分区可见性：信息/文件/下载/排行榜 = 任何可读该项目者（私有项目限成员）；管理 = `project.manage`（拥有者/管理）。
-- 头像写、项目设置写 = `project.manage`；头像读随项目可见性。
-- 沿用现 `crate::auth::project::load` + 权限节点，不新增节点。
+- 项目 DTO 增加 `primary_source_lang`、搜索重建状态、头像元数据、物化统计和 `capabilities`。
+- `POST/DELETE/GET /projects/{id}/avatar` 全部进入 Swagger。
+- 项目更新在事务内校验 slug、canonical 语言、owner-only 主源变更、目标语言限制并写审计；`needs_language_resolution` 只允许 owner resolution endpoint，不允许普通 update 旁路。
+- `GET /projects/{id}/tree` 返回文件物化统计和时间，不计算文件夹聚合。
+- 所有能力由服务端计算；`change_primary_source` 只给 owner_id，`include_hidden` 只给 owner/manager。
 
-## 6. 性能
+### 前端
 
-- 每文件进度：单次 `GROUP BY file_id,state`，走索引；文件数级别结果（百级），前端聚合文件夹。
-- 文件浏览器搜索/排序/筛选**纯前端**（tree 一次性加载，百级文件可控）；不引入新分页。
-- 头像小图（≤512KB，客户端预压缩至 ≤256px），流式返回 + 缓存。
+- `ProjectShell.vue` 承载嵌套路由和项目上下文；窄屏使用 Quasar drawer/menu。
+- `ProjectInfoView.vue` 展示头像、语言、净化 Markdown、物化进度和统计。
+- `ProjectFilesView.vue` 使用共享 `ProjectFileBrowser`；`ProjectDownloadView.vue` 保持导出。
+- `ProjectManageView.vue` 编辑项目设置并展示 language repair/resolution、主源冷却/重建进度；owner resolution dialog 显式选择 canonical mapping/冲突值，控件只依据 capabilities 显隐或禁用。
+- locale 持久化到 `prts.locale`，初始化顺序为 localStorage → 浏览器 → zh-CN。
 
-## 7. 测试
+## 6. 验收
 
-- **单元**：slug 唯一校验；`primary_source_lang ∈ source_langs` 校验（含 source_langs 收缩使原主源失效的分支）；`LocalDiskStore` put/get/delete；每文件进度聚合函数；进度百分比与分段计算。
-- **db-test**：`PUT /projects` 带主源语言/改 slug（唯一冲突 409）；tree 返回 per-file `state_counts`；头像 POST→GET→DELETE 生命周期与权限（非 manage 403、私有项目非成员读 403/404）。
-- **前端**：CI build/lint；关键组件渲染与响应式退化（交 CI）。
-
-## 8. 涉及文件
-
-迁移 `0007_project_meta.sql`；`prts-common`（media 配置）、`prts-api`（`media` 模块、`routes/projects.rs` 头像三端点 + PUT 扩展、tree 扩展、`mod.rs`、Swagger）、`prts-db/projects.rs`（新列读写、slug 查重、per-file 进度查询）；`deploy/`（media 卷 + `.env.example` `PRTS__MEDIA__DIR`）；前端（`router` + 旧路由 302、`ProjectShell` + 6 分区视图、`ProjectDetailView` 退役拆解、`App.vue`（语言切换器）、`i18n/index.ts`（locale 持久化/初始化）、`api`（avatar/tree 类型 + `Accept-Language`）、`theme.scss` 圆角/状态令牌）；`docs/architecture.md`（补 §项目工作区）。
-
-## 9. 红线 / 未决
-
-- 密钥/媒体根仅经 env；上传严格校验类型与大小；sqlx 参数化；私有项目资源鉴权。
-- 不用大 OFFSET、不加实时 `COUNT(*)` 热路径；进度用一次性分组。
-- **已确认（原未决）**：media 根 `./data/media` + Docker 卷；头像**公开读、不鉴权**（注意跨域，见 §4）；`/projects/:id` **302→`…/info`** 兼容旧书签。实现中如遇其它细节不明再问作者（蓝图 §8）。
+- foundation 发布门、主源创建/更新、7 天冷却、lexical/embedding 分阶段重试、目标语言锁定均有单元与数据库测试。
+- 头像覆盖伪 MIME、错误尺寸、大小、公开/私有读取和替换删除生命周期。
+- 随机状态/hidden/deleted 变化后，物化统计等于离线校验值；项目详情 SQL 不以 entries 聚合为正常读取。
+- 路由、浅/深主题、MDI、字体、zh-CN/en、Markdown 净化、游客只读与 capability 显隐有前端测试。
+- 阶段结束执行测试、verify、Conventional Commit、推 master、等待 CI 与 GHCR。
