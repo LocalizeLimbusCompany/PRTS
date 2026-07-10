@@ -36,15 +36,19 @@ jobs:
       - name: Start Postgres + Redis
         run: |
           docker run -d --name pg -p 5432:5432 \
-            -e POSTGRES_USER=prts -e POSTGRES_PASSWORD=prts -e POSTGRES_DB=prts_test \
+            -e POSTGRES_USER=prts_migrator -e POSTGRES_PASSWORD=migrator-ci \
+            -e POSTGRES_RUNTIME_USER=prts_runtime -e POSTGRES_RUNTIME_PASSWORD=runtime-ci \
+            -e POSTGRES_DB=prts_test \
             prts-postgres:ci
           docker run -d --name redis -p 6379:6379 redis:7-alpine
-          for i in $(seq 1 30); do docker exec pg pg_isready -U prts && break; sleep 2; done
-          docker exec pg pg_isready -U prts || { echo "Postgres not ready after 60s"; docker logs pg; exit 1; }
+          for i in $(seq 1 30); do docker exec pg pg_isready -U prts_migrator && break; sleep 2; done
+          docker exec pg pg_isready -U prts_migrator || { echo "Postgres not ready after 60s"; docker logs pg; exit 1; }
       - name: Integration tests (Postgres)
         run: cargo test -p prts-api --features db-tests
         env:
-          DATABASE_URL: postgres://prts:prts@localhost:5432/prts_test
+          MIGRATION_DATABASE_URL: postgres://prts_migrator:migrator-ci@localhost:5432/prts_test
+          DATABASE_URL: postgres://prts_runtime:runtime-ci@localhost:5432/prts_test
+          PRTS_TEST_RUNTIME_ROLE: prts_runtime
           PRTS__REDIS__URL: redis://localhost:6379
 
   frontend:

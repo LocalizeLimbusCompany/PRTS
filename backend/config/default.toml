@@ -12,8 +12,10 @@ host = "0.0.0.0"
 port = 3000
 
 [database]
-# 生产环境务必用 PRTS__DATABASE__URL 覆盖为真实连接串。
-url = "postgres://prts:prts@localhost:5432/prts"
+# 生产环境务必用 PRTS__DATABASE__URL 覆盖为 runtime 连接串。
+# migration owner URL 仅经 PRTS__DATABASE__MIGRATION_URL 注入 `prts-api migrate` 进程。
+url = "postgres://prts_runtime:prts_runtime@localhost:5432/prts"
+runtime_role = "prts_runtime"
 max_connections = 10
 
 [redis]

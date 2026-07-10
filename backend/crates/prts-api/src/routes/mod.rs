@@ -6,6 +6,7 @@ pub mod auth;
 pub mod entries;
 pub mod files;
 pub mod health;
+pub mod jobs;
 pub mod messages;
 pub mod meta;
 pub mod notifications;
@@ -87,6 +88,10 @@ fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
+        // 持久化任务进度与受控重试
+        .routes(routes!(jobs::get_job))
+        .routes(routes!(jobs::retry_job))
+        .routes(routes!(jobs::list_project_jobs))
         // 文件树
         .routes(routes!(files::get_tree))
         .routes(routes!(files::delete_file))
@@ -209,5 +214,33 @@ mod tests {
     #[test]
     fn full_router_assembles_without_route_conflicts() {
         let _ = api_router().split_for_parts();
+    }
+
+    #[test]
+    fn jobs_openapi_errors_share_code_message_schema() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        for (path, method, statuses) in [
+            ("/jobs/{id}", "get", &["401", "403", "404"][..]),
+            (
+                "/projects/{project_id}/jobs",
+                "get",
+                &["400", "401", "403", "404"][..],
+            ),
+            (
+                "/jobs/{id}/retry",
+                "post",
+                &["400", "401", "403", "404"][..],
+            ),
+        ] {
+            for status in statuses {
+                assert_eq!(
+                    document["paths"][path][method]["responses"][status]["content"]
+                        ["application/json"]["schema"]["$ref"],
+                    "#/components/schemas/ErrorResponse",
+                    "{method} {path} 的 {status} 应复用稳定错误 schema"
+                );
+            }
+        }
     }
 }

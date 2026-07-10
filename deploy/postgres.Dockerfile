@@ -5,6 +5,10 @@
 # GitHub 源码不含预生成的 configure，故需 autotools 引导。
 FROM pgvector/pgvector:pg16
 
+# 首次初始化时创建与 migration owner 分离的 runtime login role；密码仅来自环境变量。
+COPY deploy/postgres-init/10-runtime-role.sh /docker-entrypoint-initdb.d/10-runtime-role.sh
+RUN chmod 0755 /docker-entrypoint-initdb.d/10-runtime-role.sh
+
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \

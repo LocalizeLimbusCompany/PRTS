@@ -194,3 +194,44 @@ pub struct ConversationThread {
     /// 我方在该会话中的未读消息数。
     pub unread: i64,
 }
+
+/// 追加式审计行。IP 在查询时规范化为文本，避免向上层暴露数据库专用网络类型。
+#[derive(Debug, Clone, FromRow)]
+pub struct AuditLog {
+    pub id: i64,
+    pub actor_id: Option<i64>,
+    pub actor_kind: String,
+    pub action: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub project_id_snapshot: Option<i64>,
+    pub payload: serde_json::Value,
+    pub ip: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 持久化任务行。payload/result 只供受控 worker 使用，不直接序列化到 API。
+#[derive(Debug, Clone, FromRow)]
+pub struct Job {
+    pub id: i64,
+    pub kind: String,
+    pub project_id: Option<i64>,
+    pub state: String,
+    pub pause_reason: Option<String>,
+    pub stage: String,
+    pub payload: serde_json::Value,
+    pub result: Option<serde_json::Value>,
+    pub progress_current: i64,
+    pub progress_total: Option<i64>,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub run_after: DateTime<Utc>,
+    pub lease_until: Option<DateTime<Utc>>,
+    pub worker_id: Option<String>,
+    pub last_error_code: Option<String>,
+    pub last_error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}

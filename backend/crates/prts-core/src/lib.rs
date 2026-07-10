@@ -8,7 +8,9 @@
 //! - `locked` / `hidden` 是**正交标志位**（[`EntryFlags`]），独立于工作流。
 
 pub mod entry;
+pub mod jobs;
 pub mod permission;
 
 pub use entry::{EntryFlags, EntryState};
+pub use jobs::JobState;
 pub use permission::{PlatformRole, ProjectRole};

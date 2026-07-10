@@ -40,44 +40,53 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let token = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .ok_or(Error::Unauthorized)?;
-
-        let user = if token.starts_with(prts_auth::token::API_KEY_PREFIX) {
-            let hash = prts_auth::token::sha256_hex(token);
-            let user = prts_db::api_keys::find_user_by_key_hash(&state.db, &hash)
-                .await
-                .map_err(|e| Error::internal(format!("db error: {e}")))?
+        let locale = parts
+            .extensions
+            .get::<prts_common::i18n::Locale>()
+            .copied()
+            .unwrap_or_default();
+        let result: Result<Self, ApiError> = async {
+            let token = parts
+                .headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|h| h.strip_prefix("Bearer "))
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
                 .ok_or(Error::Unauthorized)?;
-            // 记录最近使用（忽略失败）。
-            let _ = prts_db::api_keys::touch_last_used(&state.db, &hash).await;
-            user
-        } else {
-            let claims = prts_auth::jwt::decode(token, state.jwt_secret())
-                .map_err(|_| Error::Unauthorized)?;
-            if !claims.is_valid_at(chrono::Utc::now().timestamp()) {
-                return Err(Error::Unauthorized.into());
+
+            let user = if token.starts_with(prts_auth::token::API_KEY_PREFIX) {
+                let hash = prts_auth::token::sha256_hex(token);
+                let user = prts_db::api_keys::find_user_by_key_hash(&state.db, &hash)
+                    .await
+                    .map_err(|e| Error::internal(format!("db error: {e}")))?
+                    .ok_or(Error::Unauthorized)?;
+                // 记录最近使用（忽略失败）。
+                let _ = prts_db::api_keys::touch_last_used(&state.db, &hash).await;
+                user
+            } else {
+                let claims = prts_auth::jwt::decode(token, state.jwt_secret())
+                    .map_err(|_| Error::Unauthorized)?;
+                if !claims.is_valid_at(chrono::Utc::now().timestamp()) {
+                    return Err(Error::Unauthorized.into());
+                }
+                prts_db::users::find_by_id(&state.db, claims.sub)
+                    .await
+                    .map_err(|e| Error::internal(format!("db error: {e}")))?
+                    .ok_or(Error::Unauthorized)?
+            };
+
+            if user.status != "active" {
+                return Err(Error::Forbidden.into());
             }
-            prts_db::users::find_by_id(&state.db, claims.sub)
-                .await
-                .map_err(|e| Error::internal(format!("db error: {e}")))?
-                .ok_or(Error::Unauthorized)?
-        };
 
-        if user.status != "active" {
-            return Err(Error::Forbidden.into());
+            Ok(CurrentUser {
+                id: user.id,
+                platform_role: user.platform_role.as_deref().and_then(PlatformRole::parse),
+            })
         }
-
-        Ok(CurrentUser {
-            id: user.id,
-            platform_role: user.platform_role.as_deref().and_then(PlatformRole::parse),
-        })
+        .await;
+        result.map_err(|error| error.with_locale(locale))
     }
 }
 

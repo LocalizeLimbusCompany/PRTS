@@ -46,6 +46,12 @@ cp .env.example .env        # 按需填写数据库 / Redis / JWT / OAuth / Qwen
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
+数据库迁移账号与应用 runtime 账号必须分离。新空卷会按 `.env` 中的
+`POSTGRES_MIGRATION_*` / `POSTGRES_RUNTIME_*` 自动创建 runtime role，并由一次性
+`migrate` 服务执行迁移；backend 只接收 runtime URL。升级已有 PostgreSQL 卷时，需先由
+数据库管理员创建同名的非 superuser runtime login role，再按 `.env.example` 设置两组 URL；
+两者相同或 runtime 仍拥有表时，服务会 fail closed。真实凭据只写本地环境变量，不提交仓库。
+
 启动后：
 
 - 前端：`http://localhost:8080`

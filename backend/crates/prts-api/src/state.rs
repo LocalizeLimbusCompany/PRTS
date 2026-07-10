@@ -23,6 +23,8 @@ pub struct AppState {
     pub embedder: Arc<Option<prts_search::qwen::QwenProvider>>,
     /// 搜索运行时配置（管理后台可热改；worker / 查询每次读快照）。
     pub search_rt: Arc<tokio::sync::RwLock<prts_db::search_settings::SearchConfig>>,
+    /// durable worker 唤醒控制；业务事务提交后通知 worker 检查队列。
+    pub job_worker: crate::job_worker::JobWorkerControl,
 }
 
 impl AppState {

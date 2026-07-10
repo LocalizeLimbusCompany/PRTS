@@ -1,13 +1,16 @@
 //! PRTS API 服务入口。
 //!
 //! 启动流程：加载 `.env`（开发） → 初始化日志 → 加载分层配置 → 连接 PostgreSQL/Redis →
-//! 执行迁移 → bootstrap 管理员 → 装配路由 → 监听并优雅停机。
+//! runtime 角色校验 → bootstrap 管理员 → 装配路由 → 监听并优雅停机。
+//! 数据库迁移由独立的 `prts-api migrate` 进程使用 migration owner 执行。
 
 mod appsettings;
 mod auth;
 mod dto;
 mod embed_worker;
 mod error;
+mod job_worker;
+mod jobs;
 mod openapi;
 mod routes;
 mod state;
@@ -29,20 +32,32 @@ async fn main() -> anyhow::Result<()> {
     prts_common::logging::init();
 
     let settings = Settings::load()?;
+
+    match std::env::args().nth(1).as_deref() {
+        Some("migrate") => return run_migration_command(&settings).await,
+        Some(other) => anyhow::bail!("unknown command: {other}"),
+        None => {}
+    }
+    if settings
+        .database
+        .migration_url
+        .as_deref()
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        anyhow::bail!("runtime process must not receive database.migration_url");
+    }
     tracing::info!(addr = %settings.server.addr(), "starting PRTS API");
 
     // 连接依赖。P0：失败即快速退出并给出清晰错误。
     let db = prts_db::connect_postgres(&settings.database.url, settings.database.max_connections)
         .await
         .map_err(|e| anyhow::anyhow!("connect postgres failed: {e}"))?;
+    prts_db::verify_runtime_role(&db, &settings.database.runtime_role)
+        .await
+        .map_err(|e| anyhow::anyhow!("runtime database role verification failed: {e}"))?;
     let cache = prts_db::connect_redis(&settings.redis.url)
         .await
         .map_err(|e| anyhow::anyhow!("connect redis failed: {e}"))?;
-
-    // 执行嵌入式迁移。
-    prts_db::run_migrations(&db)
-        .await
-        .map_err(|e| anyhow::anyhow!("run migrations failed: {e}"))?;
 
     // bootstrap：把配置的用户名提升为 super_admin（若已存在且尚无平台角色）。
     bootstrap_admin(&db, &settings).await;
@@ -73,6 +88,14 @@ async fn main() -> anyhow::Result<()> {
     // 启动后台嵌入 sweep（clones cheap: pool 引用计数，Arc 指针）。
     crate::embed_worker::spawn(db.clone(), embedder.clone(), search_rt.clone());
 
+    // 持久化任务 worker。foundation 注册表为空时保持 dormant，后续阶段逐类注册 handler。
+    let job_registry = crate::jobs::JobRegistry::new(Vec::new());
+    let job_worker = crate::job_worker::spawn(
+        db.clone(),
+        job_registry.clone(),
+        Arc::new(crate::job_worker::NoPendingDeletions),
+    );
+
     let addr = settings.server.addr();
     let state = AppState {
         db,
@@ -82,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         realtime,
         embedder,
         search_rt,
+        job_worker,
     };
     let app = routes::app(state);
 
@@ -91,6 +115,30 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
+    Ok(())
+}
+
+/// 用独立 migration owner 执行迁移后立即销毁连接；不会构造 AppState 或启动服务。
+async fn run_migration_command(settings: &Settings) -> anyhow::Result<()> {
+    let migration_url = settings
+        .database
+        .migration_url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("database.migration_url is required for migrate"))?;
+    let migration_pool = prts_db::connect_postgres(migration_url, 1)
+        .await
+        .map_err(|error| anyhow::anyhow!("connect migration postgres failed: {error}"))?;
+    let mut connection = migration_pool
+        .acquire()
+        .await
+        .map_err(|error| anyhow::anyhow!("acquire migration connection failed: {error}"))?;
+    prts_db::run_migrations(&mut connection, &settings.database.runtime_role)
+        .await
+        .map_err(|error| anyhow::anyhow!("run migrations failed: {error}"))?;
+    drop(connection);
+    migration_pool.close().await;
+    tracing::info!(runtime_role = %settings.database.runtime_role, "database migrations complete");
     Ok(())
 }
 

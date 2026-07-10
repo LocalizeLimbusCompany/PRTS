@@ -143,11 +143,22 @@ pub struct ServerSettings {
     pub port: u16,
 }
 
-/// PostgreSQL 配置。`url` 在生产环境务必经环境变量覆盖。
+/// PostgreSQL 配置。连接串只经环境变量注入；runtime 与 migration owner 必须分离。
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseSettings {
+    /// 应用运行时连接串。该角色不得拥有 schema/table。
     pub url: String,
+    /// 独立 migration owner 连接串，仅 `prts-api migrate` 子命令读取。
+    #[serde(default)]
+    pub migration_url: Option<String>,
+    /// 迁移授予最小业务权限的 runtime role 名称（非密钥）。
+    #[serde(default = "default_runtime_role")]
+    pub runtime_role: String,
     pub max_connections: u32,
+}
+
+fn default_runtime_role() -> String {
+    "prts_runtime".to_string()
 }
 
 /// Redis 配置。
@@ -168,7 +179,9 @@ impl Default for ServerSettings {
 impl Default for DatabaseSettings {
     fn default() -> Self {
         Self {
-            url: "postgres://prts:prts@localhost:5432/prts".to_string(),
+            url: "postgres://prts_runtime:prts_runtime@localhost:5432/prts".to_string(),
+            migration_url: None,
+            runtime_role: default_runtime_role(),
             max_connections: 10,
         }
     }
@@ -219,6 +232,8 @@ mod tests {
         assert_eq!(s.server.host, "0.0.0.0");
         assert_eq!(s.server.addr(), "0.0.0.0:3000");
         assert_eq!(s.database.max_connections, 10);
+        assert_eq!(s.database.runtime_role, "prts_runtime");
+        assert!(s.database.migration_url.is_none());
         assert!(s.redis.url.starts_with("redis://"));
         assert_eq!(s.embedding.qwen.dimensions, 1024);
         assert!(s.embedding.qwen.api_key.is_empty());

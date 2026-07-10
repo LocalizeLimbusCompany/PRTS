@@ -46,6 +46,14 @@ cp .env.example .env        # fill in DB / Redis / JWT / OAuth / Qwen, etc.
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
+The migration account and application runtime account must be separate. On a fresh volume,
+Compose creates the runtime role from `POSTGRES_MIGRATION_*` / `POSTGRES_RUNTIME_*` and runs
+migrations in the one-shot `migrate` service; the backend receives only the runtime URL. When
+upgrading an existing PostgreSQL volume, first have a database administrator create the matching
+non-superuser runtime login role, then configure both URLs as shown in `.env.example`. Startup
+fails closed if the roles are the same or the runtime role still owns tables. Keep real credentials
+only in local environment variables and never commit them.
+
 Then:
 
 - Frontend: `http://localhost:8080`

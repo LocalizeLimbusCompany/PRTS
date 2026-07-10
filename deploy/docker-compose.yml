@@ -13,13 +13,19 @@ services:
     # 如需从源码构建：docker build -f deploy/postgres.Dockerfile -t ghcr.io/localizelimbuscompany/prts-postgres:latest ..
     image: ghcr.io/localizelimbuscompany/prts-postgres:latest
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-prts}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-prts}
+      POSTGRES_USER: ${POSTGRES_MIGRATION_USER:-prts_migrator}
+      POSTGRES_PASSWORD: ${POSTGRES_MIGRATION_PASSWORD:-dev-migrator-change-me}
       POSTGRES_DB: ${POSTGRES_DB:-prts}
+      POSTGRES_RUNTIME_USER: ${POSTGRES_RUNTIME_USER:-prts_runtime}
+      POSTGRES_RUNTIME_PASSWORD: ${POSTGRES_RUNTIME_PASSWORD:-dev-runtime-change-me}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-prts} -d ${POSTGRES_DB:-prts}']
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U ${POSTGRES_MIGRATION_USER:-prts_migrator} -d ${POSTGRES_DB:-prts}',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,27 +43,47 @@ services:
       retries: 5
     restart: unless-stopped
 
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    image: ghcr.io/localizelimbuscompany/prts-backend:latest
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PRTS__DATABASE__MIGRATION_URL: postgres://${POSTGRES_MIGRATION_USER:-prts_migrator}:${POSTGRES_MIGRATION_PASSWORD:-dev-migrator-change-me}@postgres:5432/${POSTGRES_DB:-prts}
+      PRTS__DATABASE__RUNTIME_ROLE: ${POSTGRES_RUNTIME_USER:-prts_runtime}
+    command: ['prts-api', 'migrate']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
   backend:
     build:
       context: ..
       dockerfile: deploy/backend.Dockerfile
     image: ghcr.io/localizelimbuscompany/prts-backend:latest
-    # 从根目录 .env 注入认证等 PRTS__* 配置（缺失则忽略）。
+    # 从根目录 .env 注入认证等 PRTS__* 配置；migration URL 被显式清空，runtime
+    # 进程不会持有 owner 凭据。
     env_file:
       - path: ../.env
         required: false
     environment:
       PRTS__SERVER__HOST: 0.0.0.0
       PRTS__SERVER__PORT: '3000'
-      PRTS__DATABASE__URL: postgres://${POSTGRES_USER:-prts}:${POSTGRES_PASSWORD:-prts}@postgres:5432/${POSTGRES_DB:-prts}
+      PRTS__DATABASE__URL: postgres://${POSTGRES_RUNTIME_USER:-prts_runtime}:${POSTGRES_RUNTIME_PASSWORD:-dev-runtime-change-me}@postgres:5432/${POSTGRES_DB:-prts}
+      PRTS__DATABASE__MIGRATION_URL: ''
+      PRTS__DATABASE__RUNTIME_ROLE: ${POSTGRES_RUNTIME_USER:-prts_runtime}
       PRTS__REDIS__URL: redis://redis:6379
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
     ports:
       # 宿主机端口可经 .env 的 BACKEND_PORT 调整（默认 3000 被占用时改这里）
       - '${BACKEND_PORT:-3000}:3000' # 暴露以便访问 Swagger UI（/swagger-ui）；生产可仅内网
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: unless-stopped

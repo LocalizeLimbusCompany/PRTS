@@ -12,11 +12,25 @@ use prts_search::orchestrator::{run, OrchestratorInput};
 use prts_search::SortBy;
 
 async fn pool() -> prts_db::Db {
+    let migration_url =
+        std::env::var("MIGRATION_DATABASE_URL").expect("MIGRATION_DATABASE_URL 未设置");
+    let migration_pool = prts_db::connect_postgres(&migration_url, 1)
+        .await
+        .expect("连接 migration owner");
+    let mut connection = migration_pool.acquire().await.expect("获取 migration 连接");
+    prts_db::run_migrations(&mut connection, "prts_runtime")
+        .await
+        .expect("执行迁移");
+    drop(connection);
+    migration_pool.close().await;
+
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL 未设置");
     let pool = prts_db::connect_postgres(&url, 5)
         .await
-        .expect("连接 Postgres");
-    prts_db::run_migrations(&pool).await.expect("执行迁移");
+        .expect("连接 runtime Postgres");
+    prts_db::verify_runtime_role(&pool, "prts_runtime")
+        .await
+        .expect("验证 runtime role");
     pool
 }
 
