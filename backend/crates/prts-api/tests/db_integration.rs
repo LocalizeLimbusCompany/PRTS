@@ -17,6 +17,782 @@ async fn pool() -> prts_db::Db {
     pool
 }
 
+/// `0007` 必须同时建立追加式审计与持久化任务两项基础设施。
+///
+/// 该测试先于迁移编写，用于证明旧 schema 会明确报缺表，而不是因测试装配错误失败。
+#[tokio::test]
+async fn audit_jobs_tables_exist_after_migration() {
+    let pool = pool().await;
+
+    sqlx::query("SELECT id FROM audit_log LIMIT 0")
+        .execute(&pool)
+        .await
+        .expect("0007 应创建 audit_log");
+    sqlx::query("SELECT id FROM jobs LIMIT 0")
+        .execute(&pool)
+        .await
+        .expect("0007 应创建 jobs");
+}
+
+/// 生成不会与并行 CI 或上次失败运行冲突的测试标识。
+fn audit_jobs_unique(prefix: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("系统时间应晚于 UNIX epoch")
+        .as_nanos();
+    format!("{prefix}-{nanos}")
+}
+
+/// 创建任务外键测试所需的最小用户与项目。
+async fn audit_jobs_project(pool: &prts_db::Db, prefix: &str) -> (i64, i64, String) {
+    let suffix = audit_jobs_unique(prefix);
+    let username = format!("u-{suffix}");
+    let slug = format!("p-{suffix}");
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, 'test-only-hash') RETURNING id",
+    )
+    .bind(&username)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let project_id: i64 = sqlx::query_scalar(
+        "INSERT INTO projects (slug, name, source_langs, target_lang, owner_id)
+         VALUES ($1, $1, ARRAY['en'], 'zh-Hans', $2) RETURNING id",
+    )
+    .bind(&slug)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (user_id, project_id, slug)
+}
+
+/// 用与仓储契约相同的 `SKIP LOCKED` 语义领取一个任务。
+async fn audit_jobs_claim<'e, E>(
+    executor: E,
+    worker_id: &str,
+    pending_project_ids: &[i64],
+    eligible_kinds: &[String],
+) -> Result<Option<i64>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query_scalar(
+        "WITH candidate AS (
+             SELECT id
+             FROM jobs
+             WHERE (
+                     (state = 'queued' AND run_after <= now())
+                     OR (state = 'running' AND lease_until <= now())
+                   )
+               AND kind = ANY($3::TEXT[])
+               AND (
+                     project_id IS NULL
+                     OR kind = 'project_purge'
+                     OR NOT (project_id = ANY($2::BIGINT[]))
+                   )
+             ORDER BY run_after, id
+             FOR UPDATE SKIP LOCKED
+             LIMIT 1
+         )
+         UPDATE jobs AS job
+         SET state = 'running',
+             worker_id = $1,
+             lease_until = now() + interval '5 minutes',
+             attempts = job.attempts + 1,
+             started_at = COALESCE(job.started_at, now()),
+             updated_at = now()
+         FROM candidate
+         WHERE job.id = candidate.id
+         RETURNING job.id",
+    )
+    .bind(worker_id)
+    .bind(pending_project_ids)
+    .bind(eligible_kinds)
+    .fetch_optional(executor)
+    .await
+}
+
+/// 审计记录只能追加，数据库层必须拒绝篡改与删除。
+#[tokio::test]
+async fn audit_jobs_audit_log_is_append_only_and_secret_payloads_are_rejected() {
+    let pool = pool().await;
+    let target = audit_jobs_unique("audit-target");
+    let audit_id: i64 = sqlx::query_scalar(
+        "INSERT INTO audit_log (
+             actor_id, actor_kind, action, target_type, target_id,
+             project_id_snapshot, payload, ip
+         )
+         VALUES (NULL, 'system', 'job.created', 'job', $1, NULL, $2, '127.0.0.1')
+         RETURNING id",
+    )
+    .bind(&target)
+    .bind(serde_json::json!({"kind": "test_job"}))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let update_error = sqlx::query("UPDATE audit_log SET action = 'tampered' WHERE id = $1")
+        .bind(audit_id)
+        .execute(&pool)
+        .await
+        .expect_err("audit_log UPDATE 必须由数据库拒绝");
+    assert_eq!(
+        update_error
+            .as_database_error()
+            .and_then(|error| error.code()),
+        Some(std::borrow::Cow::Borrowed("55000"))
+    );
+
+    let delete_error = sqlx::query("DELETE FROM audit_log WHERE id = $1")
+        .bind(audit_id)
+        .execute(&pool)
+        .await
+        .expect_err("audit_log DELETE 必须由数据库拒绝");
+    assert_eq!(
+        delete_error
+            .as_database_error()
+            .and_then(|error| error.code()),
+        Some(std::borrow::Cow::Borrowed("55000"))
+    );
+
+    let secret_error = sqlx::query(
+        "INSERT INTO audit_log (
+             actor_id, actor_kind, action, target_type, target_id, payload
+         ) VALUES (NULL, 'system', 'auth.failed', 'session', $1, $2)",
+    )
+    .bind(audit_jobs_unique("secret-audit"))
+    .bind(serde_json::json!({"refresh_token": "raw-refresh-token"}))
+    .execute(&pool)
+    .await
+    .expect_err("审计 payload 不得接收 raw token 字段");
+    assert!(secret_error.as_database_error().is_some());
+}
+
+/// 审计使用非级联 snapshot，用户和项目删除后仍能解释历史目标。
+#[tokio::test]
+async fn audit_jobs_audit_actor_and_project_snapshots_survive_source_deletion() {
+    let pool = pool().await;
+    let (user_id, project_id, slug) = audit_jobs_project(&pool, "audit-snapshot").await;
+    let target = audit_jobs_unique("deleted-project");
+    let audit_id: i64 = sqlx::query_scalar(
+        "INSERT INTO audit_log (
+             actor_id, actor_kind, action, target_type, target_id,
+             project_id_snapshot, payload
+         ) VALUES ($1, 'user', 'project.deleted', 'project', $2, $3, $4)
+         RETURNING id",
+    )
+    .bind(user_id)
+    .bind(&target)
+    .bind(project_id)
+    .bind(serde_json::json!({"slug": slug}))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let snapshots: (Option<i64>, Option<i64>, String) = sqlx::query_as(
+        "SELECT actor_id, project_id_snapshot, payload->>'slug'
+         FROM audit_log WHERE id = $1",
+    )
+    .bind(audit_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(snapshots, (Some(user_id), Some(project_id), slug));
+}
+
+/// 两个 worker 并发领取时，`SKIP LOCKED` 必须给出不同任务。
+#[tokio::test]
+async fn audit_jobs_workers_claim_distinct_rows_concurrently() {
+    let pool = pool().await;
+    let marker = audit_jobs_unique("claim");
+    let first: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, payload) VALUES ($1, '{}'), ($1, '{}') RETURNING id",
+    )
+    .bind(&marker)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let mut tx_a = pool.begin().await.unwrap();
+    let eligible = vec![marker.clone()];
+    let claimed_a = audit_jobs_claim(&mut *tx_a, "worker-a", &[], &eligible)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut tx_b = pool.begin().await.unwrap();
+    let claimed_b = audit_jobs_claim(&mut *tx_b, "worker-b", &[], &eligible)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_ne!(claimed_a, claimed_b);
+    assert!(claimed_a >= first || claimed_b >= first);
+    tx_a.commit().await.unwrap();
+    tx_b.commit().await.unwrap();
+
+    sqlx::query("DELETE FROM jobs WHERE kind = $1")
+        .bind(marker)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 过期租约可由另一 worker 接管，未过期租约不可被抢占。
+#[tokio::test]
+async fn audit_jobs_expired_lease_is_taken_over_and_active_lease_is_preserved() {
+    let pool = pool().await;
+    let expired_kind = audit_jobs_unique("expired");
+    let active_kind = audit_jobs_unique("active");
+    let expired_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, state, payload, worker_id, lease_until)
+         VALUES ($1, 'running', '{}', 'dead-worker', now() - interval '1 minute')
+         RETURNING id",
+    )
+    .bind(&expired_kind)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO jobs (kind, state, payload, worker_id, lease_until)
+         VALUES ($1, 'running', '{}', 'live-worker', now() + interval '1 hour')",
+    )
+    .bind(&active_kind)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let eligible = vec![expired_kind.clone(), active_kind.clone()];
+    let claimed = audit_jobs_claim(&pool, "replacement-worker", &[], &eligible)
+        .await
+        .unwrap();
+    assert_eq!(claimed, Some(expired_id));
+    let owner: String = sqlx::query_scalar("SELECT worker_id FROM jobs WHERE id = $1")
+        .bind(expired_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(owner, "replacement-worker");
+
+    sqlx::query("DELETE FROM jobs WHERE kind IN ($1, $2)")
+        .bind(expired_kind)
+        .bind(active_kind)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 只有当前持有者能续租；旧 worker 在接管后不能延长新租约。
+#[tokio::test]
+async fn audit_jobs_lease_renewal_requires_current_worker() {
+    let pool = pool().await;
+    let kind = audit_jobs_unique("renew");
+    let job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, state, payload, worker_id, lease_until)
+         VALUES ($1, 'running', '{}', 'current-worker', now() + interval '1 minute')
+         RETURNING id",
+    )
+    .bind(&kind)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let stale_rows = sqlx::query(
+        "UPDATE jobs
+         SET lease_until = now() + interval '5 minutes', updated_at = now()
+         WHERE id = $1 AND state = 'running' AND worker_id = $2",
+    )
+    .bind(job_id)
+    .bind("stale-worker")
+    .execute(&pool)
+    .await
+    .unwrap()
+    .rows_affected();
+    assert_eq!(stale_rows, 0);
+
+    let renewed_rows = sqlx::query(
+        "UPDATE jobs
+         SET lease_until = now() + interval '5 minutes', updated_at = now()
+         WHERE id = $1 AND state = 'running' AND worker_id = $2",
+    )
+    .bind(job_id)
+    .bind("current-worker")
+    .execute(&pool)
+    .await
+    .unwrap()
+    .rows_affected();
+    assert_eq!(renewed_rows, 1);
+
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 手动重试复用稳定 job id，并清理上次执行的租约与错误。
+#[tokio::test]
+async fn audit_jobs_manual_retry_reuses_same_id_and_increments_attempts() {
+    let pool = pool().await;
+    let kind = audit_jobs_unique("retry");
+    let job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (
+             kind, state, payload, attempts, max_attempts, worker_id, lease_until,
+             last_error_code, last_error_message
+         )
+         VALUES ($1, 'failed', '{}', 3, 3, 'failed-worker', now(), 'TEMP', 'temporary')
+         RETURNING id",
+    )
+    .bind(&kind)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let (retried_id, attempts): (i64, i32) = sqlx::query_as(
+        "UPDATE jobs
+         SET state = 'queued', attempts = attempts + 1, run_after = now(),
+             lease_until = NULL, worker_id = NULL,
+             last_error_code = NULL, last_error_message = NULL, updated_at = now()
+         WHERE id = $1 AND state = 'failed'
+         RETURNING id, attempts",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(retried_id, job_id);
+    assert_eq!(attempts, 4);
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// `0014` 前不引用未来列；调用者显式传入待删除项目集合完成暂停过滤。
+#[tokio::test]
+async fn audit_jobs_pending_deletion_filter_pauses_non_purge_jobs() {
+    let pool = pool().await;
+    let (user_id, project_id, _) = audit_jobs_project(&pool, "pending-delete").await;
+    let normal_kind = audit_jobs_unique("normal");
+    let normal_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, project_id, payload) VALUES ($1, $2, '{}') RETURNING id",
+    )
+    .bind(&normal_kind)
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let purge_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, project_id, payload)
+         VALUES ('project_purge', $1, $2) RETURNING id",
+    )
+    .bind(project_id)
+    .bind(serde_json::json!({"project_id": project_id, "slug": "snapshot"}))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "UPDATE jobs
+         SET state = 'paused', lease_until = NULL, worker_id = NULL, updated_at = now()
+         WHERE project_id = ANY($1::BIGINT[])
+           AND kind <> 'project_purge'
+           AND state IN ('queued', 'running')",
+    )
+    .bind(vec![project_id])
+    .execute(&pool)
+    .await
+    .unwrap();
+    let eligible = vec![normal_kind.clone(), "project_purge".to_string()];
+    let claimed = audit_jobs_claim(&pool, "purge-worker", &[project_id], &eligible)
+        .await
+        .unwrap();
+
+    assert_eq!(claimed, Some(purge_id));
+    let normal_state: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id = $1")
+        .bind(normal_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(normal_state, "paused");
+
+    sqlx::query("DELETE FROM jobs WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 任务进度可在运行中持久化，且不可超过声明总量。
+#[tokio::test]
+async fn audit_jobs_progress_updates_are_bounded() {
+    let pool = pool().await;
+    let kind = audit_jobs_unique("progress");
+    let job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, state, payload, progress_current, progress_total)
+         VALUES ($1, 'running', '{}', 0, 10) RETURNING id",
+    )
+    .bind(&kind)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let progress: (i64, Option<i64>) = sqlx::query_as(
+        "UPDATE jobs SET progress_current = 6, updated_at = now()
+         WHERE id = $1 RETURNING progress_current, progress_total",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(progress, (6, Some(10)));
+
+    sqlx::query("UPDATE jobs SET progress_current = 11 WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .expect_err("progress_current 不得超过 progress_total");
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 项目删除后 job 保留且外键置空；purge 仅凭不可变 payload snapshot 继续。
+#[tokio::test]
+async fn audit_jobs_project_delete_sets_null_and_purge_snapshot_survives() {
+    let pool = pool().await;
+    let (user_id, project_id, slug) = audit_jobs_project(&pool, "purge-snapshot").await;
+    let deadline = "2026-07-11T00:00:00Z";
+    let payload = serde_json::json!({
+        "project_id": project_id,
+        "slug": slug,
+        "media_keys": ["projects/avatar.webp"],
+        "temp_keys": ["uploads/pending.json"],
+        "deadline": deadline
+    });
+    let job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, project_id, payload)
+         VALUES ('project_purge', $1, $2) RETURNING id",
+    )
+    .bind(project_id)
+    .bind(&payload)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (live_project_id, stored_payload): (Option<i64>, serde_json::Value) =
+        sqlx::query_as("SELECT project_id, payload FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(live_project_id, None);
+    assert_eq!(stored_payload, payload);
+
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 会话状态由 PostgreSQL 权威保存，支持签发、轮换、吊销和过期全生命周期。
+#[tokio::test]
+async fn audit_jobs_auth_session_state_machine_and_token_storage_contract() {
+    let pool = pool().await;
+    let username = audit_jobs_unique("session-user");
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, 'test-only-hash') RETURNING id",
+    )
+    .bind(&username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let session_handle = audit_jobs_unique("session-handle");
+    let family_handle = audit_jobs_unique("family-handle");
+    let refresh_hash = audit_jobs_unique("refresh-hash");
+    let session_id: i64 = sqlx::query_scalar(
+        "INSERT INTO auth_sessions (
+             session_handle, family_handle, user_id, refresh_token_hash, state, expires_at
+         ) VALUES ($1, $2, $3, $4, 'pending', now() + interval '1 day') RETURNING id",
+    )
+    .bind(&session_handle)
+    .bind(&family_handle)
+    .bind(user_id)
+    .bind(&refresh_hash)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    for state in ["active", "rotating", "revoked"] {
+        let stored: String = sqlx::query_scalar(
+            "UPDATE auth_sessions SET state = $2, updated_at = now() WHERE id = $1 RETURNING state",
+        )
+        .bind(session_id)
+        .bind(state)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, state);
+    }
+    let expired_handle = audit_jobs_unique("expired-handle");
+    sqlx::query(
+        "INSERT INTO auth_sessions (
+             session_handle, family_handle, user_id, refresh_token_hash, state, expires_at
+         ) VALUES ($1, $2, $3, $4, 'expired', now() - interval '1 second')",
+    )
+    .bind(&expired_handle)
+    .bind(&family_handle)
+    .bind(user_id)
+    .bind(audit_jobs_unique("expired-refresh-hash"))
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query("UPDATE auth_sessions SET state = 'unknown' WHERE id = $1")
+        .bind(session_id)
+        .execute(&pool)
+        .await
+        .expect_err("未知 auth session 状态必须由约束拒绝");
+
+    let forbidden_columns: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name IN ('auth_sessions', 'auth_session_intents', 'jobs', 'audit_log')
+           AND column_name IN ('access_token', 'refresh_token', 'raw_access_token', 'raw_refresh_token')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(forbidden_columns, 0);
+
+    let serialized_row: String =
+        sqlx::query_scalar("SELECT row_to_json(s)::TEXT FROM auth_sessions AS s WHERE id = $1")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(serialized_row.contains(&refresh_hash));
+    assert!(!serialized_row.contains("raw-access-token"));
+    assert!(!serialized_row.contains("raw-refresh-token"));
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// rotation 的前后继关系必须可追踪，且删除后继时不会破坏历史会话行。
+#[tokio::test]
+async fn audit_jobs_auth_session_rotation_links_predecessor_and_successor() {
+    let pool = pool().await;
+    let username = audit_jobs_unique("rotation-user");
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, 'test-only-hash') RETURNING id",
+    )
+    .bind(&username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let family = audit_jobs_unique("rotation-family");
+    let predecessor_id: i64 = sqlx::query_scalar(
+        "INSERT INTO auth_sessions (
+             session_handle, family_handle, user_id, refresh_token_hash, state, expires_at
+         ) VALUES ($1, $2, $3, $4, 'rotating', now() + interval '1 day') RETURNING id",
+    )
+    .bind(audit_jobs_unique("predecessor"))
+    .bind(&family)
+    .bind(user_id)
+    .bind(audit_jobs_unique("predecessor-hash"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let successor_id: i64 = sqlx::query_scalar(
+        "INSERT INTO auth_sessions (
+             session_handle, family_handle, user_id, refresh_token_hash, state,
+             expires_at, predecessor_id
+         ) VALUES ($1, $2, $3, $4, 'pending', now() + interval '1 day', $5) RETURNING id",
+    )
+    .bind(audit_jobs_unique("successor"))
+    .bind(&family)
+    .bind(user_id)
+    .bind(audit_jobs_unique("successor-hash"))
+    .bind(predecessor_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE auth_sessions SET successor_id = $2 WHERE id = $1")
+        .bind(predecessor_id)
+        .bind(successor_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let links: (Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT
+             (SELECT successor_id FROM auth_sessions WHERE id = $1),
+             (SELECT predecessor_id FROM auth_sessions WHERE id = $2)",
+    )
+    .bind(predecessor_id)
+    .bind(successor_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(links, (Some(successor_id), Some(predecessor_id)));
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// auth intent/outbox 使用租约领取，租约过期后复用同一 intent 行重试。
+#[tokio::test]
+async fn audit_jobs_auth_intent_lease_takeover_and_retry_reuse_same_id() {
+    let pool = pool().await;
+    let username = audit_jobs_unique("intent-user");
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, 'test-only-hash') RETURNING id",
+    )
+    .bind(&username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let session_id: i64 = sqlx::query_scalar(
+        "INSERT INTO auth_sessions (
+             session_handle, family_handle, user_id, refresh_token_hash, state, expires_at
+         ) VALUES ($1, $2, $3, $4, 'active', now() + interval '1 day') RETURNING id",
+    )
+    .bind(audit_jobs_unique("intent-session"))
+    .bind(audit_jobs_unique("intent-family"))
+    .bind(user_id)
+    .bind(audit_jobs_unique("intent-refresh-hash"))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let intent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO auth_session_intents (
+             session_id, kind, state, payload, attempts, max_attempts,
+             worker_id, lease_until
+         ) VALUES (
+             $1, 'redis_invalidate', 'running', $2, 1, 5,
+             'dead-worker', now() - interval '1 minute'
+         ) RETURNING id",
+    )
+    .bind(session_id)
+    .bind(serde_json::json!({"session_handle": "opaque-only"}))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let claimed: i64 = sqlx::query_scalar(
+        "WITH candidate AS (
+             SELECT id FROM auth_session_intents
+             WHERE (state = 'queued' AND run_after <= now())
+                OR (state = 'running' AND lease_until <= now())
+             ORDER BY run_after, id
+             FOR UPDATE SKIP LOCKED
+             LIMIT 1
+         )
+         UPDATE auth_session_intents AS intent
+         SET state = 'running', worker_id = 'replacement-worker',
+             lease_until = now() + interval '5 minutes',
+             attempts = intent.attempts + 1, updated_at = now()
+         FROM candidate
+         WHERE intent.id = candidate.id
+         RETURNING intent.id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(claimed, intent_id);
+
+    let (retried_id, attempts): (i64, i32) = sqlx::query_as(
+        "UPDATE auth_session_intents
+         SET state = 'queued', attempts = attempts + 1, run_after = now(),
+             worker_id = NULL, lease_until = NULL, last_error_code = NULL,
+             last_error_message = NULL, updated_at = now()
+         WHERE id = $1
+         RETURNING id, attempts",
+    )
+    .bind(intent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(retried_id, intent_id);
+    assert_eq!(attempts, 3);
+
+    sqlx::query(
+        "INSERT INTO auth_session_intents (session_id, kind, payload)
+         VALUES ($1, 'redis_populate', $2)",
+    )
+    .bind(session_id)
+    .bind(serde_json::json!({"access_token": "raw-access-token"}))
+    .execute(&pool)
+    .await
+    .expect_err("auth intent payload 不得接收 raw token 字段");
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// job payload 同样必须拒绝 raw token 字段，避免异步链路泄密。
+#[tokio::test]
+async fn audit_jobs_job_payload_rejects_raw_tokens() {
+    let pool = pool().await;
+    sqlx::query("INSERT INTO jobs (kind, payload) VALUES ('unsafe-test', $1)")
+        .bind(serde_json::json!({"refresh_token": "raw-refresh-token"}))
+        .execute(&pool)
+        .await
+        .expect_err("job payload 不得接收 raw refresh token 字段");
+    sqlx::query("INSERT INTO jobs (kind, payload) VALUES ('unsafe-test', $1)")
+        .bind(serde_json::json!({"access_token": "raw-access-token"}))
+        .execute(&pool)
+        .await
+        .expect_err("job payload 不得接收 raw access token 字段");
+}
+
 #[tokio::test]
 async fn users_api_keys_settings_oauth_roundtrip() {
     let pool = pool().await;
