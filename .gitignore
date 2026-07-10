@@ -89,3 +89,6 @@ tmp/
 
 # Visual Companion / brainstorm mockups
 .superpowers/
+
+# Superpowers isolated feature worktrees
+.worktrees/
