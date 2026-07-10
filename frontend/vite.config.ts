@@ -1,10 +1,8 @@
 import { fileURLToPath, URL } from 'node:url'
+import process from 'node:process'
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 import { quasar, transformAssetUrls } from '@quasar/vite-plugin'
-
-// Node 运行 vite.config 时可用；声明以避免引入 @types/node。
-declare const process: { env: Record<string, string | undefined> }
 
 const projectRoot = fileURLToPath(new URL('.', import.meta.url))
 // 开发服务器端口：默认 8080，可经环境变量 VITE_DEV_PORT 覆盖（端口被占用时）。

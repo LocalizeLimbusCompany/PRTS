@@ -48,7 +48,7 @@ jobs:
           PRTS__REDIS__URL: redis://localhost:6379
 
   frontend:
-    name: Frontend (lint / build)
+    name: Frontend (lint / typecheck / test / build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,6 +65,7 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
 
