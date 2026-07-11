@@ -7,10 +7,11 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use prts_core::permission::nodes;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 
 use crate::auth::{project as paccess, CurrentUser, MaybeUser};
 use crate::db_err;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
 /// 文件夹对外表示。
@@ -82,7 +83,12 @@ pub async fn get_tree(
 
 /// 删除文件（含其词条）。需项目「管理」权限。
 #[utoipa::path(delete, path = "/projects/{id}/files/{file_id}", tag = "file",
-    responses((status = 204), (status = 403), (status = 404)))]
+    responses(
+        (status = 204),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，文件未删除", body = ErrorResponse)
+    ))]
 pub async fn delete_file(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -90,19 +96,52 @@ pub async fn delete_file(
 ) -> Result<StatusCode, ApiError> {
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_MANAGE)?;
-    if prts_db::files::delete_file(&state.db, id, file_id)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, project)
+        .await?
+        .require_node(nodes::PROJECT_MANAGE)?;
+    let file = prts_db::files::find_file_for_update_tx(&mut tx, id, file_id)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::NotFound)?;
+    if !prts_db::files::delete_file_tx(&mut tx, id, file_id)
         .await
         .map_err(db_err)?
     {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(prts_common::Error::NotFound.into())
+        return Err(prts_common::Error::NotFound.into());
     }
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::FileDeleted {
+            project_id: id,
+            file_id,
+            path: &file.path,
+            entry_count: file.entry_count,
+        },
+    )
+    .await
+    .map_err(|_| prts_common::Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// 删除文件夹（含其子项与词条）。需项目「管理」权限。
 #[utoipa::path(delete, path = "/projects/{id}/folders/{folder_id}", tag = "file",
-    responses((status = 204), (status = 403), (status = 404)))]
+    responses(
+        (status = 204),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，文件夹未删除", body = ErrorResponse)
+    ))]
 pub async fn delete_folder(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -110,12 +149,80 @@ pub async fn delete_folder(
 ) -> Result<StatusCode, ApiError> {
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_MANAGE)?;
-    if prts_db::files::delete_folder(&state.db, id, folder_id)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, project)
+        .await?
+        .require_node(nodes::PROJECT_MANAGE)?;
+    let folder = prts_db::files::find_folder_for_update_tx(&mut tx, id, folder_id)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::NotFound)?;
+    let (file_count, entry_count) =
+        prts_db::files::folder_tree_counts_tx(&mut tx, id, &folder.path)
+            .await
+            .map_err(db_err)?;
+    if !prts_db::files::delete_folder_tx(&mut tx, id, folder_id)
         .await
         .map_err(db_err)?
     {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(prts_common::Error::NotFound.into())
+        return Err(prts_common::Error::NotFound.into());
+    }
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::FolderDeleted {
+            project_id: id,
+            folder_id,
+            path: &folder.path,
+            file_count,
+            entry_count,
+        },
+    )
+    .await
+    .map_err(|_| prts_common::Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod mutation_lock_tests {
+    fn function_body<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+        source
+            .split_once(start)
+            .expect("function start exists")
+            .1
+            .split_once(end)
+            .expect("function end exists")
+            .0
+    }
+
+    #[test]
+    fn file_and_folder_delete_lock_project_before_child_snapshots() {
+        let source = include_str!("files.rs");
+        let file_delete = function_body(
+            source,
+            "pub async fn delete_file(",
+            "pub async fn delete_folder(",
+        );
+        let folder_delete = function_body(source, "pub async fn delete_folder(", "#[cfg(test)]");
+
+        for (body, child_snapshot) in [
+            (file_delete, "files::find_file_for_update_tx"),
+            (folder_delete, "files::find_folder_for_update_tx"),
+        ] {
+            let project_lock = body
+                .find("projects::find_by_id_for_update_tx")
+                .expect("delete must lock its project row");
+            let child_lock = body.find(child_snapshot).expect("child snapshot exists");
+            assert!(project_lock < child_lock);
+        }
     }
 }

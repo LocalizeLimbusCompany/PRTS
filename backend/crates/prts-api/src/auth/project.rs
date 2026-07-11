@@ -3,6 +3,7 @@
 use prts_common::Error;
 use prts_core::permission::nodes;
 use prts_core::{PlatformRole, ProjectRole};
+use sqlx::PgConnection;
 
 use crate::auth::CurrentUser;
 use crate::db_err;
@@ -85,6 +86,37 @@ pub async fn load(
     Ok(ProjectAccess {
         project,
         user_id,
+        project_role,
+        platform_role,
+    })
+}
+
+/// 在已锁定项目行的调用方事务内重新加载授权快照。
+///
+/// 项目 mutation 可先在事务外做快速拒绝，再以本函数取得锁后的最新成员/平台角色，
+/// 防止并发撤权后继续使用陈旧的 [`ProjectAccess`]。
+pub async fn load_locked_tx(
+    conn: &mut PgConnection,
+    user: &CurrentUser,
+    project: prts_db::models::Project,
+) -> Result<ProjectAccess, ApiError> {
+    let current_user = prts_db::users::find_by_id_for_update_tx(conn, user.id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::Unauthorized)?;
+    let project_role = prts_db::memberships::find_role_tx(conn, project.id, user.id)
+        .await
+        .map_err(db_err)?
+        .as_deref()
+        .and_then(ProjectRole::parse);
+    let platform_role = current_user
+        .platform_role
+        .as_deref()
+        .and_then(PlatformRole::parse);
+
+    Ok(ProjectAccess {
+        project,
+        user_id: Some(user.id),
         project_role,
         platform_role,
     })

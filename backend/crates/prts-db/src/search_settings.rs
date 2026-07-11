@@ -1,8 +1,8 @@
 //! 搜索/向量化运行时配置（存 settings 表，管理后台可改）。serde-only（不耦合 utoipa）。
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchConfig {
     pub embedding_enabled: bool,
     pub embedding_model: String,
@@ -28,6 +28,14 @@ impl Default for SearchConfig {
 }
 
 const KEY: &str = "search.config";
+// Advisory-lock namespace `PRTSSEAR`：固定 64-bit key，仅串行化 search.config 写事务。
+const SEARCH_CONFIG_LOCK_KEY: i64 = 0x5052_5453_5345_4152;
+
+#[derive(Debug, Clone)]
+pub struct SearchConfigChange {
+    pub before: SearchConfig,
+    pub after: SearchConfig,
+}
 
 /// 规范化：clamp 危险字段到安全区间（纯函数，便于单测）。
 pub fn normalize(mut cfg: SearchConfig) -> SearchConfig {
@@ -47,9 +55,38 @@ pub async fn get(pool: &PgPool) -> Result<SearchConfig, sqlx::Error> {
 
 /// 写入（规范化后）。
 pub async fn set(pool: &PgPool, cfg: SearchConfig, by: Option<i64>) -> Result<(), sqlx::Error> {
-    let cfg = normalize(cfg);
-    let v = serde_json::to_value(&cfg).expect("SearchConfig serializes");
-    crate::settings::set(pool, KEY, &v, by).await
+    let mut tx = pool.begin().await?;
+    set_tx(&mut tx, cfg, by).await?;
+    tx.commit().await
+}
+
+/// 取得事务级 advisory lock 后读取配置；缺失仍保持“默认但不落库”的既有语义。
+pub async fn get_for_update_tx(conn: &mut PgConnection) -> Result<SearchConfig, sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(SEARCH_CONFIG_LOCK_KEY)
+        .execute(&mut *conn)
+        .await?;
+    let value: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key = $1")
+            .bind(KEY)
+            .fetch_optional(conn)
+            .await?;
+    Ok(value
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default())
+}
+
+/// 在调用方事务内写入规范化后的搜索设置。
+pub async fn set_tx(
+    conn: &mut PgConnection,
+    cfg: SearchConfig,
+    by: Option<i64>,
+) -> Result<SearchConfigChange, sqlx::Error> {
+    let before = get_for_update_tx(&mut *conn).await?;
+    let after = normalize(cfg);
+    let value = serde_json::to_value(&after).expect("SearchConfig serializes");
+    crate::settings::set_tx(conn, KEY, &value, by).await?;
+    Ok(SearchConfigChange { before, after })
 }
 
 #[cfg(test)]

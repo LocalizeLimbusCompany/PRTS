@@ -52,6 +52,36 @@ docker compose -f deploy/docker-compose.yml up -d
 数据库管理员创建同名的非 superuser runtime login role，再按 `.env.example` 设置两组 URL；
 两者相同或 runtime 仍拥有表时，服务会 fail closed。真实凭据只写本地环境变量，不提交仓库。
 
+**已有卷不会重新执行 PostgreSQL init 脚本。** 旧版 PRTS 卷的数据库/表 owner 通常是
+`prts`，不能只把 `.env` 改成默认 `prts_migrator` 后指望该角色自动出现。升级时请选择一种：
+
+- 推荐就地沿用真实旧 owner：先查询 `pg_database` / `pg_tables` 确认 owner（通常为 `prts`），
+  再把 `POSTGRES_MIGRATION_USER`、`POSTGRES_MIGRATION_PASSWORD` 和
+  `PRTS__DATABASE__MIGRATION_URL` 指向这个**已存在且拥有旧对象**的账号；runtime URL 仍只使用
+  新建的 `prts_runtime`。
+- 如必须改为专用 `prts_migrator`，请以旧 owner 或数据库管理员连接目标数据库，只创建缺失
+  role，使用 `psql` 的交互式 `\password` 设置本地密码，然后转移所有权（旧 owner 不是
+  `prts` 时替换下列名称）：
+
+  ```psql
+  CREATE ROLE prts_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+  \password prts_migrator
+  CREATE ROLE prts_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+  \password prts_runtime
+  REASSIGN OWNED BY prts TO prts_migrator;
+  ALTER DATABASE prts OWNER TO prts_migrator;
+  ALTER SCHEMA public OWNER TO prts_migrator;
+  ```
+
+完成后再让 migration URL 使用 `prts_migrator`。不要在 shell 历史、README、compose 文件或
+仓库内写真实密码；`\password` 会交互提示，实际凭据只保存在本地 `.env` / secret manager。
+
+### 认证会话升级提示
+
+本版本会拒绝旧版签发、未携带 `sid` 的 access JWT，且 refresh 会话改由 PostgreSQL 作为权威来源。
+因此升级会让所有现有会话失效，相当于一次全量登出。生产部署必须安排维护窗口并提前通知用户；
+升级完成后，用户重新登录即可建立新会话并恢复访问，无需重置账号或密码。
+
 启动后：
 
 - 前端：`http://localhost:8080`

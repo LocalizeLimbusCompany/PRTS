@@ -1,12 +1,23 @@
 //! 项目成员数据访问。
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use crate::models::MemberInfo;
 
 /// 新增或更新成员角色（upsert）。
 pub async fn upsert(
     pool: &PgPool,
+    project_id: i64,
+    user_id: i64,
+    role: &str,
+) -> Result<(), sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    upsert_tx(&mut connection, project_id, user_id, role).await
+}
+
+/// 在调用方事务内新增或更新成员角色。
+pub async fn upsert_tx(
+    conn: &mut PgConnection,
     project_id: i64,
     user_id: i64,
     role: &str,
@@ -18,7 +29,7 @@ pub async fn upsert(
     .bind(project_id)
     .bind(user_id)
     .bind(role)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }
@@ -38,6 +49,22 @@ pub async fn find_role(
     Ok(row.map(|(r,)| r))
 }
 
+/// 在调用方事务内读取成员角色；调用方应先锁定项目行以覆盖成员不存在的 upsert 情形。
+pub async fn find_role_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+    user_id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT role FROM memberships WHERE project_id = $1 AND user_id = $2 FOR UPDATE",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(conn)
+    .await?;
+    Ok(row.map(|(role,)| role))
+}
+
 /// 列出项目成员（含用户名/头像）。
 pub async fn list(pool: &PgPool, project_id: i64) -> Result<Vec<MemberInfo>, sqlx::Error> {
     sqlx::query_as::<_, MemberInfo>(
@@ -53,10 +80,20 @@ pub async fn list(pool: &PgPool, project_id: i64) -> Result<Vec<MemberInfo>, sql
 
 /// 移除成员。
 pub async fn remove(pool: &PgPool, project_id: i64, user_id: i64) -> Result<bool, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    remove_tx(&mut connection, project_id, user_id).await
+}
+
+/// 在调用方事务内移除成员。
+pub async fn remove_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+    user_id: i64,
+) -> Result<bool, sqlx::Error> {
     let res = sqlx::query("DELETE FROM memberships WHERE project_id = $1 AND user_id = $2")
         .bind(project_id)
         .bind(user_id)
-        .execute(pool)
+        .execute(conn)
         .await?;
     Ok(res.rows_affected() > 0)
 }
@@ -70,4 +107,17 @@ pub async fn count_role(pool: &PgPool, project_id: i64, role: &str) -> Result<i6
             .fetch_one(pool)
             .await?;
     Ok(count)
+}
+
+/// 在已锁定项目的调用方事务内统计角色人数。
+pub async fn count_role_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+    role: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM memberships WHERE project_id = $1 AND role = $2")
+        .bind(project_id)
+        .bind(role)
+        .fetch_one(conn)
+        .await
 }

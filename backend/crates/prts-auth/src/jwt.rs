@@ -22,6 +22,9 @@ pub struct Claims {
     pub exp: i64,
     /// 令牌类型，固定 `"access"`（刷新令牌是不透明串，不走 JWT）。
     pub typ: String,
+    /// DB-authoritative session handle；`None` 仅用于识别旧 token，认证边界必须拒绝。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
 }
 
 impl Claims {
@@ -113,6 +116,7 @@ mod tests {
             iat: 1_000,
             exp: 2_000,
             typ: "access".to_string(),
+            sid: Some("session-handle-123456".to_string()),
         }
     }
 

@@ -1,6 +1,6 @@
 //! 项目数据访问。
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use crate::models::Project;
 
@@ -8,6 +8,32 @@ use crate::models::Project;
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: &PgPool,
+    slug: &str,
+    name: &str,
+    description: &str,
+    visibility: &str,
+    source_langs: &[String],
+    target_lang: &str,
+    owner_id: i64,
+) -> Result<Project, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    create_tx(
+        &mut connection,
+        slug,
+        name,
+        description,
+        visibility,
+        source_langs,
+        target_lang,
+        owner_id,
+    )
+    .await
+}
+
+/// 在调用方事务内创建项目。
+#[allow(clippy::too_many_arguments)]
+pub async fn create_tx(
+    conn: &mut PgConnection,
     slug: &str,
     name: &str,
     description: &str,
@@ -27,7 +53,7 @@ pub async fn create(
     .bind(source_langs)
     .bind(target_lang)
     .bind(owner_id)
-    .fetch_one(pool)
+    .fetch_one(conn)
     .await
 }
 
@@ -36,6 +62,17 @@ pub async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Project>, sqlx:
     sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
+        .await
+}
+
+/// 在调用方事务内锁定项目并返回一致快照。
+pub async fn find_by_id_for_update_tx(
+    conn: &mut PgConnection,
+    id: i64,
+) -> Result<Option<Project>, sqlx::Error> {
+    sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .fetch_optional(conn)
         .await
 }
 
@@ -95,6 +132,30 @@ pub async fn update(
     source_langs: &[String],
     target_lang: &str,
 ) -> Result<Project, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    update_tx(
+        &mut connection,
+        id,
+        name,
+        description,
+        visibility,
+        source_langs,
+        target_lang,
+    )
+    .await
+}
+
+/// 在调用方事务内更新项目元信息。
+#[allow(clippy::too_many_arguments)]
+pub async fn update_tx(
+    conn: &mut PgConnection,
+    id: i64,
+    name: &str,
+    description: &str,
+    visibility: &str,
+    source_langs: &[String],
+    target_lang: &str,
+) -> Result<Project, sqlx::Error> {
     sqlx::query_as::<_, Project>(
         "UPDATE projects SET name = $2, description = $3, visibility = $4,
              source_langs = $5, target_lang = $6
@@ -106,15 +167,21 @@ pub async fn update(
     .bind(visibility)
     .bind(source_langs)
     .bind(target_lang)
-    .fetch_one(pool)
+    .fetch_one(conn)
     .await
 }
 
 /// 删除项目（级联文件夹/文件/词条/成员）。
 pub async fn delete(pool: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    delete_tx(&mut connection, id).await
+}
+
+/// 在调用方事务内删除项目。
+pub async fn delete_tx(conn: &mut PgConnection, id: i64) -> Result<bool, sqlx::Error> {
     let res = sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(id)
-        .execute(pool)
+        .execute(conn)
         .await?;
     Ok(res.rows_affected() > 0)
 }

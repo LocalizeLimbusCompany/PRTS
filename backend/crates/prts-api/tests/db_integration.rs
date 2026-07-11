@@ -18,10 +18,14 @@ mod auth;
 mod dto;
 #[path = "../src/error.rs"]
 mod error;
+#[path = "../src/job_retry.rs"]
+mod job_retry;
 #[path = "../src/job_worker.rs"]
 mod job_worker;
 #[path = "../src/jobs/mod.rs"]
 mod jobs;
+#[path = "../src/search_settings_worker.rs"]
+mod search_settings_worker;
 #[path = "../src/state.rs"]
 mod state;
 
@@ -68,6 +72,7 @@ use prts_db::{
 };
 
 static MIGRATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+static SEARCH_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -144,6 +149,32 @@ struct AuditedEntrypoint {
     allowed_payload_keys: &'static [&'static str],
 }
 
+/// 每个稳定 action 的目标合同；与 route entrypoint 清单分离，且 action 必须唯一。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetIdPolicy {
+    Numeric,
+    CompositeNumeric,
+    Constant(&'static str),
+    OpaqueNonEmpty,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectSnapshotPolicy {
+    None,
+    SameAsNumericTarget,
+    Required,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AuditActionContract {
+    action: &'static str,
+    target_type: &'static str,
+    target_id_policy: TargetIdPolicy,
+    project_snapshot_policy: ProjectSnapshotPolicy,
+    /// 有多少 route/auth entrypoint 合法地产生该 action；用于显式容纳 `auth.failed` 多入口。
+    expected_count: usize,
+}
+
 const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     AuditedEntrypoint {
         entrypoint: "routes::auth::register",
@@ -161,14 +192,34 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         allowed_payload_keys: &["method", "reason_code"],
     },
     AuditedEntrypoint {
+        entrypoint: "auth::extract::presented_failure",
+        action: "auth.failed",
+        allowed_payload_keys: &["method", "reason_code"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::auth::refresh.failure",
+        action: "auth.failed",
+        allowed_payload_keys: &["method", "reason_code"],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::auth::refresh",
         action: "auth.refresh_rotated",
         allowed_payload_keys: &["session_handle", "predecessor_handle", "expires_at"],
     },
     AuditedEntrypoint {
+        entrypoint: "auth::session::refresh.token_issue",
+        action: "auth.token_issued",
+        allowed_payload_keys: &["session_handle", "method", "expires_at"],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::auth::logout",
         action: "auth.logged_out",
         allowed_payload_keys: &["session_handle", "revoked_sessions"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::auth::logout.noop",
+        action: "auth.failed",
+        allowed_payload_keys: &["method", "reason_code"],
     },
     AuditedEntrypoint {
         entrypoint: "routes::auth::oauth_callback.success",
@@ -310,6 +361,245 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         action: "message.marked_read",
         allowed_payload_keys: &["other_user_id", "count"],
     },
+    AuditedEntrypoint {
+        entrypoint: "routes::jobs::retry_job",
+        action: "job.retried",
+        allowed_payload_keys: &["kind", "previous_attempts", "new_attempts"],
+    },
+];
+
+const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
+    AuditActionContract {
+        action: "auth.registered",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "auth.login_succeeded",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "auth.login_failed",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "auth.failed",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 3,
+    },
+    AuditActionContract {
+        action: "auth.refresh_rotated",
+        target_type: "auth_session",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "auth.logged_out",
+        target_type: "auth_session",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "auth.oauth_succeeded",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "auth.oauth_failed",
+        target_type: "oauth_identity",
+        target_id_policy: TargetIdPolicy::OpaqueNonEmpty,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "auth.token_issued",
+        target_type: "auth_session",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 2,
+    },
+    AuditActionContract {
+        action: "auth.bootstrap_role_granted",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "user.profile_updated",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "api_key.created",
+        target_type: "api_key",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "api_key.used",
+        target_type: "api_key",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "api_key.revoked",
+        target_type: "api_key",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "settings.updated",
+        target_type: "settings",
+        target_id_policy: TargetIdPolicy::Constant("platform"),
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "search_settings.updated",
+        target_type: "settings",
+        target_id_policy: TargetIdPolicy::Constant("search.config"),
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "user.platform_role_changed",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.created",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.updated",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.deleted",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "membership.upserted",
+        target_type: "membership",
+        target_id_policy: TargetIdPolicy::CompositeNumeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "membership.removed",
+        target_type: "membership",
+        target_id_policy: TargetIdPolicy::CompositeNumeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "entries.uploaded",
+        target_type: "file",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "file.deleted",
+        target_type: "file",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "folder.deleted",
+        target_type: "folder",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "entry.updated",
+        target_type: "entry",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "entry.flags_updated",
+        target_type: "entry",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.exported",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "notification.marked_read",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "poke.sent",
+        target_type: "notification",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "message.sent",
+        target_type: "message",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "message.marked_read",
+        target_type: "conversation",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "job.retried",
+        target_type: "job",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
 ];
 
 /// 现有被审计 repository writer。每项在 GREEN 后必须有 `&mut PgConnection`/`*_tx`
@@ -342,6 +632,7 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "notifications::mark_read",
     "messages::create",
     "messages::mark_read",
+    "jobs::manual_retry",
 ];
 
 /// DB-authoritative session 与 durable intent/outbox 的全部现有写边界。
@@ -359,7 +650,8 @@ const AUTH_SESSION_WRITERS: &[&str] = &[
     "auth_sessions::claim_intent",
     "auth_sessions::renew_intent_lease",
     "auth_sessions::complete_intent",
-    "auth_sessions::fail_intent",
+    "auth_sessions::reschedule_intent",
+    "auth_sessions::fail_intent_permanently",
     "auth_sessions::retry_intent_tx",
 ];
 
@@ -391,16 +683,21 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        27,
+        28,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
         AUTH_SESSION_WRITERS.len(),
-        15,
+        16,
         "auth/session writer inventory 发生漂移"
     );
     assert_eq!(UNAUDITED_READS.len(), 18, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 31, "审计入口 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 36, "审计入口 inventory 发生漂移");
+    assert_eq!(
+        AUDIT_ACTION_CONTRACTS.len(),
+        33,
+        "action 合同 inventory 发生漂移"
+    );
 
     let writers: HashSet<_> = REPOSITORY_WRITERS.iter().copied().collect();
     assert_eq!(writers.len(), REPOSITORY_WRITERS.len(), "writer 不得重复");
@@ -411,6 +708,27 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
     assert_eq!(entrypoints.len(), AUDITED_ENTRYPOINTS.len());
     let auth_writers: HashSet<_> = AUTH_SESSION_WRITERS.iter().copied().collect();
     assert_eq!(auth_writers.len(), AUTH_SESSION_WRITERS.len());
+    let actions: HashSet<_> = AUDIT_ACTION_CONTRACTS
+        .iter()
+        .map(|contract| contract.action)
+        .collect();
+    assert_eq!(
+        actions.len(),
+        AUDIT_ACTION_CONTRACTS.len(),
+        "每个 action 必须只有一个目标合同"
+    );
+
+    for contract in AUDIT_ACTION_CONTRACTS {
+        let entrypoint_count = AUDITED_ENTRYPOINTS
+            .iter()
+            .filter(|entry| entry.action == contract.action)
+            .count();
+        assert_eq!(
+            entrypoint_count, contract.expected_count,
+            "{} 的 entrypoint 数量与合同不符",
+            contract.action
+        );
+    }
 
     for entry in AUDITED_ENTRYPOINTS {
         assert!(
@@ -426,6 +744,870 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
             );
         }
     }
+}
+
+/// 所有 audit before snapshot 都必须可在调用方事务内加锁读取，避免 route 先读后写竞态。
+#[tokio::test]
+async fn audit_contract_repositories_expose_transaction_local_locked_snapshots() {
+    let state = audit_contract_state().await;
+    let mut tx = state.db.begin().await.unwrap();
+
+    let _ = users::find_by_id_for_update_tx(&mut tx, 0).await.unwrap();
+    let _ = users::find_by_username_for_update_tx(&mut tx, "missing")
+        .await
+        .unwrap();
+    let _ = projects::find_by_id_for_update_tx(&mut tx, 0)
+        .await
+        .unwrap();
+    let _ = entries::get_for_update_tx(&mut tx, 0, 0).await.unwrap();
+    let _ = memberships::find_role_tx(&mut tx, 0, 0).await.unwrap();
+    let _ = memberships::count_role_tx(&mut tx, 0, "owner")
+        .await
+        .unwrap();
+    let _ = files::find_file_for_update_tx(&mut tx, 0, 0).await.unwrap();
+    let _ = files::find_folder_for_update_tx(&mut tx, 0, 0)
+        .await
+        .unwrap();
+    let _ = files::folder_tree_counts_tx(&mut tx, 0, "/").await.unwrap();
+    let _ = prts_db::search_settings::get_for_update_tx(&mut tx)
+        .await
+        .unwrap();
+
+    tx.rollback().await.unwrap();
+}
+
+/// 项目行锁必须串行化成员管理，即使目标 membership 尚不存在也不能绕过锁。
+#[tokio::test]
+async fn audit_contract_project_lock_serializes_membership_upserts_for_missing_rows() {
+    let state = audit_contract_state().await;
+    let actor = audit_contract_create_user(&state.db, "audit-member-lock-owner", None).await;
+    let member = audit_contract_create_user(&state.db, "audit-member-lock-target", None).await;
+    let project = projects::create(
+        &state.db,
+        &format!("audit-member-lock-{}", actor.id),
+        "Audit member lock",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        actor.id,
+    )
+    .await
+    .unwrap();
+
+    let mut first = state.db.begin().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *first)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut first, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let second_pool = state.db.clone();
+    let project_id = project.id;
+    let member_id = member.id;
+    let mut second = tokio::spawn(async move {
+        let mut tx = second_pool.begin().await.unwrap();
+        projects::find_by_id_for_update_tx(&mut tx, project_id)
+            .await
+            .unwrap()
+            .unwrap();
+        memberships::upsert_tx(&mut tx, project_id, member_id, "translator")
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    });
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &second,
+        "第二个成员写事务必须等待同一项目行锁",
+    )
+    .await;
+    first.rollback().await.unwrap();
+    second.await.unwrap();
+
+    projects::delete(&state.db, project.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE id = ANY($1::BIGINT[])")
+        .bind(&[actor.id, member.id][..])
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// 两个真实搜索设置 PUT 必须按进入顺序提交并发布，最终 DB/runtime 同为后一次更新。
+#[tokio::test]
+async fn audit_contract_concurrent_search_puts_keep_db_and_runtime_in_commit_order() {
+    use axum::extract::State;
+    use axum::Json;
+    use std::time::Duration;
+
+    let _search_settings_guard = SEARCH_SETTINGS_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let actor = audit_contract_create_user(
+        &state.db,
+        "audit-search-settings-order",
+        Some("super_admin"),
+    )
+    .await;
+    let previous = prts_db::search_settings::get(&state.db).await.unwrap();
+    let first = prts_db::search_settings::SearchConfig {
+        embedding_enabled: false,
+        embedding_model: format!("audit-search-first-{}", actor.id),
+        embedding_base_url: "https://first.invalid/v1".to_string(),
+        embedding_batch: 4,
+        tm_enabled: true,
+        tm_min_similarity: 0.41,
+        tm_top_n: 1,
+    };
+    let second = prts_db::search_settings::SearchConfig {
+        embedding_enabled: false,
+        embedding_model: format!("audit-search-second-{}", actor.id),
+        embedding_base_url: "https://second.invalid/v1".to_string(),
+        embedding_batch: 5,
+        tm_enabled: false,
+        tm_min_similarity: 0.52,
+        tm_top_n: 2,
+    };
+
+    let mut commit_blocker = state.db.begin().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *commit_blocker)
+        .await
+        .unwrap();
+    prts_db::search_settings::get_for_update_tx(&mut commit_blocker)
+        .await
+        .unwrap();
+    let first_put = {
+        let state = state.clone();
+        let user = audit_contract_current_user(&actor);
+        let body = admin_settings_routes::SearchConfigDto {
+            embedding_enabled: first.embedding_enabled,
+            embedding_model: first.embedding_model.clone(),
+            embedding_base_url: first.embedding_base_url.clone(),
+            embedding_batch: first.embedding_batch,
+            tm_enabled: first.tm_enabled,
+            tm_min_similarity: first.tm_min_similarity,
+            tm_top_n: first.tm_top_n,
+        };
+        tokio::spawn(async move {
+            admin_settings_routes::put_search_settings(State(state), user, Json(body)).await
+        })
+    };
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        blocker_pid,
+        "SELECT pg_advisory_xact_lock($1)",
+        &first_put,
+        "第一次 PUT 应等待 DB advisory lock",
+    )
+    .await;
+    let second_put = tokio::spawn(admin_settings_routes::put_search_settings(
+        State(state.clone()),
+        audit_contract_current_user(&actor),
+        Json(admin_settings_routes::SearchConfigDto {
+            embedding_enabled: second.embedding_enabled,
+            embedding_model: second.embedding_model.clone(),
+            embedding_base_url: second.embedding_base_url.clone(),
+            embedding_batch: second.embedding_batch,
+            tm_enabled: second.tm_enabled,
+            tm_min_similarity: second.tm_min_similarity,
+            tm_top_n: second.tm_top_n,
+        }),
+    ));
+    commit_blocker.rollback().await.unwrap();
+
+    let Json(first_response) = tokio::time::timeout(Duration::from_secs(5), first_put)
+        .await
+        .expect("释放 advisory lock 后第一次 PUT 应完成")
+        .unwrap()
+        .expect_api("第一次搜索设置 PUT 成功");
+    let Json(second_response) = tokio::time::timeout(Duration::from_secs(5), second_put)
+        .await
+        .expect("第一次发布完成后第二次 PUT 应完成")
+        .unwrap()
+        .expect_api("第二次搜索设置 PUT 成功");
+    assert_eq!(first_response.config.embedding_model, first.embedding_model);
+    assert_eq!(
+        second_response.config.embedding_model,
+        second.embedding_model
+    );
+    assert_eq!(
+        prts_db::search_settings::get(&state.db).await.unwrap(),
+        second
+    );
+    assert_eq!(*state.search_rt.read().await, second);
+
+    prts_db::search_settings::set(&state.db, previous.clone(), Some(actor.id))
+        .await
+        .unwrap();
+    *state.search_rt.write().await = previous;
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(actor.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// 请求在 worker 已进入 DB 事务后取消，已入队更新仍必须完成 DB/audit/runtime 收敛。
+#[tokio::test]
+async fn audit_contract_cancelled_search_put_still_converges_db_runtime_and_audit() {
+    use axum::extract::State;
+    use axum::Json;
+    use std::time::Duration;
+
+    let _search_settings_guard = SEARCH_SETTINGS_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let actor = audit_contract_create_user(
+        &state.db,
+        "audit-search-settings-cancel",
+        Some("super_admin"),
+    )
+    .await;
+    let before_db = prts_db::search_settings::get(&state.db).await.unwrap();
+    let before_audit: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log
+         WHERE actor_id = $1 AND action = 'search_settings.updated'",
+    )
+    .bind(actor.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+
+    let expected = prts_db::search_settings::SearchConfig {
+        embedding_enabled: false,
+        embedding_model: format!("cancelled-search-{}", actor.id),
+        embedding_base_url: "https://cancelled.invalid/v1".to_string(),
+        embedding_batch: 2,
+        tm_enabled: false,
+        tm_min_similarity: 0.77,
+        tm_top_n: 1,
+    };
+    let mut commit_blocker = state.db.begin().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *commit_blocker)
+        .await
+        .unwrap();
+    prts_db::search_settings::get_for_update_tx(&mut commit_blocker)
+        .await
+        .unwrap();
+    let response = state
+        .search_settings_updater
+        .enqueue(actor.id, expected.clone())
+        .await
+        .expect("更新成功入队");
+    let response_waiter = tokio::spawn(response);
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        blocker_pid,
+        "SELECT pg_advisory_xact_lock($1)",
+        &response_waiter,
+        "搜索设置 worker 应已进入 DB 事务并等待 advisory lock",
+    )
+    .await;
+    let runtime_read = tokio::time::timeout(Duration::from_millis(100), state.search_rt.read())
+        .await
+        .expect("DB 锁竞争期间 runtime 读取不得被搜索设置事务阻塞");
+    drop(runtime_read);
+    response_waiter.abort();
+    let waiter_error = response_waiter.await.expect_err("模拟请求等待方必须已取消");
+    assert!(waiter_error.is_cancelled());
+    commit_blocker.rollback().await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if prts_db::search_settings::get(&state.db).await.unwrap() == expected
+                && *state.search_rt.read().await == expected
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("接收端丢弃后 worker 仍应完成 DB/runtime 发布");
+    let after_audit: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log
+         WHERE actor_id = $1 AND action = 'search_settings.updated'",
+    )
+    .bind(actor.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(after_audit, before_audit + 1);
+
+    prts_db::search_settings::set(&state.db, before_db.clone(), Some(actor.id))
+        .await
+        .unwrap();
+    *state.search_rt.write().await = before_db;
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(actor.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// 所有现有项目业务 mutation 都必须在项目锁后、业务写前重新加载授权快照。
+#[test]
+fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
+    fn function_body<'a>(source: &'a str, start: &str, end: Option<&str>) -> &'a str {
+        let tail = source
+            .split_once(start)
+            .unwrap_or_else(|| panic!("缺少函数 {start}"))
+            .1;
+        end.map_or(tail, |end| {
+            tail.split_once(end)
+                .unwrap_or_else(|| panic!("缺少函数结束标记 {end}"))
+                .0
+        })
+    }
+
+    let projects_source = include_str!("../src/routes/projects.rs");
+    let entries_source = include_str!("../src/routes/entries.rs");
+    let files_source = include_str!("../src/routes/files.rs");
+    let notifications_source = include_str!("../src/routes/notifications.rs");
+    let job_retry_source = include_str!("../src/job_retry.rs");
+    for (body, writer) in [
+        (
+            function_body(
+                entries_source,
+                "pub async fn upload(",
+                Some("// ============================= 词条"),
+            ),
+            "entries::bulk_upsert_tx",
+        ),
+        (
+            function_body(
+                projects_source,
+                "pub async fn update_project(",
+                Some("/// 删除项目"),
+            ),
+            "projects::update_tx",
+        ),
+        (
+            function_body(
+                projects_source,
+                "pub async fn delete_project(",
+                Some("/// 成员对外表示"),
+            ),
+            "projects::delete_tx",
+        ),
+        (
+            function_body(
+                projects_source,
+                "pub async fn add_member(",
+                Some("/// 移除项目成员"),
+            ),
+            "memberships::upsert_tx",
+        ),
+        (
+            function_body(projects_source, "pub async fn remove_member(", None),
+            "memberships::remove_tx",
+        ),
+        (
+            function_body(
+                entries_source,
+                "pub async fn update_entry(",
+                Some("/// 设置标志请求"),
+            ),
+            "entries::update_translation_tx",
+        ),
+        (
+            function_body(
+                entries_source,
+                "pub async fn set_entry_flags(",
+                Some("/// 词条历史项"),
+            ),
+            "entries::set_flags_tx",
+        ),
+        (
+            function_body(
+                files_source,
+                "pub async fn delete_file(",
+                Some("/// 删除文件夹"),
+            ),
+            "files::delete_file_tx",
+        ),
+        (
+            function_body(
+                files_source,
+                "pub async fn delete_folder(",
+                Some("#[cfg(test)]"),
+            ),
+            "files::delete_folder_tx",
+        ),
+        (
+            function_body(notifications_source, "pub async fn poke(", None),
+            "notifications::create_tx",
+        ),
+        (
+            function_body(job_retry_source, "pub(crate) async fn retry_job(", None),
+            "jobs::manual_retry_tx",
+        ),
+    ] {
+        let project_lock = body
+            .find("projects::find_by_id_for_update_tx")
+            .expect("项目 mutation 必须先锁项目");
+        let reauthorization = body
+            .find("paccess::load_locked_tx")
+            .expect("项目 mutation 必须在锁后重验权限");
+        let business_write = body.find(writer).expect("项目 mutation 业务 writer 存在");
+        assert!(project_lock < reauthorization);
+        assert!(reauthorization < business_write);
+    }
+}
+
+/// 上传、文件删除与文件夹删除都必须等待项目行锁；文件夹审计计数对应实际级联子树。
+#[tokio::test]
+async fn audit_contract_file_tree_routes_share_project_lock_and_count_deleted_subtree() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let actor =
+        audit_contract_create_user(&state.db, "audit-file-tree-lock", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&actor),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Audit file tree lock {}", actor.id),
+            slug: Some(format!("audit-file-tree-lock-{}", actor.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建文件树锁测试项目");
+
+    let mut upload_blocker = state.db.begin().await.unwrap();
+    let upload_blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *upload_blocker)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut upload_blocker, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let blocked_upload = {
+        let state = state.clone();
+        let user = audit_contract_current_user(&actor);
+        tokio::spawn(async move {
+            entries_routes::upload(
+                State(state),
+                user,
+                Path(project.id),
+                Json(audit_contract_upload_req(
+                    "lock/file.json",
+                    &[("file-entry", "one")],
+                )),
+            )
+            .await
+        })
+    };
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        upload_blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &blocked_upload,
+        "上传必须等待项目行锁",
+    )
+    .await;
+    upload_blocker.rollback().await.unwrap();
+    let Json(file_to_delete) = blocked_upload
+        .await
+        .unwrap()
+        .expect_api("释放项目锁后上传成功");
+
+    let mut file_delete_blocker = state.db.begin().await.unwrap();
+    let file_delete_blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *file_delete_blocker)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut file_delete_blocker, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let blocked_file_delete = {
+        let state = state.clone();
+        let user = audit_contract_current_user(&actor);
+        tokio::spawn(async move {
+            files_routes::delete_file(
+                State(state),
+                user,
+                Path((project.id, file_to_delete.file_id)),
+            )
+            .await
+        })
+    };
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        file_delete_blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &blocked_file_delete,
+        "文件删除必须等待项目行锁",
+    )
+    .await;
+    file_delete_blocker.rollback().await.unwrap();
+    blocked_file_delete
+        .await
+        .unwrap()
+        .expect_api("释放项目锁后文件删除成功");
+    assert!(
+        files::find_file(&state.db, project.id, file_to_delete.file_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let Json(first_subtree_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&actor),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "cascade/one.json",
+            &[("one", "one")],
+        )),
+    )
+    .await
+    .expect_api("创建第一个待级联文件");
+    let Json(second_subtree_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&actor),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "cascade/nested/two.json",
+            &[("two-a", "two a"), ("two-b", "two b")],
+        )),
+    )
+    .await
+    .expect_api("创建第二个待级联文件");
+    let folder_id = files::list_folders(&state.db, project.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.path == "cascade")
+        .expect("待级联顶层文件夹存在")
+        .id;
+
+    let mut folder_delete_blocker = state.db.begin().await.unwrap();
+    let folder_delete_blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *folder_delete_blocker)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut folder_delete_blocker, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let blocked_folder_delete = {
+        let state = state.clone();
+        let user = audit_contract_current_user(&actor);
+        tokio::spawn(async move {
+            files_routes::delete_folder(State(state), user, Path((project.id, folder_id))).await
+        })
+    };
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        folder_delete_blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &blocked_folder_delete,
+        "文件夹删除必须等待项目行锁",
+    )
+    .await;
+    folder_delete_blocker.rollback().await.unwrap();
+    blocked_folder_delete
+        .await
+        .unwrap()
+        .expect_api("释放项目锁后文件夹删除成功");
+
+    let remaining_file_ids: Vec<i64> = files::list_files(&state.db, project.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|file| file.id)
+        .collect();
+    assert!(!remaining_file_ids.contains(&first_subtree_file.file_id));
+    assert!(!remaining_file_ids.contains(&second_subtree_file.file_id));
+    assert!(files::list_folders(&state.db, project.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .all(|folder| folder.path != "cascade" && !folder.path.starts_with("cascade/")));
+
+    let folder_audit =
+        audit_contract_rows_for_action_target(&state.db, "folder.deleted", &folder_id.to_string())
+            .await;
+    assert_eq!(folder_audit.len(), 1);
+    assert_eq!(folder_audit[0].project_id, Some(project.id));
+    assert_eq!(folder_audit[0].payload["file_count"], 2);
+    assert_eq!(folder_audit[0].payload["entry_count"], 3);
+
+    projects::delete(&state.db, project.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(actor.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// 文件树 mutation 等待项目锁期间被撤权时，锁内授权快照必须拒绝陈旧权限。
+#[tokio::test]
+async fn audit_contract_upload_revalidates_permission_after_project_lock() {
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "audit-lock-revoke-owner", None).await;
+    let manager = audit_contract_create_user(&state.db, "audit-lock-revoke-manager", None).await;
+    let project = projects::create(
+        &state.db,
+        &format!("audit-lock-revoke-{}", owner.id),
+        "Audit lock revoke",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&state.db, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert(&state.db, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+
+    let mut revocation = state.db.begin().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *revocation)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut revocation, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    memberships::remove_tx(&mut revocation, project.id, manager.id)
+        .await
+        .unwrap();
+
+    let blocked_upload = tokio::spawn(entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "revoked/file.json",
+            &[("entry", "source")],
+        )),
+    ));
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &blocked_upload,
+        "上传应在锁后重新读取最新权限",
+    )
+    .await;
+    revocation.commit().await.unwrap();
+
+    let denied = blocked_upload
+        .await
+        .unwrap()
+        .expect_err_api("撤权提交后不得继续上传");
+    assert_eq!(
+        denied.into_response().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+    assert!(files::list_files(&state.db, project.id)
+        .await
+        .unwrap()
+        .is_empty());
+
+    memberships::upsert(&state.db, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+    let mut project_revocation = state.db.begin().await.unwrap();
+    let project_blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *project_revocation)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut project_revocation, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    memberships::remove_tx(&mut project_revocation, project.id, manager.id)
+        .await
+        .unwrap();
+    let denied_name = format!("Revoked manager update {}", manager.id);
+    let blocked_project_update = tokio::spawn(projects_routes::update_project(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path(project.id),
+        Json(projects_routes::UpdateProjectReq {
+            name: Some(denied_name.clone()),
+            description: None,
+            visibility: None,
+            source_langs: None,
+            target_lang: None,
+        }),
+    ));
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        project_blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &blocked_project_update,
+        "项目更新应在锁后重新读取最新权限",
+    )
+    .await;
+    project_revocation.commit().await.unwrap();
+    assert_eq!(
+        blocked_project_update
+            .await
+            .unwrap()
+            .expect_err_api("撤权提交后不得更新项目")
+            .into_response()
+            .status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+    assert_ne!(
+        projects::find_by_id(&state.db, project.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .name,
+        denied_name
+    );
+
+    let target = audit_contract_create_user(&state.db, "audit-lock-revoke-target", None).await;
+    memberships::upsert(&state.db, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+    let mut member_revocation = state.db.begin().await.unwrap();
+    let member_blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *member_revocation)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut member_revocation, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    memberships::remove_tx(&mut member_revocation, project.id, manager.id)
+        .await
+        .unwrap();
+    let blocked_member_add = tokio::spawn(projects_routes::add_member(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: target.username.clone(),
+            role: "translator".to_string(),
+        }),
+    ));
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        member_blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &blocked_member_add,
+        "成员添加应在锁后重新读取最新权限",
+    )
+    .await;
+    member_revocation.commit().await.unwrap();
+    assert_eq!(
+        blocked_member_add
+            .await
+            .unwrap()
+            .expect_err_api("撤权提交后不得添加成员")
+            .into_response()
+            .status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+    assert!(memberships::find_role(&state.db, project.id, target.id)
+        .await
+        .unwrap()
+        .is_none());
+
+    let Json(uploaded) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "revoked/entry.json",
+            &[("entry", "source")],
+        )),
+    )
+    .await
+    .expect_api("拥有者创建撤权词条夹具");
+    let entry: prts_db::models::Entry = sqlx::query_as(
+        "SELECT * FROM entries WHERE project_id = $1 AND file_id = $2 AND key = 'entry'",
+    )
+    .bind(project.id)
+    .bind(uploaded.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    memberships::upsert(&state.db, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+    let mut entry_revocation = state.db.begin().await.unwrap();
+    let entry_blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *entry_revocation)
+        .await
+        .unwrap();
+    projects::find_by_id_for_update_tx(&mut entry_revocation, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    memberships::remove_tx(&mut entry_revocation, project.id, manager.id)
+        .await
+        .unwrap();
+    let blocked_entry_update = tokio::spawn(entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "revoked translation".to_string(),
+            state: "translated".to_string(),
+            version: entry.version,
+        }),
+    ));
+    audit_contract_wait_for_postgres_block(
+        &state.db,
+        entry_blocker_pid,
+        "SELECT * FROM projects WHERE id = $1 FOR UPDATE",
+        &blocked_entry_update,
+        "词条更新应在锁后重新读取最新权限",
+    )
+    .await;
+    entry_revocation.commit().await.unwrap();
+    assert_eq!(
+        blocked_entry_update
+            .await
+            .unwrap()
+            .expect_err_api("撤权提交后不得更新词条")
+            .into_response()
+            .status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+    assert_ne!(
+        entries::get(&state.db, project.id, entry.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .translation,
+        "revoked translation"
+    );
+
+    projects::delete(&state.db, project.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE id = ANY($1::BIGINT[])")
+        .bind(&[owner.id, manager.id, target.id][..])
+        .execute(&state.db)
+        .await
+        .unwrap();
 }
 
 #[test]
@@ -572,11 +1754,17 @@ async fn audit_contract_state_with_db(db: prts_db::Db) -> state::AppState {
         prts_common::config::Settings::load_from("__audit_contract_missing_config__")
             .expect("加载测试配置"),
     );
-    let job_worker = job_worker::spawn(
+    let (job_worker, _job_worker_handle) = job_worker::spawn(
         db.clone(),
         jobs::JobRegistry::new(Vec::new()),
         Arc::new(job_worker::NoPendingDeletions),
     );
+    let search_config = prts_db::search_settings::get(&db)
+        .await
+        .expect("加载当前搜索运行时配置");
+    let search_rt = Arc::new(tokio::sync::RwLock::new(search_config));
+    let (search_settings_updater, _search_settings_worker) =
+        search_settings_worker::spawn(db.clone(), search_rt.clone());
     state::AppState {
         db,
         cache,
@@ -584,7 +1772,8 @@ async fn audit_contract_state_with_db(db: prts_db::Db) -> state::AppState {
         zoot: Arc::new(None),
         realtime,
         embedder: Arc::new(None),
-        search_rt: Arc::new(tokio::sync::RwLock::new(Default::default())),
+        search_rt,
+        search_settings_updater,
         job_worker,
     }
 }
@@ -613,6 +1802,25 @@ async fn audit_contract_create_user(
     }
 }
 
+fn audit_contract_upload_req(
+    path: impl Into<String>,
+    entries: &[(&str, &str)],
+) -> entries_routes::UploadReq {
+    entries_routes::UploadReq {
+        path: path.into(),
+        entries: entries
+            .iter()
+            .map(|(key, original)| entries_routes::UploadEntryDto {
+                key: (*key).to_string(),
+                original: serde_json::json!({"en": original}),
+                context: None,
+                translation: None,
+                state: None,
+            })
+            .collect(),
+    }
+}
+
 fn audit_contract_current_user(user: &prts_db::models::User) -> auth::CurrentUser {
     auth::CurrentUser {
         id: user.id,
@@ -621,6 +1829,43 @@ fn audit_contract_current_user(user: &prts_db::models::User) -> auth::CurrentUse
             .as_deref()
             .and_then(prts_core::PlatformRole::parse),
     }
+}
+
+async fn audit_contract_wait_for_postgres_block<T>(
+    db: &prts_db::Db,
+    blocker_pid: i32,
+    expected_query: &str,
+    task: &tokio::task::JoinHandle<T>,
+    message: &str,
+) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let blocked_pid: Option<i32> = sqlx::query_scalar(
+                "SELECT activity.pid
+                 FROM pg_stat_activity AS activity
+                 WHERE activity.datname = current_database()
+                   AND activity.pid <> $1
+                   AND activity.wait_event_type = 'Lock'
+                   AND $1 = ANY(pg_blocking_pids(activity.pid))
+                   AND activity.query LIKE '%' || $2 || '%'
+                 ORDER BY activity.query_start
+                 LIMIT 1",
+            )
+            .bind(blocker_pid)
+            .bind(expected_query)
+            .fetch_optional(db)
+            .await
+            .unwrap();
+            if blocked_pid.is_some() {
+                assert!(!task.is_finished(), "{message}");
+                break;
+            }
+            assert!(!task.is_finished(), "{message}: mutation 提前结束");
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{message}: 未观察到 PostgreSQL 阻塞证据"));
 }
 
 /// `ApiError` 刻意不暴露内部细节且没有 `Debug`；测试只需报告调用边界名称。
@@ -704,14 +1949,46 @@ async fn audit_contract_rows_for_action_target(
 }
 
 fn audit_contract_assert_actions(rows: &[ObservedAudit], expected: &[&str]) {
-    let observed: std::collections::HashSet<_> =
-        rows.iter().map(|row| row.action.as_str()).collect();
+    let mut expected_counts = std::collections::HashMap::new();
     for action in expected {
-        assert!(
-            observed.contains(action),
-            "缺少审计 action {action}；实际={observed:?}"
+        *expected_counts.entry(*action).or_insert(0_usize) += 1;
+    }
+    for (action, expected_count) in expected_counts {
+        let observed_count = rows.iter().filter(|row| row.action == action).count();
+        assert_eq!(
+            observed_count, expected_count,
+            "审计 action {action} 数量不符"
         );
     }
+}
+
+fn audit_contract_assert_exact_targets(rows: &[ObservedAudit], expected: &[(&str, String)]) {
+    for (action, target_id) in expected {
+        let matching: Vec<_> = rows
+            .iter()
+            .filter(|row| row.action == *action && row.target_id == *target_id)
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "action {action} 必须恰好指向 target {target_id}"
+        );
+    }
+}
+
+#[test]
+fn audit_contract_exact_targets_reject_numeric_but_wrong_ids() {
+    let rows = vec![ObservedAudit {
+        action: "message.sent".to_string(),
+        target_type: "message".to_string(),
+        target_id: "41".to_string(),
+        project_id: None,
+        payload: serde_json::json!({}),
+    }];
+    let rejected = std::panic::catch_unwind(|| {
+        audit_contract_assert_exact_targets(&rows, &[("message.sent", "42".to_string())]);
+    });
+    assert!(rejected.is_err(), "数值合法但错误的 target id 必须被拒绝");
 }
 
 fn audit_contract_assert_payloads_are_typed_and_redacted(
@@ -733,6 +2010,44 @@ fn audit_contract_assert_payloads_are_typed_and_redacted(
                 "{} payload 出现未 allowlist 字段 {key}",
                 row.action
             );
+        }
+        let contract = AUDIT_ACTION_CONTRACTS
+            .iter()
+            .find(|contract| contract.action == row.action)
+            .unwrap_or_else(|| panic!("action {} 没有目标合同", row.action));
+        assert_eq!(
+            row.target_type, contract.target_type,
+            "{} target_type",
+            row.action
+        );
+        match contract.target_id_policy {
+            TargetIdPolicy::Numeric => {
+                row.target_id
+                    .parse::<i64>()
+                    .unwrap_or_else(|_| panic!("{} target_id 必须为整数", row.action));
+            }
+            TargetIdPolicy::CompositeNumeric => {
+                let parts: Vec<_> = row.target_id.split(':').collect();
+                assert_eq!(parts.len(), 2, "{} target_id 必须是 a:b", row.action);
+                for part in parts {
+                    part.parse::<i64>()
+                        .unwrap_or_else(|_| panic!("{} composite target 必须为整数", row.action));
+                }
+            }
+            TargetIdPolicy::Constant(expected) => assert_eq!(row.target_id, expected),
+            TargetIdPolicy::OpaqueNonEmpty => assert!(!row.target_id.is_empty()),
+        }
+        match contract.project_snapshot_policy {
+            ProjectSnapshotPolicy::None => assert!(row.project_id.is_none()),
+            ProjectSnapshotPolicy::SameAsNumericTarget => assert_eq!(
+                row.project_id,
+                Some(
+                    row.target_id
+                        .parse::<i64>()
+                        .expect("project target 必须为整数")
+                )
+            ),
+            ProjectSnapshotPolicy::Required => assert!(row.project_id.is_some()),
         }
         audit_contract_assert_json_has_no_sensitive_keys(&row.payload);
         let serialized = row.payload.to_string();
@@ -786,9 +2101,26 @@ async fn audit_contract_registration_rolls_back_user_and_token_issuance_when_aud
     use axum::extract::State;
     use axum::Json;
 
+    let settings_db = pool().await;
+    settings::set(
+        &settings_db,
+        appsettings::AUTH_OAUTH_ONLY,
+        &serde_json::json!(false),
+        None,
+    )
+    .await
+    .unwrap();
+    settings::set(
+        &settings_db,
+        appsettings::AUTH_REGISTRATION_OPEN,
+        &serde_json::json!(true),
+        None,
+    )
+    .await
+    .unwrap();
     let failing_db = audit_contract_failing_audit_db().await;
     let state = audit_contract_state_with_db(failing_db).await;
-    let username = format!("u-{}", audit_jobs_unique("audit-register-rollback"));
+    let username = format!("u-{}", audit_jobs_unique("reg"));
     let password_marker = "REGISTER_PASSWORD_MUST_NEVER_ENTER_AUDIT";
     let result = auth_routes::register(
         State(state.clone()),
@@ -824,6 +2156,16 @@ async fn audit_contract_registration_rolls_back_user_and_token_issuance_when_aud
     .await
     .unwrap();
     assert!(!leaked, "失败审计也不得泄露 password");
+    sqlx::query("DELETE FROM settings WHERE key = ANY($1::TEXT[])")
+        .bind(
+            &[
+                appsettings::AUTH_OAUTH_ONLY,
+                appsettings::AUTH_REGISTRATION_OPEN,
+            ][..],
+        )
+        .execute(&settings_db)
+        .await
+        .unwrap();
 }
 
 /// 普通业务 mutation 同样 fail closed；项目与 owner membership 不能部分提交。
@@ -919,6 +2261,13 @@ async fn audit_contract_login_commits_active_session_audit_and_outbox_before_ret
 
     let rows = audit_contract_rows_for_actor(&state.db, user.id).await;
     audit_contract_assert_actions(&rows, &["auth.login_succeeded", "auth.token_issued"]);
+    audit_contract_assert_exact_targets(
+        &rows,
+        &[
+            ("auth.login_succeeded", user.id.to_string()),
+            ("auth.token_issued", sessions[0].0.to_string()),
+        ],
+    );
     audit_contract_assert_payloads_are_typed_and_redacted(
         &rows,
         &[
@@ -1112,7 +2461,21 @@ async fn audit_contract_refresh_rotation_has_one_active_successor_and_redacted_o
     }
 
     let rows = audit_contract_rows_for_actor(&state.db, user.id).await;
-    audit_contract_assert_actions(&rows, &["auth.refresh_rotated"]);
+    audit_contract_assert_actions(
+        &rows,
+        &[
+            "auth.refresh_rotated",
+            "auth.token_issued",
+            "auth.token_issued",
+        ],
+    );
+    audit_contract_assert_exact_targets(
+        &rows,
+        &[
+            ("auth.refresh_rotated", successor.0.to_string()),
+            ("auth.token_issued", successor.0.to_string()),
+        ],
+    );
     audit_contract_assert_payloads_are_typed_and_redacted(
         &rows,
         &[
@@ -1124,6 +2487,26 @@ async fn audit_contract_refresh_rotation_has_one_active_successor_and_redacted_o
             &new_hash,
         ],
     );
+}
+
+/// Refresh 必须在 rotation 事务内取得对外用户快照，提交后不得再依赖可失败的 DB 查询。
+#[tokio::test]
+async fn audit_contract_refresh_returns_transactional_secret_free_user_snapshot() {
+    let state = audit_contract_state().await;
+    let (user, first) = audit_contract_login_fixture(&state, "audit-refresh-snapshot").await;
+
+    let refreshed = auth::session::refresh(&state, &first.refresh_token)
+        .await
+        .expect("refresh rotation 成功");
+
+    assert_eq!(refreshed.user.id, user.id);
+    assert_eq!(refreshed.user.username, user.username);
+    assert!(!refreshed.tokens.access_token.is_empty());
+    let serialized = serde_json::to_value(&refreshed.user).expect("用户快照可序列化");
+    let object = serialized.as_object().expect("用户快照必须是 object");
+    assert!(!object.contains_key("password_hash"));
+    assert!(!object.contains_key("email_verified"));
+    assert!(!object.contains_key("status"));
 }
 
 /// 并发复用同一 predecessor 只能一个 refresh 成功，且 DB 最终只有一个 active successor。
@@ -1258,6 +2641,344 @@ async fn audit_contract_stale_redis_refresh_cannot_bypass_revoked_db_session() {
     );
 }
 
+/// 新签发 access JWT 必须绑定 DB session；logout/revoke 后不能继续靠 JWT 签名通过。
+#[tokio::test]
+async fn audit_contract_revoked_db_session_immediately_denies_bound_access_jwt() {
+    use axum::extract::FromRequestParts;
+    use axum::http::{header, Request};
+    use axum::response::IntoResponse;
+
+    let state = audit_contract_state().await;
+    let (user, tokens) = audit_contract_login_fixture(&state, "audit-access-session-revoke").await;
+    let claims = prts_auth::jwt::decode(&tokens.access_token, state.jwt_secret()).unwrap();
+    let session_handle = claims.sid.expect("新签发 access JWT 必须携带 sid");
+    let session = auth_sessions::find_active_unexpired_by_handle(&state.db, &session_handle)
+        .await
+        .unwrap()
+        .expect("login 已提交 active DB session");
+    assert_eq!(session.user_id, user.id);
+
+    let mut tx = state.db.begin().await.unwrap();
+    auth_sessions::revoke_unexpired_tx(&mut tx, session.id)
+        .await
+        .unwrap()
+        .expect("active session 可立即吊销");
+    tx.commit().await.unwrap();
+
+    let (mut parts, _) = Request::builder()
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", tokens.access_token),
+        )
+        .body(())
+        .unwrap()
+        .into_parts();
+    let denied = auth::CurrentUser::from_request_parts(&mut parts, &state)
+        .await
+        .expect_err_api("revoked DB session 必须否决仍未过期的绑定 access JWT");
+    assert_eq!(
+        denied.into_response().status(),
+        axum::http::StatusCode::UNAUTHORIZED
+    );
+}
+
+/// 已提供但无效的凭证必须先写脱敏 `auth.failed`；无凭证仍可按公开游客处理。
+#[tokio::test]
+async fn audit_contract_presented_invalid_credentials_are_audited_before_denial_or_guest() {
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+    use std::collections::HashSet;
+    use tower::ServiceExt;
+
+    async fn protected(_user: auth::CurrentUser) -> StatusCode {
+        StatusCode::OK
+    }
+
+    async fn public(auth::MaybeUser(user): auth::MaybeUser) -> StatusCode {
+        if user.is_some() {
+            StatusCode::OK
+        } else {
+            StatusCode::NO_CONTENT
+        }
+    }
+
+    // 使用“任何 audit INSERT 都失败”的连接池证明真正无凭证路径根本不会触发审计；
+    // 不读取全局计数，避免并行测试插入同一 action 造成竞态。
+    let no_audit_state =
+        audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let no_audit_app = Router::new()
+        .route("/public", get(public))
+        .layer(axum::middleware::from_fn(error::localize_audit_errors))
+        .with_state(no_audit_state);
+    let missing = no_audit_app
+        .oneshot(
+            Request::builder()
+                .uri("/public")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NO_CONTENT);
+
+    let state = audit_contract_state().await;
+    let app = Router::new()
+        .route("/protected", get(protected))
+        .route("/public", get(public))
+        .layer(axum::middleware::from_fn(error::localize_audit_errors))
+        .with_state(state.clone());
+    let started_at = chrono::Utc::now();
+
+    let (active_user, active_tokens) =
+        audit_contract_login_fixture(&state, "audit-invalid-jwt").await;
+    let base_claims =
+        prts_auth::jwt::decode(&active_tokens.access_token, state.jwt_secret()).unwrap();
+    let sid_none = prts_auth::jwt::encode(
+        &prts_auth::jwt::Claims {
+            sid: None,
+            ..base_claims.clone()
+        },
+        state.jwt_secret(),
+    );
+    let expired = prts_auth::jwt::encode(
+        &prts_auth::jwt::Claims {
+            exp: chrono::Utc::now().timestamp() - 120,
+            ..base_claims.clone()
+        },
+        state.jwt_secret(),
+    );
+    let other = audit_contract_create_user(&state.db, "audit-jwt-mismatch", None).await;
+    let mismatch = prts_auth::jwt::encode(
+        &prts_auth::jwt::Claims {
+            sub: other.id,
+            ..base_claims.clone()
+        },
+        state.jwt_secret(),
+    );
+
+    let (revoked_user, revoked_tokens) =
+        audit_contract_login_fixture(&state, "audit-jwt-revoked").await;
+    let revoked_claims =
+        prts_auth::jwt::decode(&revoked_tokens.access_token, state.jwt_secret()).unwrap();
+    let revoked_handle = revoked_claims.sid.clone().unwrap();
+    let revoked_session =
+        auth_sessions::find_active_unexpired_by_handle(&state.db, &revoked_handle)
+            .await
+            .unwrap()
+            .unwrap();
+    let mut tx = state.db.begin().await.unwrap();
+    auth_sessions::revoke_unexpired_tx(&mut tx, revoked_session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let (inactive_user, inactive_tokens) =
+        audit_contract_login_fixture(&state, "audit-jwt-inactive").await;
+    sqlx::query("UPDATE users SET status = 'disabled' WHERE id = $1")
+        .bind(inactive_user.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let invalid_jwt = "INVALID_JWT_MUST_NOT_ENTER_AUDIT".to_string();
+    let invalid_api_key = "prts_INVALID_API_KEY_MUST_NOT_ENTER_AUDIT".to_string();
+    for (credential, expected_status) in [
+        (invalid_jwt.clone(), StatusCode::UNAUTHORIZED),
+        (invalid_api_key.clone(), StatusCode::UNAUTHORIZED),
+        (sid_none.clone(), StatusCode::UNAUTHORIZED),
+        (expired.clone(), StatusCode::UNAUTHORIZED),
+        (mismatch.clone(), StatusCode::UNAUTHORIZED),
+        (
+            revoked_tokens.access_token.clone(),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (inactive_tokens.access_token.clone(), StatusCode::FORBIDDEN),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected_status);
+    }
+
+    let optional_invalid = app
+        .oneshot(
+            Request::builder()
+                .uri("/public")
+                .header(header::AUTHORIZATION, "Bearer prts_OPTIONAL_INVALID")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(optional_invalid.status(), StatusCode::NO_CONTENT);
+
+    let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, serde_json::Value)>(
+        "SELECT action, target_type, target_id, project_id_snapshot, payload
+         FROM audit_log
+         WHERE action = 'auth.failed' AND created_at >= $1
+         ORDER BY id",
+    )
+    .bind(started_at)
+    .fetch_all(&state.db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(
+        |(action, target_type, target_id, project_id, payload)| ObservedAudit {
+            action,
+            target_type,
+            target_id,
+            project_id,
+            payload,
+        },
+    )
+    .collect::<Vec<_>>();
+    let observed: HashSet<_> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.payload["method"].as_str().unwrap().to_string(),
+                row.payload["reason_code"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    for expected in [
+        ("jwt", "invalid_credential"),
+        ("api_key", "invalid_credential"),
+        ("jwt", "missing_session"),
+        ("jwt", "token_expired"),
+        ("jwt", "user_mismatch"),
+        ("jwt", "session_inactive"),
+        ("jwt", "account_inactive"),
+    ] {
+        assert!(
+            observed.contains(&(expected.0.to_string(), expected.1.to_string())),
+            "缺少失败认证审计 {expected:?}；实际={observed:?}"
+        );
+    }
+    audit_contract_assert_payloads_are_typed_and_redacted(
+        &rows,
+        &[
+            &invalid_jwt,
+            &invalid_api_key,
+            &sid_none,
+            &expired,
+            &mismatch,
+            &revoked_tokens.access_token,
+            &inactive_tokens.access_token,
+        ],
+    );
+    assert!(rows
+        .iter()
+        .any(|row| row.target_id == active_user.id.to_string()));
+    assert!(rows.iter().any(|row| row.target_id == other.id.to_string()));
+    assert!(rows
+        .iter()
+        .any(|row| row.target_id == revoked_user.id.to_string()));
+    assert!(rows
+        .iter()
+        .any(|row| row.target_id == inactive_user.id.to_string()));
+}
+
+/// 失败审计不可持久化时必须覆盖原 401/guest，并按请求语言返回通用 503。
+#[tokio::test]
+async fn audit_contract_presented_invalid_credential_audit_failure_is_bilingual_503() {
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+    use tower::ServiceExt;
+
+    async fn protected(_user: auth::CurrentUser) -> StatusCode {
+        StatusCode::OK
+    }
+
+    async fn public(auth::MaybeUser(user): auth::MaybeUser) -> StatusCode {
+        if user.is_some() {
+            StatusCode::OK
+        } else {
+            StatusCode::NO_CONTENT
+        }
+    }
+
+    let failing_db = audit_contract_failing_audit_db().await;
+    let state = audit_contract_state_with_db(failing_db).await;
+    let user = audit_contract_create_user(&state.db, "audit-failed-sid-none", None).await;
+    let now = chrono::Utc::now().timestamp();
+    let sid_none = prts_auth::jwt::encode(
+        &prts_auth::jwt::Claims {
+            sub: user.id,
+            iat: now,
+            exp: now + 600,
+            typ: "access".to_string(),
+            sid: None,
+        },
+        state.jwt_secret(),
+    );
+    let app = Router::new()
+        .route("/protected", get(protected))
+        .route("/public", get(public))
+        .layer(axum::middleware::from_fn(error::localize_audit_errors))
+        .with_state(state);
+
+    let missing = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/public")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NO_CONTENT);
+
+    for (credential, locale, expected_message) in [
+        (
+            "prts_INVALID_AUDIT_FAILURE".to_string(),
+            "en",
+            "Audit service unavailable",
+        ),
+        (
+            "INVALID_JWT_AUDIT_FAILURE".to_string(),
+            "zh-CN",
+            "审计服务暂不可用",
+        ),
+        (sid_none, "en-US", "Audit service unavailable"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/protected")
+                    .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+                    .header(header::ACCEPT_LANGUAGE, locale)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "AUDIT_UNAVAILABLE");
+        assert_eq!(body["message"], expected_message);
+    }
+}
+
 /// DB commit 已成功时，Redis populate 失败由 outbox 重放，不能撤销 session 或吞掉 raw token。
 #[tokio::test]
 async fn audit_contract_token_issuance_survives_redis_populate_failure_via_durable_outbox() {
@@ -1303,6 +3024,217 @@ async fn audit_contract_token_issuance_survives_redis_populate_failure_via_durab
     assert_eq!((active, queued), (1, 1));
 }
 
+/// Redis 暂时不可用时，同一 intent 必须保持 queued 并按有界退避重试，不进入 failed 扫描恢复。
+#[tokio::test]
+async fn audit_contract_transient_auth_outbox_requeues_same_intent_until_redis_returns() {
+    let state = audit_contract_state().await;
+    let user = audit_contract_create_user(&state.db, "audit-outbox-recovery", None).await;
+    let raw_refresh = "OUTBOX_RAW_REFRESH_MUST_NOT_ENTER_PAYLOAD";
+    let refresh_hash = prts_auth::token::sha256_hex(raw_refresh);
+    let session_handle = format!("outbox-session-{}", audit_jobs_unique("recover"));
+    let mut tx = state.db.begin().await.unwrap();
+    let pending = auth_sessions::create_pending_tx(
+        &mut tx,
+        auth_sessions::NewAuthSession {
+            session_handle: session_handle.clone(),
+            family_handle: audit_jobs_unique("outbox-family"),
+            user_id: user.id,
+            refresh_token_hash: auth_sessions::RefreshTokenHash::parse(refresh_hash.clone())
+                .unwrap(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            predecessor_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let active = auth_sessions::activate_pending_tx(&mut tx, pending.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let intent = auth_sessions::enqueue_intent_tx(
+        &mut tx,
+        active.id,
+        auth_sessions::AuthIntentPayload::RedisPopulate {
+            session_handle: session_handle.clone(),
+            expires_at: active.expires_at,
+        },
+        i32::MAX,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let admin_cache = state.cache.clone();
+    let (restricted_cache, acl_user) = audit_contract_restricted_redis(&admin_cache, "set").await;
+    assert_eq!(
+        auth::session::process_one_outbox_intent(
+            &state.db,
+            &restricted_cache,
+            "outbox-recovery-worker-1",
+            Some(active.id),
+        )
+        .await
+        .unwrap(),
+        auth::session::OutboxProcessOutcome::Rescheduled
+    );
+    audit_contract_delete_redis_acl_user(&admin_cache, &acl_user).await;
+
+    let queued: (
+        i64,
+        String,
+        i32,
+        chrono::DateTime<chrono::Utc>,
+        Option<String>,
+        serde_json::Value,
+    ) = sqlx::query_as(
+        "SELECT id, state, attempts, run_after, last_error_code, payload
+             FROM auth_session_intents WHERE id = $1",
+    )
+    .bind(intent.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(queued.0, intent.id);
+    assert_eq!(queued.1, "queued");
+    assert_eq!(queued.2, 1);
+    assert!(
+        queued.3 > chrono::Utc::now(),
+        "暂时失败后必须持久化有界退避"
+    );
+    assert_eq!(queued.4.as_deref(), Some("redis_unavailable"));
+    let serialized_payload = queued.5.to_string();
+    assert!(!serialized_payload.contains(raw_refresh));
+    assert!(!serialized_payload.contains(&refresh_hash));
+
+    assert!(
+        auth::session::process_one_outbox_intent(
+            &state.db,
+            &admin_cache,
+            "outbox-recovery-worker-2",
+            Some(active.id),
+        )
+        .await
+        .unwrap()
+            == auth::session::OutboxProcessOutcome::Idle,
+        "cooldown 未到不得 busy-loop 重领"
+    );
+    sqlx::query(
+        "UPDATE auth_session_intents SET run_after = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(intent.id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        auth::session::process_one_outbox_intent(
+            &state.db,
+            &admin_cache,
+            "outbox-recovery-worker-3",
+            Some(active.id),
+        )
+        .await
+        .unwrap(),
+        auth::session::OutboxProcessOutcome::Completed
+    );
+
+    let recovered: (i64, String, i32, Option<String>) = sqlx::query_as(
+        "SELECT id, state, attempts, last_error_code
+         FROM auth_session_intents WHERE id = $1",
+    )
+    .bind(intent.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(recovered, (intent.id, "succeeded".to_string(), 2, None));
+    let mut cache = admin_cache.clone();
+    let cached_user: Option<i64> = redis::cmd("GET")
+        .arg(format!("auth_session:{session_handle}"))
+        .query_async(&mut cache)
+        .await
+        .unwrap();
+    assert_eq!(cached_user, Some(user.id));
+    let _: i64 = redis::cmd("DEL")
+        .arg(format!("auth_session:{session_handle}"))
+        .query_async(&mut cache)
+        .await
+        .unwrap();
+}
+
+/// Redis 在最后一次预算内仍失败时，intent 必须进入 failed，不能永久留在 queued。
+#[tokio::test]
+async fn audit_contract_auth_outbox_last_redis_failure_exhausts_intent() {
+    let state = audit_contract_state().await;
+    let user = audit_contract_create_user(&state.db, "audit-outbox-exhausted", None).await;
+    let session_handle = format!("outbox-exhausted-{}", audit_jobs_unique("session"));
+    let mut tx = state.db.begin().await.unwrap();
+    let pending = auth_sessions::create_pending_tx(
+        &mut tx,
+        auth_sessions::NewAuthSession {
+            session_handle: session_handle.clone(),
+            family_handle: audit_jobs_unique("outbox-exhausted-family"),
+            user_id: user.id,
+            refresh_token_hash: auth_sessions::RefreshTokenHash::parse(
+                prts_auth::token::sha256_hex("outbox-exhausted-refresh"),
+            )
+            .unwrap(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            predecessor_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let active = auth_sessions::activate_pending_tx(&mut tx, pending.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let intent = auth_sessions::enqueue_intent_tx(
+        &mut tx,
+        active.id,
+        auth_sessions::AuthIntentPayload::RedisPopulate {
+            session_handle,
+            expires_at: active.expires_at,
+        },
+        1,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let (restricted_cache, acl_user) = audit_contract_restricted_redis(&state.cache, "set").await;
+    assert_eq!(
+        auth::session::process_one_outbox_intent(
+            &state.db,
+            &restricted_cache,
+            "outbox-exhausted-worker",
+            Some(active.id),
+        )
+        .await
+        .unwrap(),
+        auth::session::OutboxProcessOutcome::PermanentlyFailed
+    );
+    audit_contract_delete_redis_acl_user(&state.cache, &acl_user).await;
+
+    let persisted: (String, i32, Option<String>) = sqlx::query_as(
+        "SELECT state, attempts, last_error_code
+         FROM auth_session_intents WHERE id = $1",
+    )
+    .bind(intent.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(persisted.0, "failed");
+    assert_eq!(persisted.1, 1);
+    assert_eq!(
+        persisted.2.as_deref(),
+        Some("auth_intent_attempts_exhausted")
+    );
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
 /// logout 的 DB revoke 一经提交立即生效；Redis DEL 失败只留下 durable invalidate retry。
 #[tokio::test]
 async fn audit_contract_logout_remains_immediate_when_redis_invalidate_fails() {
@@ -1328,8 +3260,8 @@ async fn audit_contract_logout_remains_immediate_when_redis_invalidate_fails() {
     logout_result.expect_api("Redis DEL 失败不应推翻 DB logout commit");
 
     let refresh_hash = prts_auth::token::sha256_hex(&tokens.refresh_token);
-    let (state_name, invalidate_count): (String, i64) = sqlx::query_as(
-        "SELECT session.state,
+    let (session_id, state_name, invalidate_count): (i64, String, i64) = sqlx::query_as(
+        "SELECT session.id, session.state,
                 (SELECT COUNT(*) FROM auth_session_intents AS intent
                  WHERE intent.session_id = session.id
                    AND intent.kind = 'redis_invalidate'
@@ -1359,6 +3291,111 @@ async fn audit_contract_logout_remains_immediate_when_redis_invalidate_fails() {
 
     let rows = audit_contract_rows_for_actor(&normal_state.db, user.id).await;
     audit_contract_assert_actions(&rows, &["auth.logged_out"]);
+    audit_contract_assert_exact_targets(&rows, &[("auth.logged_out", session_id.to_string())]);
+}
+
+/// 幂等 logout 的 unknown/revoked/expired refresh 仍是一次已提供但失败的认证并须 fail closed。
+#[tokio::test]
+async fn audit_contract_logout_noop_is_audited_and_audit_failure_returns_503() {
+    use axum::extract::State;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let started_at = chrono::Utc::now();
+    let unknown = "UNKNOWN_REFRESH_MUST_NOT_ENTER_AUDIT".to_string();
+    auth_routes::logout(
+        State(state.clone()),
+        Json(auth_routes::RefreshReq {
+            refresh_token: unknown.clone(),
+        }),
+    )
+    .await
+    .expect_api("unknown refresh logout 保持幂等 204");
+
+    let (_, revoked_tokens) = audit_contract_login_fixture(&state, "audit-logout-noop").await;
+    auth_routes::logout(
+        State(state.clone()),
+        Json(auth_routes::RefreshReq {
+            refresh_token: revoked_tokens.refresh_token.clone(),
+        }),
+    )
+    .await
+    .expect_api("首次 logout 吊销 active session");
+    auth_routes::logout(
+        State(state.clone()),
+        Json(auth_routes::RefreshReq {
+            refresh_token: revoked_tokens.refresh_token.clone(),
+        }),
+    )
+    .await
+    .expect_api("revoked refresh logout 保持幂等 204");
+
+    let (_, expired_tokens) = audit_contract_login_fixture(&state, "audit-logout-expired").await;
+    let expired_hash = prts_auth::token::sha256_hex(&expired_tokens.refresh_token);
+    sqlx::query(
+        "UPDATE auth_sessions SET expires_at = now() - interval '1 second'
+         WHERE refresh_token_hash = $1",
+    )
+    .bind(&expired_hash)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    auth_routes::logout(
+        State(state.clone()),
+        Json(auth_routes::RefreshReq {
+            refresh_token: expired_tokens.refresh_token.clone(),
+        }),
+    )
+    .await
+    .expect_api("expired refresh logout 保持幂等 204");
+
+    let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, serde_json::Value)>(
+        "SELECT action, target_type, target_id, project_id_snapshot, payload
+         FROM audit_log
+         WHERE action = 'auth.failed' AND created_at >= $1
+           AND payload->>'method' = 'refresh'
+         ORDER BY id",
+    )
+    .bind(started_at)
+    .fetch_all(&state.db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(
+        |(action, target_type, target_id, project_id, payload)| ObservedAudit {
+            action,
+            target_type,
+            target_id,
+            project_id,
+            payload,
+        },
+    )
+    .collect::<Vec<_>>();
+    assert!(rows.len() >= 3, "unknown/revoked/expired 均须写失败审计");
+    assert!(rows
+        .iter()
+        .all(|row| row.payload["reason_code"] == "invalid_refresh"));
+    audit_contract_assert_payloads_are_typed_and_redacted(
+        &rows,
+        &[
+            &unknown,
+            &revoked_tokens.refresh_token,
+            &expired_tokens.refresh_token,
+            &expired_hash,
+        ],
+    );
+
+    let failing_db = audit_contract_failing_audit_db().await;
+    let failing_state = audit_contract_state_with_db(failing_db).await;
+    let error = auth_routes::logout(
+        State(failing_state),
+        Json(auth_routes::RefreshReq {
+            refresh_token: "UNKNOWN_REFRESH_AUDIT_FAILURE".to_string(),
+        }),
+    )
+    .await
+    .expect_err_api("noop logout 的审计失败必须返回 503");
+    audit_contract_assert_unavailable(error).await;
 }
 
 /// 普通 read 跨用户/项目/文件/词条/通知/私信均保持零审计；敏感 export 已单独覆盖。
@@ -1493,14 +3530,16 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
     use axum::Json;
     use std::collections::HashMap;
 
+    let _search_settings_guard = SEARCH_SETTINGS_TEST_LOCK.lock().await;
     let state = audit_contract_state().await;
     let actor = audit_contract_create_user(&state.db, "audit-admin", Some("super_admin")).await;
     let target = audit_contract_create_user(&state.db, "audit-role-target", None).await;
+    let previous_search = prts_db::search_settings::get(&state.db).await.unwrap();
     let profile_marker = "FULL_PROFILE_CONTENT_MUST_NOT_ENTER_AUDIT";
     let setting_marker = "FULL_SETTING_VALUE_MUST_NOT_ENTER_AUDIT";
     let endpoint_marker = "AUDIT_EMBEDDING_ENDPOINT_VALUE";
 
-    let _ = users_routes::update_me(
+    let Json(updated_profile) = users_routes::update_me(
         State(state.clone()),
         audit_contract_current_user(&actor),
         Json(users_routes::UpdateMeReq {
@@ -1596,6 +3635,18 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
             "api_key.revoked",
         ],
     );
+    audit_contract_assert_exact_targets(
+        &rows,
+        &[
+            ("user.profile_updated", updated_profile.id.to_string()),
+            ("api_key.created", created_key.id.to_string()),
+            ("api_key.used", created_key.id.to_string()),
+            ("api_key.revoked", created_key.id.to_string()),
+            ("user.platform_role_changed", target.id.to_string()),
+            ("settings.updated", "platform".to_string()),
+            ("search_settings.updated", "search.config".to_string()),
+        ],
+    );
     audit_contract_assert_payloads_are_typed_and_redacted(
         &rows,
         &[
@@ -1605,6 +3656,165 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
             &created_key.key,
         ],
     );
+    prts_db::search_settings::set(&state.db, previous_search.clone(), Some(actor.id))
+        .await
+        .unwrap();
+    *state.search_rt.write().await = previous_search;
+}
+
+/// 可选认证只能吞掉无凭证/无效凭证，不能把 API-key touch 的审计故障降级成游客。
+#[tokio::test]
+async fn audit_contract_optional_auth_propagates_api_key_audit_unavailable() {
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
+    use axum::routing::get;
+    use axum::Router;
+    use tower::ServiceExt;
+
+    async fn public_endpoint(auth::MaybeUser(user): auth::MaybeUser) -> StatusCode {
+        if user.is_some() {
+            StatusCode::OK
+        } else {
+            StatusCode::NO_CONTENT
+        }
+    }
+
+    let normal_state = audit_contract_state().await;
+    let actor = audit_contract_create_user(&normal_state.db, "audit-maybe-user", None).await;
+    let generated = prts_auth::token::generate_api_key();
+    api_keys::create(
+        &normal_state.db,
+        actor.id,
+        "optional-auth-audit-failure",
+        &generated.hash,
+        &generated.display_prefix,
+    )
+    .await
+    .unwrap();
+
+    let failing_db = audit_contract_failing_audit_db().await;
+    let failing_state = audit_contract_state_with_db(failing_db).await;
+    let app = Router::new()
+        .route("/public", get(public_endpoint))
+        .layer(axum::middleware::from_fn(error::localize_audit_errors))
+        .with_state(failing_state);
+    let anonymous = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/public")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::NO_CONTENT);
+    let invalid = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/public")
+                .header(header::AUTHORIZATION, "Bearer prts_invalid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/public")
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", generated.plaintext),
+                )
+                .header(header::ACCEPT_LANGUAGE, "en")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["code"], "AUDIT_UNAVAILABLE");
+    assert_eq!(body["message"], "Audit service unavailable");
+}
+
+/// 手动重试的任务状态与审计必须同事务；审计失败返回稳定 503 且不消耗重试预算。
+#[tokio::test]
+async fn audit_contract_job_retry_audit_failure_rolls_back_and_returns_503() {
+    let normal_state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&normal_state.db, "audit-job-retry-owner", None).await;
+    let project = projects::create(
+        &normal_state.db,
+        &format!("audit-job-retry-{}", owner.id),
+        "Audit job retry",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&normal_state.db, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    let job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (
+             kind, project_id, state, stage, payload, attempts, max_attempts,
+             last_error_code, last_error_message, finished_at
+         ) VALUES (
+             'upload_process', $1, 'failed', 'processing', '{}', 2, 2,
+             'provider_unavailable', 'redacted test failure', now()
+         ) RETURNING id",
+    )
+    .bind(project.id)
+    .fetch_one(&normal_state.db)
+    .await
+    .unwrap();
+
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let error = job_retry::retry_job(&failing_state, &audit_contract_current_user(&owner), job_id)
+        .await
+        .expect_err_api("审计失败不得重新排队任务");
+    audit_contract_assert_unavailable(error).await;
+
+    let persisted: (String, i32, i32, Option<String>) = sqlx::query_as(
+        "SELECT state, attempts, max_attempts, last_error_code FROM jobs WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&normal_state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        persisted,
+        (
+            "failed".to_string(),
+            2,
+            2,
+            Some("provider_unavailable".to_string())
+        )
+    );
+
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .execute(&normal_state.db)
+        .await
+        .unwrap();
+    projects::delete(&normal_state.db, project.id)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(owner.id)
+        .execute(&normal_state.db)
+        .await
+        .unwrap();
 }
 
 /// 项目、成员、旧上传、词条编辑/flags、文件删除与敏感导出必须走真实事务审计。
@@ -1743,7 +3953,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
     .await
     .expect_api("删除文件成功");
 
-    let _ = entries_routes::upload(
+    let Json(folder_upload) = entries_routes::upload(
         State(state.clone()),
         audit_contract_current_user(&actor),
         Path(project.id),
@@ -1811,6 +4021,8 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             "project.created",
             "membership.upserted",
             "entries.uploaded",
+            "entries.uploaded",
+            "entries.uploaded",
             "entry.updated",
             "entry.flags_updated",
             "project.exported",
@@ -1819,6 +4031,30 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             "project.updated",
             "membership.removed",
             "project.deleted",
+        ],
+    );
+    audit_contract_assert_exact_targets(
+        &rows,
+        &[
+            ("project.created", project.id.to_string()),
+            (
+                "membership.upserted",
+                format!("{}:{}", project.id, member.id),
+            ),
+            ("entries.uploaded", uploaded.file_id.to_string()),
+            ("entries.uploaded", file_to_delete.file_id.to_string()),
+            ("entries.uploaded", folder_upload.file_id.to_string()),
+            ("entry.updated", entry.id.to_string()),
+            ("entry.flags_updated", entry.id.to_string()),
+            ("project.exported", project.id.to_string()),
+            ("file.deleted", file_to_delete.file_id.to_string()),
+            ("folder.deleted", folder_id.to_string()),
+            ("project.updated", project.id.to_string()),
+            (
+                "membership.removed",
+                format!("{}:{}", project.id, member.id),
+            ),
+            ("project.deleted", project.id.to_string()),
         ],
     );
     for row in &rows {
@@ -1898,9 +4134,15 @@ async fn audit_contract_notifications_poke_and_messages_are_audited_without_cont
     )
     .await
     .expect_api("poke 发送成功");
+    let poke_notification = notifications::list(&state.db, recipient.id, None, 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind == "poke")
+        .expect("poke 通知存在");
 
     let message_marker = "FULL_PRIVATE_MESSAGE_MUST_NOT_ENTER_AUDIT";
-    let _ = messages_routes::send(
+    let Json(sent_message) = messages_routes::send(
         State(state.clone()),
         audit_contract_current_user(&sender),
         Json(messages_routes::SendReq {
@@ -1923,6 +4165,14 @@ async fn audit_contract_notifications_poke_and_messages_are_audited_without_cont
         &sender_rows,
         &["notification.marked_read", "poke.sent", "message.sent"],
     );
+    audit_contract_assert_exact_targets(
+        &sender_rows,
+        &[
+            ("notification.marked_read", sender.id.to_string()),
+            ("poke.sent", poke_notification.id.to_string()),
+            ("message.sent", sent_message.id.to_string()),
+        ],
+    );
     audit_contract_assert_payloads_are_typed_and_redacted(
         &sender_rows,
         &[poke_marker, message_marker],
@@ -1930,6 +4180,10 @@ async fn audit_contract_notifications_poke_and_messages_are_audited_without_cont
 
     let recipient_rows = audit_contract_rows_for_actor(&state.db, recipient.id).await;
     audit_contract_assert_actions(&recipient_rows, &["message.marked_read"]);
+    audit_contract_assert_exact_targets(
+        &recipient_rows,
+        &[("message.marked_read", sender.id.to_string())],
+    );
     audit_contract_assert_payloads_are_typed_and_redacted(
         &recipient_rows,
         &[poke_marker, message_marker],
@@ -3209,7 +5463,7 @@ async fn audit_jobs_auth_intent_lease_takeover_and_retry_reuse_same_id() {
         auth_sessions::AuthIntentPayload::RedisInvalidate {
             session_handle: session.session_handle.clone(),
         },
-        2,
+        i32::MAX,
     )
     .await
     .unwrap();
@@ -3249,13 +5503,72 @@ async fn audit_jobs_auth_intent_lease_takeover_and_retry_reuse_same_id() {
             .await
             .unwrap()
     );
-    let failed = auth_sessions::fail_intent(
+    assert!(
+        auth_sessions::complete_intent(&pool, intent_id, "dead-worker")
+            .await
+            .unwrap()
+            .is_none(),
+        "旧 worker 不得完成新持有者的 intent"
+    );
+    assert!(
+        auth_sessions::reschedule_intent(
+            &pool,
+            intent_id,
+            "dead-worker",
+            "cache_unavailable",
+            "redacted cache failure",
+            1,
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "旧 worker 不得重排新持有者的 intent"
+    );
+    assert!(
+        auth_sessions::fail_intent_permanently(
+            &pool,
+            intent_id,
+            "dead-worker",
+            "invalid_auth_intent",
+            "invalid intent",
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "旧 worker 不得永久失败新持有者的 intent"
+    );
+
+    let rescheduled = auth_sessions::reschedule_intent(
         &pool,
         intent_id,
         "replacement-worker",
         "cache_unavailable",
         "redacted cache failure",
         1,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(rescheduled.id, intent_id);
+    assert_eq!(rescheduled.state, auth_sessions::AuthIntentState::Queued);
+    sqlx::query(
+        "UPDATE auth_session_intents SET run_after = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind(intent_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let reclaimed = auth_sessions::claim_intent_for_session(&pool, "final-worker", 300, session_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reclaimed.id, intent_id);
+    let failed = auth_sessions::fail_intent_permanently(
+        &pool,
+        intent_id,
+        "final-worker",
+        "invalid_auth_intent",
+        "invalid intent",
     )
     .await
     .unwrap()
@@ -3268,7 +5581,7 @@ async fn audit_jobs_auth_intent_lease_takeover_and_retry_reuse_same_id() {
         .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(retried.id, intent_id);
-    assert_eq!(retried.attempts, 3);
+    assert_eq!(retried.attempts, 4);
 
     sqlx::query(
         "INSERT INTO auth_session_intents (session_id, kind, payload)
@@ -3373,6 +5686,92 @@ async fn audit_jobs_auth_intent_last_attempt_crash_is_failed_without_reclaim() {
         Some("auth_intent_attempts_exhausted")
     );
     assert!(persisted.4.is_none());
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 旧版本遗留的已耗尽 queued intent 必须在领取扫描时主动收敛到 failed。
+#[tokio::test]
+async fn audit_jobs_exhausted_queued_auth_intent_is_failed_without_reclaim() {
+    let pool = pool().await;
+    let username = audit_jobs_unique("intent-queued-exhausted-user");
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, 'test-only-hash') RETURNING id",
+    )
+    .bind(&username)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let session = auth_sessions::create_pending_tx(
+        &mut tx,
+        auth_sessions::NewAuthSession {
+            session_handle: audit_jobs_unique("intent-queued-exhausted-session"),
+            family_handle: audit_jobs_unique("intent-queued-exhausted-family"),
+            user_id,
+            refresh_token_hash: auth_sessions::RefreshTokenHash::parse(
+                prts_auth::token::sha256_hex("intent-queued-exhausted-refresh"),
+            )
+            .unwrap(),
+            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            predecessor_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let session = auth_sessions::activate_pending_tx(&mut tx, session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let intent = auth_sessions::enqueue_intent_tx(
+        &mut tx,
+        session.id,
+        auth_sessions::AuthIntentPayload::RedisInvalidate {
+            session_handle: session.session_handle.clone(),
+        },
+        1,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    sqlx::query(
+        "UPDATE auth_session_intents
+         SET state = 'queued', attempts = max_attempts,
+             run_after = now() - interval '1 minute'
+         WHERE id = $1",
+    )
+    .bind(intent.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert!(auth_sessions::claim_intent_for_session(
+        &pool,
+        "queued-exhausted-worker",
+        300,
+        session.id,
+    )
+    .await
+    .unwrap()
+    .is_none());
+    let persisted: (String, i32, Option<String>) = sqlx::query_as(
+        "SELECT state, attempts, last_error_code
+         FROM auth_session_intents WHERE id = $1",
+    )
+    .bind(intent.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(persisted.0, "failed");
+    assert_eq!(persisted.1, 1);
+    assert_eq!(
+        persisted.2.as_deref(),
+        Some("auth_intent_attempts_exhausted")
+    );
 
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
@@ -4181,13 +6580,10 @@ async fn vector_search_returns_nearest_first() {
 async fn search_settings_set_and_get_normalizes_values() {
     use prts_db::search_settings::{self, SearchConfig};
 
+    let _search_settings_guard = SEARCH_SETTINGS_TEST_LOCK.lock().await;
     let pool = pool().await;
 
-    // 清理上次残留（key 固定为 "search.config"）
-    sqlx::query("DELETE FROM settings WHERE key = 'search.config'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    let previous = search_settings::get(&pool).await.unwrap();
 
     // 写入超范围值
     let cfg = SearchConfig {
@@ -4205,11 +6601,7 @@ async fn search_settings_set_and_get_normalizes_values() {
     );
     assert_eq!(got.tm_top_n, 3, "tm_top_n 应被 clamp 到上限 3");
 
-    // 清理
-    sqlx::query("DELETE FROM settings WHERE key = 'search.config'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    search_settings::set(&pool, previous, None).await.unwrap();
 }
 
 /// 验证 prts-db::notifications 仓储圆环（迁移 0005）：

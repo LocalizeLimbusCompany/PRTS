@@ -1,12 +1,23 @@
 //! 通知仓储：收件人维度的通知增查改（键集分页）。
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use crate::models::Notification;
 
 /// 为某收件人创建一条通知（`kind` 即 SQL `type` 列）。
 pub async fn create(
     pool: &PgPool,
+    user_id: i64,
+    kind: &str,
+    payload: &serde_json::Value,
+) -> Result<Notification, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    create_tx(&mut connection, user_id, kind, payload).await
+}
+
+/// 在调用方事务内创建通知。
+pub async fn create_tx(
+    conn: &mut PgConnection,
     user_id: i64,
     kind: &str,
     payload: &serde_json::Value,
@@ -18,7 +29,7 @@ pub async fn create(
     .bind(user_id)
     .bind(kind)
     .bind(payload)
-    .fetch_one(pool)
+    .fetch_one(conn)
     .await
 }
 
@@ -67,13 +78,25 @@ pub async fn unread_count(pool: &PgPool, user_id: i64) -> Result<i64, sqlx::Erro
 
 /// 标记通知为已读；`ids` 为空表示标记该用户全部未读为已读。
 pub async fn mark_read(pool: &PgPool, user_id: i64, ids: &[i64]) -> Result<(), sqlx::Error> {
-    if ids.is_empty() {
+    let mut connection = pool.acquire().await?;
+    mark_read_tx(&mut connection, user_id, ids)
+        .await
+        .map(|_| ())
+}
+
+/// 在调用方事务内标记通知已读，并返回实际更新数供审计。
+pub async fn mark_read_tx(
+    conn: &mut PgConnection,
+    user_id: i64,
+    ids: &[i64],
+) -> Result<u64, sqlx::Error> {
+    let result = if ids.is_empty() {
         sqlx::query(
             "UPDATE notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL",
         )
         .bind(user_id)
-        .execute(pool)
-        .await?;
+        .execute(&mut *conn)
+        .await?
     } else {
         sqlx::query(
             "UPDATE notifications SET read_at = now()
@@ -81,8 +104,8 @@ pub async fn mark_read(pool: &PgPool, user_id: i64, ids: &[i64]) -> Result<(), s
         )
         .bind(user_id)
         .bind(ids)
-        .execute(pool)
-        .await?;
-    }
-    Ok(())
+        .execute(conn)
+        .await?
+    };
+    Ok(result.rows_affected())
 }

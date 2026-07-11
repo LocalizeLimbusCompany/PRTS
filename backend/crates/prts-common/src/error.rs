@@ -33,6 +33,10 @@ pub enum Error {
     #[error("version conflict")]
     Conflict,
 
+    /// 审计记录无法持久化；所有受审计操作必须 fail closed。
+    #[error("audit unavailable")]
+    AuditUnavailable,
+
     /// 数据库错误。
     #[error("database error")]
     Database(#[source] sqlx_error::SqlxError),
@@ -51,6 +55,7 @@ impl Error {
             Error::Forbidden => "forbidden",
             Error::NotFound => "not_found",
             Error::Conflict => "conflict",
+            Error::AuditUnavailable => "AUDIT_UNAVAILABLE",
             Error::Database(_) => "internal",
             Error::Internal(_) => "internal",
         }
@@ -86,5 +91,6 @@ mod tests {
         assert_eq!(Error::Unauthorized.code(), "unauthorized");
         assert_eq!(Error::bad_request("x").code(), "bad_request");
         assert_eq!(Error::Conflict.code(), "conflict");
+        assert_eq!(Error::AuditUnavailable.code(), "AUDIT_UNAVAILABLE");
     }
 }

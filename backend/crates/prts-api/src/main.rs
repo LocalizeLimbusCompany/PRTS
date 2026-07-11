@@ -9,10 +9,12 @@ mod auth;
 mod dto;
 mod embed_worker;
 mod error;
+mod job_retry;
 mod job_worker;
 mod jobs;
 mod openapi;
 mod routes;
+mod search_settings_worker;
 mod state;
 
 use std::sync::Arc;
@@ -59,6 +61,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("connect redis failed: {e}"))?;
 
+    // DB 是会话权威；后台 outbox 只负责把 committed state 收敛到 Redis cache。
+    let mut auth_outbox_worker =
+        crate::auth::session::spawn_outbox_worker(db.clone(), cache.clone());
+
     // bootstrap：把配置的用户名提升为 super_admin（若已存在且尚无平台角色）。
     bootstrap_admin(&db, &settings).await;
 
@@ -79,6 +85,9 @@ async fn main() -> anyhow::Result<()> {
     // 搜索运行时配置（从 settings 表加载，缺省默认）。
     let search_cfg = prts_db::search_settings::get(&db).await.unwrap_or_default();
     let search_rt = std::sync::Arc::new(tokio::sync::RwLock::new(search_cfg));
+    let (search_settings_updater, mut search_settings_worker) =
+        crate::search_settings_worker::spawn(db.clone(), search_rt.clone());
+    let search_settings_shutdown = search_settings_updater.clone();
 
     // 实时协作 hub（启动 Redis 订阅中继）。
     let realtime = prts_realtime::Hub::new(&settings.redis.url)
@@ -90,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 持久化任务 worker。foundation 注册表为空时保持 dormant，后续阶段逐类注册 handler。
     let job_registry = crate::jobs::JobRegistry::new(Vec::new());
-    let job_worker = crate::job_worker::spawn(
+    let (job_worker, mut job_worker_task) = crate::job_worker::spawn(
         db.clone(),
         job_registry.clone(),
         Arc::new(crate::job_worker::NoPendingDeletions),
@@ -105,17 +114,129 @@ async fn main() -> anyhow::Result<()> {
         realtime,
         embedder,
         search_rt,
+        search_settings_updater,
         job_worker,
     };
     let app = routes::app(state);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("listening on http://{addr}  (Swagger UI: /swagger-ui)");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let (server_shutdown_tx, server_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let mut server_shutdown_tx = Some(server_shutdown_tx);
+    let server = std::future::IntoFuture::into_future(
+        axum::serve(listener, app).with_graceful_shutdown(async move {
+            let _ = server_shutdown_rx.await;
+        }),
+    );
+    tokio::pin!(server);
 
-    Ok(())
+    tokio::select! {
+        result = &mut server => {
+            cancel_worker("auth outbox", &mut auth_outbox_worker).await;
+            cancel_worker("durable job", &mut job_worker_task).await;
+            drain_search_settings_worker(
+                &search_settings_shutdown,
+                &mut search_settings_worker,
+            ).await;
+            result?;
+            Ok(())
+        }
+        _ = shutdown_signal() => {
+            if let Some(sender) = server_shutdown_tx.take() {
+                let _ = sender.send(());
+            }
+            cancel_worker("auth outbox", &mut auth_outbox_worker).await;
+            cancel_worker("durable job", &mut job_worker_task).await;
+            server.as_mut().await?;
+            drain_search_settings_worker(
+                &search_settings_shutdown,
+                &mut search_settings_worker,
+            ).await;
+            Ok(())
+        }
+        outcome = &mut auth_outbox_worker => {
+            let worker_error = worker_termination_error("auth outbox", outcome);
+            if let Some(sender) = server_shutdown_tx.take() {
+                let _ = sender.send(());
+            }
+            cancel_worker("durable job", &mut job_worker_task).await;
+            if let Err(error) = server.as_mut().await {
+                tracing::error!(%error, "server shutdown after auth outbox failure failed");
+            }
+            drain_search_settings_worker(
+                &search_settings_shutdown,
+                &mut search_settings_worker,
+            ).await;
+            Err(worker_error)
+        }
+        outcome = &mut job_worker_task => {
+            let worker_error = worker_termination_error("durable job", outcome);
+            if let Some(sender) = server_shutdown_tx.take() {
+                let _ = sender.send(());
+            }
+            cancel_worker("auth outbox", &mut auth_outbox_worker).await;
+            if let Err(error) = server.as_mut().await {
+                tracing::error!(%error, "server shutdown after durable job failure failed");
+            }
+            drain_search_settings_worker(
+                &search_settings_shutdown,
+                &mut search_settings_worker,
+            ).await;
+            Err(worker_error)
+        }
+        outcome = &mut search_settings_worker => {
+            let worker_error = worker_termination_error("search settings", outcome);
+            if let Some(sender) = server_shutdown_tx.take() {
+                let _ = sender.send(());
+            }
+            cancel_worker("auth outbox", &mut auth_outbox_worker).await;
+            cancel_worker("durable job", &mut job_worker_task).await;
+            if let Err(error) = server.as_mut().await {
+                tracing::error!(%error, "server shutdown after search settings worker failure failed");
+            }
+            Err(worker_error)
+        }
+    }
+}
+
+/// 取消仍在运行的 worker 并等待其 JoinHandle 收敛，避免停机时遗留 detached task。
+async fn cancel_worker(name: &str, handle: &mut tokio::task::JoinHandle<()>) {
+    handle.abort();
+    match handle.await {
+        Ok(()) => tracing::warn!(
+            worker = name,
+            "background worker exited before cancellation"
+        ),
+        Err(error) if error.is_cancelled() => {}
+        Err(error) => tracing::error!(worker = name, %error, "background worker join failed"),
+    }
+}
+
+/// 停止接收新搜索设置更新，并排空所有已入队事务后再完成停机。
+async fn drain_search_settings_worker(
+    updater: &crate::search_settings_worker::SearchSettingsUpdater,
+    handle: &mut tokio::task::JoinHandle<()>,
+) {
+    updater.shutdown();
+    match handle.await {
+        Ok(()) => {}
+        Err(error) => tracing::error!(
+            worker = "search settings",
+            %error,
+            "background worker join failed"
+        ),
+    }
+}
+
+fn worker_termination_error(
+    name: &str,
+    outcome: Result<(), tokio::task::JoinError>,
+) -> anyhow::Error {
+    match outcome {
+        Ok(()) => anyhow::anyhow!("{name} worker exited unexpectedly"),
+        Err(error) if error.is_panic() => anyhow::anyhow!("{name} worker panicked: {error}"),
+        Err(error) => anyhow::anyhow!("{name} worker stopped unexpectedly: {error}"),
+    }
 }
 
 /// 用独立 migration owner 执行迁移后立即销毁连接；不会构造 AppState 或启动服务。
@@ -167,15 +288,41 @@ async fn bootstrap_admin(db: &prts_db::Db, settings: &Settings) {
     if target.is_empty() {
         return;
     }
-    match prts_db::users::find_by_username(db, target).await {
-        Ok(Some(u)) if u.platform_role.is_none() => {
-            if let Err(e) = prts_db::users::set_platform_role(db, u.id, Some("super_admin")).await {
-                tracing::warn!("bootstrap admin failed: {e}");
-            } else {
-                tracing::info!(user = %u.username, "granted super_admin to bootstrap admin");
-            }
+    let result: Result<Option<String>, sqlx::Error> = async {
+        let mut tx = db.begin().await?;
+        let Some(user) = prts_db::users::find_by_username_for_update_tx(&mut tx, target).await?
+        else {
+            tx.rollback().await?;
+            return Ok(None);
+        };
+        if user.platform_role.is_some() {
+            tx.rollback().await?;
+            return Ok(None);
         }
-        _ => {}
+        prts_db::users::set_platform_role_tx(&mut tx, user.id, Some("super_admin")).await?;
+        prts_db::audit::append_event_tx(
+            &mut tx,
+            prts_db::audit::AuditActor {
+                id: None,
+                kind: prts_db::audit::AuditActorKind::System,
+                ip: None,
+            },
+            prts_db::audit::AuditEvent::AuthBootstrapRoleGranted {
+                user_id: user.id,
+                role: "super_admin",
+            },
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(Some(user.username))
+    }
+    .await;
+    match result {
+        Ok(Some(username)) => {
+            tracing::info!(user = %username, "granted super_admin to bootstrap admin");
+        }
+        Ok(None) => {}
+        Err(error) => tracing::warn!(%error, "bootstrap admin failed"),
     }
 }
 
@@ -202,4 +349,20 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
     tracing::info!("shutdown signal received");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn session_breaking_rollout_is_documented_in_both_languages() {
+        let zh = include_str!("../../../../README.md");
+        assert!(zh.contains("维护窗口"));
+        assert!(zh.contains("现有会话"));
+        assert!(zh.contains("重新登录"));
+
+        let en = include_str!("../../../../README.en.md");
+        assert!(en.contains("maintenance window"));
+        assert!(en.contains("existing sessions"));
+        assert!(en.contains("signing in again"));
+    }
 }

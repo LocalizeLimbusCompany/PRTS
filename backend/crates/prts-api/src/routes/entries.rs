@@ -14,10 +14,11 @@ use zip::write::SimpleFileOptions;
 use prts_common::Error;
 use prts_core::permission::{node_for_state, nodes};
 use prts_core::EntryState;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 
 use crate::auth::{project as paccess, CurrentUser, MaybeUser};
 use crate::db_err;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
 // ============================= 上传 =============================
@@ -67,7 +68,13 @@ pub struct UploadResult {
 
 /// 上传词条到项目（按路径自动建文件夹/文件）。需项目「上传」权限。
 #[utoipa::path(post, path = "/projects/{id}/upload", tag = "entry", request_body = UploadReq,
-    responses((status = 200, body = UploadResult), (status = 400), (status = 403), (status = 404)))]
+    responses(
+        (status = 200, body = UploadResult),
+        (status = 400),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，上传未提交", body = ErrorResponse)
+    ))]
 pub async fn upload(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -94,16 +101,43 @@ pub async fn upload(
         }
     }
 
-    let file = prts_db::files::ensure_file_at_path(&state.db, id, path)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, project)
+        .await?
+        .require_node(nodes::PROJECT_FILE_UPLOAD)?;
+    let file = prts_db::files::ensure_file_at_path_tx(&mut tx, id, path)
         .await
         .map_err(db_err)?;
     let stats =
-        prts_db::entries::bulk_upsert(&state.db, file.id, id, &upload_entries, Some(user.id))
+        prts_db::entries::bulk_upsert_tx(&mut tx, file.id, id, &upload_entries, Some(user.id))
             .await
             .map_err(db_err)?;
-    prts_db::files::refresh_entry_count(&state.db, file.id)
+    prts_db::files::refresh_entry_count_tx(&mut tx, file.id)
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::EntriesUploaded {
+            project_id: id,
+            file_id: file.id,
+            path: &file.path,
+            created: stats.created,
+            updated: stats.updated,
+            unchanged: stats.unchanged,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
 
     Ok(Json(UploadResult {
         file_id: file.id,
@@ -111,6 +145,25 @@ pub async fn upload(
         updated: stats.updated,
         unchanged: stats.unchanged,
     }))
+}
+
+#[cfg(test)]
+mod mutation_lock_tests {
+    #[test]
+    fn upload_locks_project_before_touching_file_tree() {
+        let source = include_str!("entries.rs");
+        let upload = source
+            .split("// ============================= 词条")
+            .next()
+            .expect("upload section exists");
+        let project_lock = upload
+            .find("projects::find_by_id_for_update_tx")
+            .expect("upload must lock its project row");
+        let file_tree_write = upload
+            .find("files::ensure_file_at_path_tx")
+            .expect("upload file-tree write exists");
+        assert!(project_lock < file_tree_write);
+    }
 }
 
 // ============================= 词条 =============================
@@ -219,7 +272,13 @@ pub struct UpdateEntryReq {
 
 /// 更新词条译文与状态。按目标状态校验权限；锁定词条仅管理/拥有者可改；版本冲突返回 409。
 #[utoipa::path(put, path = "/projects/{id}/entries/{entry_id}", tag = "entry", request_body = UpdateEntryReq,
-    responses((status = 200, body = EntryDto), (status = 403), (status = 404), (status = 409)))]
+    responses(
+        (status = 200, body = EntryDto),
+        (status = 403),
+        (status = 404),
+        (status = 409),
+        (status = 503, description = "审计服务不可用，词条更新未提交", body = ErrorResponse)
+    ))]
 pub async fn update_entry(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -231,28 +290,31 @@ pub async fn update_entry(
         EntryState::parse(&req.state).ok_or_else(|| Error::bad_request("非法的目标状态"))?;
     access.require_node(node_for_state(target))?;
 
-    let entry = prts_db::entries::get(&state.db, id, entry_id)
-        .await
-        .map_err(db_err)?
-        .ok_or(Error::NotFound)?;
-
-    if entry.locked {
-        let can = access
-            .effective_role()
-            .map(|r| r.can_edit_locked())
-            .unwrap_or(false);
-        if !can {
-            return Err(Error::Forbidden.into());
-        }
-    }
-
     let kind = if matches!(target, EntryState::Checked | EntryState::Reviewed) {
         "review"
     } else {
         "edit"
     };
-    let updated = prts_db::entries::update_translation(
-        &state.db,
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    let access = paccess::load_locked_tx(&mut tx, &user, project).await?;
+    access.require_node(node_for_state(target))?;
+    let entry = prts_db::entries::get_for_update_tx(&mut tx, id, entry_id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    if entry.locked
+        && !access
+            .effective_role()
+            .is_some_and(|role| role.can_edit_locked())
+    {
+        return Err(Error::Forbidden.into());
+    }
+    let updated = prts_db::entries::update_translation_tx(
+        &mut tx,
         entry_id,
         req.version,
         &req.translation,
@@ -265,6 +327,25 @@ pub async fn update_entry(
 
     match updated {
         Some(e) => {
+            prts_db::audit::append_event_tx(
+                &mut tx,
+                AuditActor {
+                    id: Some(user.id),
+                    kind: AuditActorKind::User,
+                    ip: None,
+                },
+                AuditEvent::EntryUpdated {
+                    project_id: id,
+                    entry_id: e.id,
+                    previous_version: entry.version,
+                    new_version: e.version,
+                    previous_state: &entry.state,
+                    new_state: &e.state,
+                },
+            )
+            .await
+            .map_err(|_| Error::AuditUnavailable)?;
+            tx.commit().await.map_err(db_err)?;
             state
                 .realtime
                 .publish(
@@ -291,7 +372,12 @@ pub struct SetFlagsReq {
 
 /// 设置词条锁定/隐藏。锁定需 `entry.lock`，隐藏需 `entry.hide`。
 #[utoipa::path(patch, path = "/projects/{id}/entries/{entry_id}/flags", tag = "entry", request_body = SetFlagsReq,
-    responses((status = 200, body = EntryDto), (status = 403), (status = 404)))]
+    responses(
+        (status = 200, body = EntryDto),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，词条标志未更新", body = ErrorResponse)
+    ))]
 pub async fn set_entry_flags(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -305,10 +391,43 @@ pub async fn set_entry_flags(
     if req.hidden.is_some() {
         access.require_node(nodes::PROJECT_ENTRY_HIDE)?;
     }
-    let updated = prts_db::entries::set_flags(&state.db, id, entry_id, req.locked, req.hidden)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
+    let access = paccess::load_locked_tx(&mut tx, &user, project).await?;
+    if req.locked.is_some() {
+        access.require_node(nodes::PROJECT_ENTRY_LOCK)?;
+    }
+    if req.hidden.is_some() {
+        access.require_node(nodes::PROJECT_ENTRY_HIDE)?;
+    }
+    prts_db::entries::get_for_update_tx(&mut tx, id, entry_id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    let updated = prts_db::entries::set_flags_tx(&mut tx, id, entry_id, req.locked, req.hidden)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::EntryFlagsUpdated {
+            project_id: id,
+            entry_id,
+            locked: updated.locked,
+            hidden: updated.hidden,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     state
         .realtime
         .publish(
@@ -373,7 +492,11 @@ pub async fn entry_history(
 
 /// 下载项目导出包（zip，保留目录结构，每文件含 key/original/translation）。
 #[utoipa::path(get, path = "/projects/{id}/export", tag = "entry",
-    responses((status = 200, description = "application/zip"), (status = 404)))]
+    responses(
+        (status = 200, description = "application/zip"),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，敏感导出未生成", body = ErrorResponse)
+    ))]
 pub async fn export_project(
     State(state): State<AppState>,
     MaybeUser(user): MaybeUser,
@@ -418,6 +541,33 @@ pub async fn export_project(
     }
     let cursor = zw.finish().map_err(|e| Error::internal(e.to_string()))?;
     let bytes = cursor.into_inner();
+
+    let audit_actor = match user.as_ref() {
+        Some(user) => AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        None => AuditActor {
+            id: None,
+            kind: AuditActorKind::Anonymous,
+            ip: None,
+        },
+    };
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        audit_actor,
+        AuditEvent::ProjectExported {
+            project_id: id,
+            file_count: files.len(),
+            entry_count: entries.len(),
+            include_hidden: false,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
 
     let filename = format!("{}.zip", access.project.slug);
     let headers = [

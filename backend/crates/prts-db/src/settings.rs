@@ -1,6 +1,6 @@
 //! 平台设置数据访问（key → JSONB）。
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use crate::models::Setting;
 
@@ -21,6 +21,17 @@ pub async fn set(
     value: &serde_json::Value,
     updated_by: Option<i64>,
 ) -> Result<(), sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    set_tx(&mut connection, key, value, updated_by).await
+}
+
+/// 在调用方事务内写入或更新设置。
+pub async fn set_tx(
+    conn: &mut PgConnection,
+    key: &str,
+    value: &serde_json::Value,
+    updated_by: Option<i64>,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO settings (key, value, updated_by)
          VALUES ($1, $2, $3)
@@ -31,7 +42,7 @@ pub async fn set(
     .bind(key)
     .bind(value)
     .bind(updated_by)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }

@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use prts_common::Error;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 
 use crate::auth::CurrentUser;
 use crate::db_err;
 use crate::dto::UserDto;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
 /// 当前用户资料。
@@ -38,23 +39,42 @@ pub struct UpdateMeReq {
 
 /// 更新当前用户资料。
 #[utoipa::path(put, path = "/me", tag = "user", request_body = UpdateMeReq,
-    responses((status = 200, body = UserDto), (status = 401)))]
+    responses(
+        (status = 200, body = UserDto),
+        (status = 401),
+        (status = 503, description = "审计服务不可用，资料更新未提交", body = ErrorResponse)
+    ))]
 pub async fn update_me(
     State(state): State<AppState>,
     user: CurrentUser,
     Json(req): Json<UpdateMeReq>,
 ) -> Result<Json<UserDto>, ApiError> {
-    let current = prts_db::users::find_by_id(&state.db, user.id)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let current = prts_db::users::find_by_id_for_update_tx(&mut tx, user.id)
         .await
         .map_err(db_err)?
         .ok_or(Error::Unauthorized)?;
 
-    let description = req.description.unwrap_or(current.description);
-    let avatar_url = req.avatar_url.or(current.avatar_url);
-    let langs = req.translation_langs.unwrap_or(current.translation_langs);
+    let description = req
+        .description
+        .unwrap_or_else(|| current.description.clone());
+    let avatar_url = req.avatar_url.or_else(|| current.avatar_url.clone());
+    let langs = req
+        .translation_langs
+        .unwrap_or_else(|| current.translation_langs.clone());
+    let mut changed_fields = Vec::with_capacity(3);
+    if description != current.description {
+        changed_fields.push("description");
+    }
+    if avatar_url != current.avatar_url {
+        changed_fields.push("avatar_url");
+    }
+    if langs != current.translation_langs {
+        changed_fields.push("translation_langs");
+    }
 
-    let updated = prts_db::users::update_profile(
-        &state.db,
+    let updated = prts_db::users::update_profile_tx(
+        &mut tx,
         user.id,
         &description,
         avatar_url.as_deref(),
@@ -62,6 +82,22 @@ pub async fn update_me(
     )
     .await
     .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::UserProfileUpdated {
+            user_id: user.id,
+            changed_fields: &changed_fields,
+            translation_lang_count: langs.len(),
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(Json((&updated).into()))
 }
 
@@ -143,7 +179,11 @@ pub struct CreatedApiKey {
 
 /// 创建 API Key。
 #[utoipa::path(post, path = "/me/api-keys", tag = "user", request_body = CreateApiKeyReq,
-    responses((status = 200, body = CreatedApiKey), (status = 400)))]
+    responses(
+        (status = 200, body = CreatedApiKey),
+        (status = 400),
+        (status = 503, description = "审计服务不可用，API Key 未创建", body = ErrorResponse)
+    ))]
 pub async fn create_api_key(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -154,9 +194,26 @@ pub async fn create_api_key(
         return Err(Error::bad_request("名称需为 1–64 字符").into());
     }
     let key = prts_auth::token::generate_api_key();
-    let rec = prts_db::api_keys::create(&state.db, user.id, name, &key.hash, &key.display_prefix)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let rec = prts_db::api_keys::create_tx(&mut tx, user.id, name, &key.hash, &key.display_prefix)
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ApiKeyCreated {
+            key_id: rec.id,
+            name: &rec.name,
+            prefix: &rec.prefix,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(Json(CreatedApiKey {
         id: rec.id,
         name: rec.name,
@@ -191,18 +248,35 @@ pub async fn list_api_keys(
 
 /// 吊销一条 API Key。
 #[utoipa::path(delete, path = "/me/api-keys/{id}", tag = "user",
-    responses((status = 204), (status = 404)))]
+    responses(
+        (status = 204),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，API Key 未吊销", body = ErrorResponse)
+    ))]
 pub async fn revoke_api_key(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    if prts_db::api_keys::revoke(&state.db, user.id, id)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let record = prts_db::api_keys::revoke_tx(&mut tx, user.id, id)
         .await
         .map_err(db_err)?
-    {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(Error::NotFound.into())
-    }
+        .ok_or(Error::NotFound)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ApiKeyRevoked {
+            key_id: record.id,
+            prefix: &record.prefix,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(StatusCode::NO_CONTENT)
 }

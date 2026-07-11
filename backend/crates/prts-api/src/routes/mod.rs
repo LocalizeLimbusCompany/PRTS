@@ -136,6 +136,10 @@ pub fn app(state: AppState) -> Router {
         // 用户通知流 WebSocket（不在 OpenAPI 文档内）
         .route("/ws/user", get(ws::user_ws_handler))
         .fallback(handler_404)
+        // 仅统一 Task 1.2 的审计失败本地化，并向认证 extractor 提供请求 locale。
+        .layer(axum::middleware::from_fn(
+            crate::error::localize_audit_errors,
+        ))
         // P0：CORS 放开便于联调；生产环境按需收紧（见 plan §15）。
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
@@ -241,6 +245,49 @@ mod tests {
                     "{method} {path} 的 {status} 应复用稳定错误 schema"
                 );
             }
+        }
+    }
+
+    /// Task 1.2 的认证与受审计 mutation 都公开稳定的 fail-closed 503 schema。
+    #[test]
+    fn audited_mutations_document_audit_unavailable() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        for (path, method) in [
+            ("/auth/register", "post"),
+            ("/auth/login", "post"),
+            ("/auth/refresh", "post"),
+            ("/auth/logout", "post"),
+            ("/auth/oauth/{provider}/callback", "get"),
+            ("/me", "put"),
+            ("/me/api-keys", "post"),
+            ("/me/api-keys/{id}", "delete"),
+            ("/admin/settings", "put"),
+            ("/admin/users/{id}/role", "post"),
+            ("/admin/settings/search", "put"),
+            ("/projects", "post"),
+            ("/projects/{id}", "put"),
+            ("/projects/{id}", "delete"),
+            ("/projects/{id}/members", "post"),
+            ("/projects/{id}/members/{user_id}", "delete"),
+            ("/projects/{id}/files/{file_id}", "delete"),
+            ("/projects/{id}/folders/{folder_id}", "delete"),
+            ("/projects/{id}/upload", "post"),
+            ("/projects/{id}/entries/{entry_id}", "put"),
+            ("/projects/{id}/entries/{entry_id}/flags", "patch"),
+            ("/projects/{id}/export", "get"),
+            ("/notifications/read", "post"),
+            ("/projects/{id}/poke", "post"),
+            ("/messages", "post"),
+            ("/messages/{user_id}/read", "post"),
+            ("/jobs/{id}/retry", "post"),
+        ] {
+            assert_eq!(
+                document["paths"][path][method]["responses"]["503"]["content"]["application/json"]
+                    ["schema"]["$ref"],
+                "#/components/schemas/ErrorResponse",
+                "{method} {path} 应公开 AUDIT_UNAVAILABLE 的稳定错误 schema"
+            );
         }
     }
 }

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use serde::Deserialize;
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use sqlx::{PgConnection, PgPool, Postgres, QueryBuilder};
 
 use crate::models::{Entry, EntryVersion};
 
@@ -63,18 +63,30 @@ pub async fn bulk_upsert(
     entries: &[UploadEntry],
     editor_id: Option<i64>,
 ) -> Result<UpsertStats, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let stats = bulk_upsert_tx(&mut tx, file_id, project_id, entries, editor_id).await?;
+    tx.commit().await?;
+    Ok(stats)
+}
+
+/// 在调用方事务内批量 upsert 词条；所有 chunk 与最终审计共用一次提交。
+pub async fn bulk_upsert_tx(
+    conn: &mut PgConnection,
+    file_id: i64,
+    project_id: i64,
+    entries: &[UploadEntry],
+    editor_id: Option<i64>,
+) -> Result<UpsertStats, sqlx::Error> {
     let mut stats = UpsertStats::default();
 
     for chunk in entries.chunks(500) {
-        let mut tx = pool.begin().await?;
-
         let keys: Vec<String> = chunk.iter().map(|e| e.key.clone()).collect();
         let existing_rows: Vec<(i64, String, serde_json::Value)> = sqlx::query_as(
             "SELECT id, key, original FROM entries WHERE file_id = $1 AND key = ANY($2)",
         )
         .bind(file_id)
         .bind(&keys)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *conn)
         .await?;
 
         let mut existing: HashMap<String, (i64, serde_json::Value)> = HashMap::new();
@@ -95,7 +107,7 @@ pub async fn bulk_upsert(
                         )
                         .bind(id)
                         .bind(editor_id)
-                        .execute(&mut *tx)
+                        .execute(&mut *conn)
                         .await?;
                         // 覆盖源文、置未翻译、版本+1（保留 translation）
                         sqlx::query(
@@ -106,7 +118,7 @@ pub async fn bulk_upsert(
                         .bind(&e.original)
                         .bind(e.context.clone().unwrap_or_default())
                         .bind(editor_id)
-                        .execute(&mut *tx)
+                        .execute(&mut *conn)
                         .await?;
                         stats.updated += 1;
                     } else {
@@ -129,11 +141,9 @@ pub async fn bulk_upsert(
                     .push_bind(e.translation.clone().unwrap_or_default())
                     .push_bind(normalize_state(e.state.as_deref()));
             });
-            qb.build().execute(&mut *tx).await?;
+            qb.build().execute(&mut *conn).await?;
             stats.created += to_insert.len();
         }
-
-        tx.commit().await?;
     }
 
     Ok(stats)
@@ -195,6 +205,19 @@ pub async fn get(
         .await
 }
 
+/// 在调用方事务内锁定项目所属词条并返回一致快照。
+pub async fn get_for_update_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+    entry_id: i64,
+) -> Result<Option<Entry>, sqlx::Error> {
+    sqlx::query_as::<_, Entry>("SELECT * FROM entries WHERE id = $1 AND project_id = $2 FOR UPDATE")
+        .bind(entry_id)
+        .bind(project_id)
+        .fetch_optional(conn)
+        .await
+}
+
 /// 乐观锁更新译文与状态：仅当 `expected_version` 匹配才更新。
 /// 返回 `Ok(None)` 表示版本冲突（已被他人修改）。同时记录一条历史。
 pub async fn update_translation(
@@ -207,6 +230,31 @@ pub async fn update_translation(
     editor_id: Option<i64>,
 ) -> Result<Option<Entry>, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    let updated = update_translation_tx(
+        &mut tx,
+        entry_id,
+        expected_version,
+        translation,
+        state,
+        kind,
+        editor_id,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(updated)
+}
+
+/// 在调用方事务内乐观锁更新译文/状态并写 entry version。
+#[allow(clippy::too_many_arguments)]
+pub async fn update_translation_tx(
+    conn: &mut PgConnection,
+    entry_id: i64,
+    expected_version: i64,
+    translation: &str,
+    state: &str,
+    kind: &str,
+    editor_id: Option<i64>,
+) -> Result<Option<Entry>, sqlx::Error> {
     let updated: Option<Entry> = sqlx::query_as::<_, Entry>(
         "UPDATE entries SET translation = $3, state = $4, version = version + 1, updated_by = $5
          WHERE id = $1 AND version = $2 RETURNING *",
@@ -216,7 +264,7 @@ pub async fn update_translation(
     .bind(translation)
     .bind(state)
     .bind(editor_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
 
     if let Some(ref e) = updated {
@@ -230,17 +278,27 @@ pub async fn update_translation(
         .bind(&e.translation)
         .bind(&e.state)
         .bind(editor_id)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
-
-    tx.commit().await?;
     Ok(updated)
 }
 
 /// 设置锁定/隐藏标志（None 表示不变）。
 pub async fn set_flags(
     pool: &PgPool,
+    project_id: i64,
+    entry_id: i64,
+    locked: Option<bool>,
+    hidden: Option<bool>,
+) -> Result<Option<Entry>, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    set_flags_tx(&mut connection, project_id, entry_id, locked, hidden).await
+}
+
+/// 在调用方事务内设置词条正交 flags。
+pub async fn set_flags_tx(
+    conn: &mut PgConnection,
     project_id: i64,
     entry_id: i64,
     locked: Option<bool>,
@@ -254,7 +312,7 @@ pub async fn set_flags(
     .bind(project_id)
     .bind(locked)
     .bind(hidden)
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await
 }
 

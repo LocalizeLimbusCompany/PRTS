@@ -210,7 +210,8 @@ pub async fn list_project_jobs(
         (status = 400, description = "当前状态不可重试", body = ErrorResponse),
         (status = 401, description = "必须登录", body = ErrorResponse),
         (status = 403, description = "缺少任务所属资源的业务权限", body = ErrorResponse),
-        (status = 404, description = "任务或所属资源不存在", body = ErrorResponse)
+        (status = 404, description = "任务或所属资源不存在", body = ErrorResponse),
+        (status = 503, description = "审计服务不可用，任务未重新排队", body = ErrorResponse)
     )
 )]
 pub async fn retry_job(
@@ -219,56 +220,10 @@ pub async fn retry_job(
     user: CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<Json<JobDto>, ApiError> {
-    let result: Result<Json<JobDto>, ApiError> = async {
-        let mut tx = state.db.begin().await.map_err(db_err)?;
-        let current = prts_db::jobs::find_by_id_for_update_tx(&mut tx, id)
-            .await
-            .map_err(db_err)?
-            .ok_or(Error::NotFound)?;
-        prts_core::jobs::job_view_policy(&current.kind).ok_or(Error::NotFound)?;
-        let project_id = current.project_id.ok_or(Error::NotFound)?;
-        let access = paccess::load(&state, Some(&user), project_id).await?;
-        access.require_view()?;
-        if !can_view_job(&access, &user, &current.kind) {
-            return Err(Error::Forbidden.into());
-        }
-        let retry_policy = prts_core::jobs::manual_retry_policy(&current.kind)
-            .ok_or_else(|| Error::bad_request("manual retry is not supported for this job kind"))?;
-        if retry_policy.owner_only && access.project.owner_id != user.id {
-            return Err(Error::Forbidden.into());
-        }
-        access.require_node(retry_policy.permission_node)?;
-        let state_value = prts_core::JobState::parse(&current.state)
-            .ok_or_else(|| Error::internal("unknown job state persisted"))?;
-        if !state_value.manual_retry_allowed() {
-            return Err(Error::bad_request("job is not manually retryable").into());
-        }
-        let updated = prts_db::jobs::manual_retry_tx(&mut tx, id)
-            .await
-            .map_err(db_err)?
-            .ok_or_else(|| Error::bad_request("job state changed; retry rejected"))?;
-        prts_db::audit::append_job_retried_tx(
-            &mut tx,
-            prts_db::audit::AuditActor {
-                id: Some(user.id),
-                kind: prts_db::audit::AuditActorKind::User,
-                ip: None,
-            },
-            updated.id,
-            updated.project_id,
-            &updated.kind,
-            current.attempts,
-            updated.attempts,
-        )
+    crate::job_retry::retry_job(&state, &user, id)
         .await
-        .map_err(db_err)?;
-        tx.commit().await.map_err(db_err)?;
-        state.job_worker.wake();
-
-        Ok(Json(JobDto::from_job(updated, false)))
-    }
-    .await;
-    result.map_err(|error| error.with_locale(locale))
+        .map(|job| Json(JobDto::from_job(job, false)))
+        .map_err(|error| error.with_locale(locale))
 }
 
 /// 返回当前主体是否还具备手动重试能力；读取本身始终按所属资源鉴权。
@@ -394,11 +349,14 @@ mod db_tests {
             prts_common::config::Settings::load_from("__audit_jobs_missing_config__").unwrap(),
         );
         let registry = crate::jobs::JobRegistry::new(Vec::new());
-        let job_worker = crate::job_worker::spawn(
+        let (job_worker, _job_worker_handle) = crate::job_worker::spawn(
             db.clone(),
             registry,
             Arc::new(crate::job_worker::NoPendingDeletions),
         );
+        let search_rt = Arc::new(tokio::sync::RwLock::new(Default::default()));
+        let (search_settings_updater, _search_settings_worker) =
+            crate::search_settings_worker::spawn(db.clone(), search_rt.clone());
         AppState {
             db,
             cache,
@@ -406,12 +364,38 @@ mod db_tests {
             zoot: Arc::new(None),
             realtime,
             embedder: Arc::new(None),
-            search_rt: Arc::new(tokio::sync::RwLock::new(Default::default())),
+            search_rt,
+            search_settings_updater,
             job_worker,
         }
     }
 
-    fn bearer(user_id: i64, state: &AppState) -> String {
+    /// 为 HTTP 路由测试创建真实 active DB session；sid=None 已是 presented-invalid credential。
+    async fn bearer(user_id: i64, state: &AppState) -> String {
+        let session_handle = prts_auth::token::random_token(24);
+        let raw_refresh = format!("{session_handle}.{}", prts_auth::token::random_token(48));
+        let mut tx = state.db.begin().await.unwrap();
+        let pending = prts_db::auth_sessions::create_pending_tx(
+            &mut tx,
+            prts_db::auth_sessions::NewAuthSession {
+                session_handle: session_handle.clone(),
+                family_handle: prts_auth::token::random_token(24),
+                user_id,
+                refresh_token_hash: prts_db::auth_sessions::RefreshTokenHash::parse(
+                    prts_auth::token::sha256_hex(&raw_refresh),
+                )
+                .unwrap(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                predecessor_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        prts_db::auth_sessions::activate_pending_tx(&mut tx, pending.id)
+            .await
+            .unwrap()
+            .unwrap();
+        tx.commit().await.unwrap();
         let now = chrono::Utc::now().timestamp();
         let token = prts_auth::jwt::encode(
             &prts_auth::jwt::Claims {
@@ -419,6 +403,7 @@ mod db_tests {
                 iat: now,
                 exp: now + 600,
                 typ: "access".to_string(),
+                sid: Some(session_handle),
             },
             state.jwt_secret(),
         );
@@ -603,7 +588,7 @@ mod db_tests {
             .oneshot(
                 Request::builder()
                     .uri("/jobs/9223372036854770000")
-                    .header(header::AUTHORIZATION, bearer(owner.id, &state))
+                    .header(header::AUTHORIZATION, bearer(owner.id, &state).await)
                     .header(header::ACCEPT_LANGUAGE, "zh-CN")
                     .body(Body::empty())
                     .unwrap(),
@@ -621,7 +606,7 @@ mod db_tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/jobs/{unknown_id}"))
-                    .header(header::AUTHORIZATION, bearer(owner.id, &state))
+                    .header(header::AUTHORIZATION, bearer(owner.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -635,7 +620,7 @@ mod db_tests {
                 Request::builder()
                     .method("POST")
                     .uri(format!("/jobs/{unknown_id}/retry"))
-                    .header(header::AUTHORIZATION, bearer(owner.id, &state))
+                    .header(header::AUTHORIZATION, bearer(owner.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -647,7 +632,7 @@ mod db_tests {
                 Request::builder()
                     .method("POST")
                     .uri("/jobs/9223372036854770000/retry")
-                    .header(header::AUTHORIZATION, bearer(owner.id, &state))
+                    .header(header::AUTHORIZATION, bearer(owner.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -665,7 +650,7 @@ mod db_tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/projects/{}/jobs", project.id))
-                    .header(header::AUTHORIZATION, bearer(owner.id, &state))
+                    .header(header::AUTHORIZATION, bearer(owner.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -691,7 +676,7 @@ mod db_tests {
                         "/projects/{}/jobs?kind=primary_source_lexical_reindex",
                         project.id
                     ))
-                    .header(header::AUTHORIZATION, bearer(manager.id, &state))
+                    .header(header::AUTHORIZATION, bearer(manager.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -704,7 +689,7 @@ mod db_tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/projects/{}/jobs?limit=1", project.id))
-                    .header(header::AUTHORIZATION, bearer(manager.id, &state))
+                    .header(header::AUTHORIZATION, bearer(manager.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -721,7 +706,7 @@ mod db_tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/projects/{}/jobs?limit=0", project.id))
-                    .header(header::AUTHORIZATION, bearer(manager.id, &state))
+                    .header(header::AUTHORIZATION, bearer(manager.id, &state).await)
                     .header(header::ACCEPT_LANGUAGE, "en")
                     .body(Body::empty())
                     .unwrap(),
@@ -739,7 +724,7 @@ mod db_tests {
             .oneshot(
                 Request::builder()
                     .uri(format!("/projects/{}/jobs?limit=101", project.id))
-                    .header(header::AUTHORIZATION, bearer(manager.id, &state))
+                    .header(header::AUTHORIZATION, bearer(manager.id, &state).await)
                     .header(header::ACCEPT_LANGUAGE, "zh-CN")
                     .body(Body::empty())
                     .unwrap(),
@@ -761,7 +746,7 @@ mod db_tests {
                 .oneshot(
                     Request::builder()
                         .uri(uri)
-                        .header(header::AUTHORIZATION, bearer(outsider.id, &state))
+                        .header(header::AUTHORIZATION, bearer(outsider.id, &state).await)
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -776,7 +761,7 @@ mod db_tests {
                 Request::builder()
                     .method("POST")
                     .uri(format!("/jobs/{primary_id}/retry"))
-                    .header(header::AUTHORIZATION, bearer(admin.id, &state))
+                    .header(header::AUTHORIZATION, bearer(admin.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -790,7 +775,7 @@ mod db_tests {
                 Request::builder()
                     .method("POST")
                     .uri(format!("/jobs/{upload_id}/retry"))
-                    .header(header::AUTHORIZATION, bearer(manager.id, &state))
+                    .header(header::AUTHORIZATION, bearer(manager.id, &state).await)
                     .body(Body::empty())
                     .unwrap(),
             )

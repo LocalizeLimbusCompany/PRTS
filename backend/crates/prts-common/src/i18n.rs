@@ -55,6 +55,8 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("not_found", Locale::En) => "Resource not found",
         ("conflict", Locale::ZhCn) => "版本冲突，请刷新后重试",
         ("conflict", Locale::En) => "Version conflict, please refresh and retry",
+        ("AUDIT_UNAVAILABLE", Locale::ZhCn) => "审计服务暂不可用",
+        ("AUDIT_UNAVAILABLE", Locale::En) => "Audit service unavailable",
         ("internal", Locale::ZhCn) => "服务器内部错误",
         ("internal", Locale::En) => "Internal server error",
         _ => return None,

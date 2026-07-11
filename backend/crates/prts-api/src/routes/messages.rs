@@ -21,11 +21,12 @@ use sqlx::PgPool;
 use utoipa::ToSchema;
 
 use prts_common::Error;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 use prts_realtime::UserEvent;
 
 use crate::auth::CurrentUser;
 use crate::db_err;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
 // ============================= DTO =============================
@@ -225,6 +226,7 @@ pub async fn conversation(
         (status = 400, description = "正文不合规或收件人为自己"),
         (status = 401, description = "未认证"),
         (status = 403, description = "与收件人无共享项目"),
+        (status = 503, description = "审计服务不可用，私信未发送", body = ErrorResponse),
     )
 )]
 pub async fn send(
@@ -255,9 +257,27 @@ pub async fn send(
     }
 
     // 落库。
-    let m = prts_db::messages::create(&state.db, user.id, body.to_user_id, &content)
+    let content_length = content.chars().count();
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let m = prts_db::messages::create_tx(&mut tx, user.id, body.to_user_id, &content)
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::MessageSent {
+            message_id: m.id,
+            recipient_id: body.to_user_id,
+            content_length,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
 
     // 实时推送给收件人（跨实例经 Redis）。
     state
@@ -287,6 +307,7 @@ pub async fn send(
     responses(
         (status = 200, description = "标记成功"),
         (status = 401, description = "未认证"),
+        (status = 503, description = "审计服务不可用，会话状态未更新", body = ErrorResponse),
     )
 )]
 pub async fn mark_read(
@@ -294,8 +315,24 @@ pub async fn mark_read(
     user: CurrentUser,
     Path(other): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    prts_db::messages::mark_read(&state.db, user.id, other)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let count = prts_db::messages::mark_read_tx(&mut tx, user.id, other)
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::MessageMarkedRead {
+            other_user_id: other,
+            count,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(StatusCode::OK)
 }

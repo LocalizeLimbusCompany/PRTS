@@ -52,7 +52,7 @@ pub fn spawn(
     db: prts_db::Db,
     registry: JobRegistry,
     pending_deletions: Arc<dyn PendingDeletionSource>,
-) -> JobWorkerControl {
+) -> (JobWorkerControl, tokio::task::JoinHandle<()>) {
     let control = JobWorkerControl {
         notify: Arc::new(Notify::new()),
     };
@@ -61,7 +61,7 @@ pub fn spawn(
         "job-worker-{}",
         prts_auth::token::random_token(12).to_lowercase()
     );
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         loop {
             if registry.kinds().is_empty() {
                 loop_control.wait().await;
@@ -75,7 +75,7 @@ pub fn spawn(
             loop_control.wait().await;
         }
     });
-    control
+    (control, handle)
 }
 
 async fn run_once(
@@ -181,6 +181,14 @@ fn normalize_execution_error(error: JobExecutionError) -> (&'static str, String)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_exposes_control_and_join_handle_for_supervision() {
+        type PendingSource = Arc<dyn PendingDeletionSource>;
+        type SpawnedWorker = (JobWorkerControl, tokio::task::JoinHandle<()>);
+        type SpawnFn = fn(prts_db::Db, JobRegistry, PendingSource) -> SpawnedWorker;
+        let _spawn: SpawnFn = spawn;
+    }
 
     #[test]
     fn handler_errors_are_stable_and_redacted_before_persistence() {

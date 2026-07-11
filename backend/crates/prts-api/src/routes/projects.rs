@@ -11,10 +11,11 @@ use utoipa::ToSchema;
 use prts_common::Error;
 use prts_core::permission::nodes;
 use prts_core::ProjectRole;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 
 use crate::auth::{project as paccess, CurrentUser, MaybeUser};
 use crate::db_err;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
 /// 项目对外表示。
@@ -112,7 +113,12 @@ pub struct CreateProjectReq {
 
 /// 创建项目（创建者成为拥有者）。需平台「创建项目」权限。
 #[utoipa::path(post, path = "/projects", tag = "project", request_body = CreateProjectReq,
-    responses((status = 200, body = ProjectDto), (status = 400), (status = 403)))]
+    responses(
+        (status = 200, body = ProjectDto),
+        (status = 400),
+        (status = 403),
+        (status = 503, description = "审计服务不可用，项目未创建", body = ErrorResponse)
+    ))]
 pub async fn create_project(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -140,8 +146,9 @@ pub async fn create_project(
         _ => "public",
     };
 
-    let project = prts_db::projects::create(
-        &state.db,
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::create_tx(
+        &mut tx,
         &slug,
         name,
         req.description.as_deref().unwrap_or(""),
@@ -152,9 +159,27 @@ pub async fn create_project(
     )
     .await
     .map_err(db_err)?;
-    prts_db::memberships::upsert(&state.db, project.id, user.id, "owner")
+    prts_db::memberships::upsert_tx(&mut tx, project.id, user.id, "owner")
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ProjectCreated {
+            project_id: project.id,
+            slug: &project.slug,
+            visibility: &project.visibility,
+            source_langs: &project.source_langs,
+            target_lang: &project.target_lang,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
 
     Ok(Json((&project).into()))
 }
@@ -233,7 +258,12 @@ pub struct UpdateProjectReq {
 
 /// 更新项目元信息。需项目「管理」权限。
 #[utoipa::path(put, path = "/projects/{id}", tag = "project", request_body = UpdateProjectReq,
-    responses((status = 200, body = ProjectDto), (status = 403), (status = 404)))]
+    responses(
+        (status = 200, body = ProjectDto),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，项目未更新", body = ErrorResponse)
+    ))]
 pub async fn update_project(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -242,30 +272,84 @@ pub async fn update_project(
 ) -> Result<Json<ProjectDto>, ApiError> {
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_MANAGE)?;
-    let p = &access.project;
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let before = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, before.clone())
+        .await?
+        .require_node(nodes::PROJECT_MANAGE)?;
 
     let visibility = match req.visibility.as_deref() {
         Some("private") => "private".to_string(),
         Some("public") => "public".to_string(),
-        _ => p.visibility.clone(),
+        _ => before.visibility.clone(),
     };
-    let updated = prts_db::projects::update(
-        &state.db,
+    let name = req.name.unwrap_or_else(|| before.name.clone());
+    let description = req
+        .description
+        .unwrap_or_else(|| before.description.clone());
+    let source_langs = req
+        .source_langs
+        .unwrap_or_else(|| before.source_langs.clone());
+    let target_lang = req
+        .target_lang
+        .unwrap_or_else(|| before.target_lang.clone());
+    let mut changed_fields = Vec::with_capacity(5);
+    if name != before.name {
+        changed_fields.push("name");
+    }
+    if description != before.description {
+        changed_fields.push("description");
+    }
+    if visibility != before.visibility {
+        changed_fields.push("visibility");
+    }
+    if source_langs != before.source_langs {
+        changed_fields.push("source_langs");
+    }
+    if target_lang != before.target_lang {
+        changed_fields.push("target_lang");
+    }
+    let updated = prts_db::projects::update_tx(
+        &mut tx,
         id,
-        req.name.as_deref().unwrap_or(&p.name),
-        req.description.as_deref().unwrap_or(&p.description),
+        &name,
+        &description,
         &visibility,
-        req.source_langs.as_deref().unwrap_or(&p.source_langs),
-        req.target_lang.as_deref().unwrap_or(&p.target_lang),
+        &source_langs,
+        &target_lang,
     )
     .await
     .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ProjectUpdated {
+            project_id: id,
+            changed_fields: &changed_fields,
+            visibility: &updated.visibility,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(Json((&updated).into()))
 }
 
 /// 删除项目。需项目「删除」权限。
 #[utoipa::path(delete, path = "/projects/{id}", tag = "project",
-    responses((status = 204), (status = 403), (status = 404)))]
+    responses(
+        (status = 204),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，项目未删除", body = ErrorResponse)
+    ))]
 pub async fn delete_project(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -273,9 +357,32 @@ pub async fn delete_project(
 ) -> Result<StatusCode, ApiError> {
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_DELETE)?;
-    prts_db::projects::delete(&state.db, id)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let before = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, before.clone())
+        .await?
+        .require_node(nodes::PROJECT_DELETE)?;
+    prts_db::projects::delete_tx(&mut tx, id)
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ProjectDeleted {
+            project_id: id,
+            slug: &before.slug,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -326,7 +433,13 @@ pub struct AddMemberReq {
 
 /// 添加或更新项目成员。需项目「成员管理」权限。
 #[utoipa::path(post, path = "/projects/{id}/members", tag = "project", request_body = AddMemberReq,
-    responses((status = 204), (status = 400), (status = 403), (status = 404)))]
+    responses(
+        (status = 204),
+        (status = 400),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，成员关系未更新", body = ErrorResponse)
+    ))]
 pub async fn add_member(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -342,15 +455,49 @@ pub async fn add_member(
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    prts_db::memberships::upsert(&state.db, id, target.id, &req.role)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, project)
+        .await?
+        .require_node(nodes::PROJECT_MEMBER_MANAGE)?;
+    let previous_role = prts_db::memberships::find_role_tx(&mut tx, id, target.id)
         .await
         .map_err(db_err)?;
+    prts_db::memberships::upsert_tx(&mut tx, id, target.id, &req.role)
+        .await
+        .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::MembershipUpserted {
+            project_id: id,
+            member_id: target.id,
+            previous_role: previous_role.as_deref(),
+            new_role: &req.role,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// 移除项目成员。需项目「成员管理」权限。不可移除最后一个拥有者。
 #[utoipa::path(delete, path = "/projects/{id}/members/{user_id}", tag = "project",
-    responses((status = 204), (status = 400), (status = 403), (status = 404)))]
+    responses(
+        (status = 204),
+        (status = 400),
+        (status = 403),
+        (status = 404),
+        (status = 503, description = "审计服务不可用，成员关系未移除", body = ErrorResponse)
+    ))]
 pub async fn remove_member(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -359,13 +506,21 @@ pub async fn remove_member(
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_MEMBER_MANAGE)?;
 
-    // 不可移除最后一个 owner
-    if let Some(role) = prts_db::memberships::find_role(&state.db, id, user_id)
+    // 锁定项目会串行化 add/remove；即使目标 membership 尚不存在，也不会发生 gap race。
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
         .await
         .map_err(db_err)?
-    {
+        .ok_or(Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, project)
+        .await?
+        .require_node(nodes::PROJECT_MEMBER_MANAGE)?;
+    let previous_role = prts_db::memberships::find_role_tx(&mut tx, id, user_id)
+        .await
+        .map_err(db_err)?;
+    if let Some(role) = previous_role.as_deref() {
         if role == "owner"
-            && prts_db::memberships::count_role(&state.db, id, "owner")
+            && prts_db::memberships::count_role_tx(&mut tx, id, "owner")
                 .await
                 .map_err(db_err)?
                 <= 1
@@ -373,10 +528,27 @@ pub async fn remove_member(
             return Err(Error::bad_request("不能移除最后一个拥有者").into());
         }
     }
-    if prts_db::memberships::remove(&state.db, id, user_id)
+    let previous_role = previous_role.ok_or(Error::NotFound)?;
+    if prts_db::memberships::remove_tx(&mut tx, id, user_id)
         .await
         .map_err(db_err)?
     {
+        prts_db::audit::append_event_tx(
+            &mut tx,
+            AuditActor {
+                id: Some(user.id),
+                kind: AuditActorKind::User,
+                ip: None,
+            },
+            AuditEvent::MembershipRemoved {
+                project_id: id,
+                member_id: user_id,
+                previous_role: &previous_role,
+            },
+        )
+        .await
+        .map_err(|_| Error::AuditUnavailable)?;
+        tx.commit().await.map_err(db_err)?;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(Error::NotFound.into())

@@ -54,6 +54,40 @@ non-superuser runtime login role, then configure both URLs as shown in `.env.exa
 fails closed if the roles are the same or the runtime role still owns tables. Keep real credentials
 only in local environment variables and never commit them.
 
+**An existing volume does not rerun PostgreSQL init scripts.** The database and table owner in an
+older PRTS volume is usually `prts`; changing `.env` to the new default `prts_migrator` does not
+create that role. Choose one upgrade path:
+
+- Prefer reusing the real existing owner. Check `pg_database` / `pg_tables` first (the owner is
+  usually `prts`), then point `POSTGRES_MIGRATION_USER`, `POSTGRES_MIGRATION_PASSWORD`, and
+  `PRTS__DATABASE__MIGRATION_URL` at that **existing account which owns the old objects**. Keep the
+  runtime URL on the newly created `prts_runtime` role only.
+- If a dedicated `prts_migrator` is required, connect to the target database as the old owner or a
+  database administrator, create only missing roles, set local passwords interactively with
+  `psql`'s `\password`, and transfer all ownership. Replace `prts` below if the actual old owner is
+  different:
+
+  ```psql
+  CREATE ROLE prts_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+  \password prts_migrator
+  CREATE ROLE prts_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+  \password prts_runtime
+  REASSIGN OWNED BY prts TO prts_migrator;
+  ALTER DATABASE prts OWNER TO prts_migrator;
+  ALTER SCHEMA public OWNER TO prts_migrator;
+  ```
+
+Only after that should the migration URL use `prts_migrator`. Never place real passwords in shell
+history, either README, Compose files, or the repository; `\password` prompts interactively, and
+the actual credentials belong only in the local `.env` / secret manager.
+
+### Authentication session upgrade notice
+
+This release rejects legacy access JWTs without a `sid` and makes PostgreSQL authoritative for
+refresh sessions. Upgrading therefore invalidates all existing sessions, effectively signing
+everyone out. Schedule a maintenance window and notify users before a production rollout.
+Access is restored by signing in again after the upgrade; no account or password reset is needed.
+
 Then:
 
 - Frontend: `http://localhost:8080`

@@ -70,6 +70,17 @@ impl AuthSessionState {
             _ => None,
         }
     }
+
+    /// 稳定数据库状态字符串，供审计与 worker 编排使用。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Active => "active",
+            Self::Rotating => "rotating",
+            Self::Revoked => "revoked",
+            Self::Expired => "expired",
+        }
+    }
 }
 
 /// 对上层公开的会话快照。持久化 refresh hash 刻意不在该类型中。
@@ -130,6 +141,28 @@ fn into_session(row: Option<AuthSessionRow>) -> Result<Option<AuthSession>, sqlx
     row.map(AuthSession::try_from).transpose()
 }
 
+/// 按 id 读取任意状态的会话，供 durable outbox worker 判定恢复动作。
+pub async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<AuthSession>, sqlx::Error> {
+    let row = sqlx::query_as::<_, AuthSessionRow>("SELECT * FROM auth_sessions WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    into_session(row)
+}
+
+/// 在调用方事务内锁定任意状态的会话。
+pub async fn find_by_id_for_update_tx(
+    conn: &mut PgConnection,
+    id: i64,
+) -> Result<Option<AuthSession>, sqlx::Error> {
+    let row =
+        sqlx::query_as::<_, AuthSessionRow>("SELECT * FROM auth_sessions WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(conn)
+            .await?;
+    into_session(row)
+}
+
 /// 新建 pending 会话所需的非秘密字段。
 #[derive(Debug, Clone)]
 pub struct NewAuthSession {
@@ -178,6 +211,17 @@ pub async fn lock_active_unexpired_by_refresh_hash_tx(
     .fetch_optional(conn)
     .await?;
     into_session(row)
+}
+
+/// 仅返回 refresh hash 对应的用户 id，供失败认证写脱敏 target；不暴露持久化 hash。
+pub async fn find_user_id_by_refresh_hash(
+    pool: &PgPool,
+    refresh_token_hash: &RefreshTokenHash,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar("SELECT user_id FROM auth_sessions WHERE refresh_token_hash = $1")
+        .bind(refresh_token_hash.as_str())
+        .fetch_optional(pool)
+        .await
 }
 
 /// Redis cache miss 只可回源 active 且未过期的 opaque handle。
@@ -246,6 +290,24 @@ pub async fn revoke_unexpired_tx(
     .fetch_optional(conn)
     .await?;
     into_session(row)
+}
+
+/// 在改密/封禁等安全操作中批量吊销用户全部未过期会话。
+pub async fn revoke_all_unexpired_for_user_tx(
+    conn: &mut PgConnection,
+    user_id: i64,
+) -> Result<Vec<AuthSession>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, AuthSessionRow>(
+        "UPDATE auth_sessions
+         SET state = 'revoked', updated_at = now()
+         WHERE user_id = $1 AND state IN ('pending', 'active', 'rotating')
+           AND expires_at > now()
+         RETURNING *",
+    )
+    .bind(user_id)
+    .fetch_all(conn)
+    .await?;
+    rows.into_iter().map(AuthSession::try_from).collect()
 }
 
 /// 把已经到期的非终态会话物化为 expired；未到期行不会被误终结。
@@ -390,6 +452,9 @@ pub enum AuthIntentState {
     Cancelled,
 }
 
+/// Redis 暂时失败的重试延迟上限，防止异常调用方写入无界 interval。
+const AUTH_INTENT_MAX_RETRY_DELAY_SECONDS: i64 = 300;
+
 impl AuthIntentState {
     fn parse(value: &str) -> Option<Self> {
         match value {
@@ -520,6 +585,7 @@ async fn claim_intent_inner(
     lease_seconds: i64,
     session_id: Option<i64>,
 ) -> Result<Option<AuthSessionIntent>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, AuthSessionIntentRow>(
         "WITH exhausted AS (
              UPDATE auth_session_intents
@@ -528,6 +594,16 @@ async fn claim_intent_inner(
                  last_error_message = 'auth intent exhausted all attempts',
                  completed_at = now(), updated_at = now()
              WHERE state = 'running' AND lease_until <= now()
+               AND attempts >= max_attempts
+               AND ($3::BIGINT IS NULL OR session_id = $3)
+             RETURNING id
+         ), exhausted_queued AS (
+             UPDATE auth_session_intents
+             SET state = 'failed', worker_id = NULL, lease_until = NULL,
+                 last_error_code = 'auth_intent_attempts_exhausted',
+                 last_error_message = 'auth intent exhausted all attempts',
+                 completed_at = now(), updated_at = now()
+             WHERE state = 'queued' AND run_after <= now()
                AND attempts >= max_attempts
                AND ($3::BIGINT IS NULL OR session_id = $3)
              RETURNING id
@@ -555,8 +631,9 @@ async fn claim_intent_inner(
     .bind(worker_id)
     .bind(lease_seconds.max(1) as f64)
     .bind(session_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
+    tx.commit().await?;
     into_intent(row)
 }
 
@@ -590,6 +667,7 @@ pub async fn complete_intent(
     let row = sqlx::query_as::<_, AuthSessionIntentRow>(
         "UPDATE auth_session_intents
          SET state = 'succeeded', worker_id = NULL, lease_until = NULL,
+             last_error_code = NULL, last_error_message = NULL,
              completed_at = now(), updated_at = now()
          WHERE id = $1 AND state = 'running' AND worker_id = $2
            AND lease_until > now()
@@ -602,8 +680,8 @@ pub async fn complete_intent(
     into_intent(row)
 }
 
-/// 记录 intent 错误并按剩余 attempts 进入 queued 或 failed。
-pub async fn fail_intent(
+/// 记录暂时错误并始终重排同一 intent；仅当前有效 lease 持有者可更新。
+pub async fn reschedule_intent(
     pool: &PgPool,
     id: i64,
     worker_id: &str,
@@ -613,13 +691,11 @@ pub async fn fail_intent(
 ) -> Result<Option<AuthSessionIntent>, sqlx::Error> {
     let row = sqlx::query_as::<_, AuthSessionIntentRow>(
         "UPDATE auth_session_intents
-         SET state = CASE WHEN attempts < max_attempts THEN 'queued' ELSE 'failed' END,
-             run_after = CASE WHEN attempts < max_attempts
-                 THEN now() + make_interval(secs => $5) ELSE run_after END,
+         SET state = 'queued',
+             run_after = now() + make_interval(secs => $5),
              worker_id = NULL, lease_until = NULL,
              last_error_code = $3, last_error_message = $4,
-             completed_at = CASE WHEN attempts < max_attempts THEN NULL ELSE now() END,
-             updated_at = now()
+             completed_at = NULL, updated_at = now()
          WHERE id = $1 AND state = 'running' AND worker_id = $2
            AND lease_until > now()
          RETURNING *",
@@ -628,7 +704,33 @@ pub async fn fail_intent(
     .bind(worker_id)
     .bind(error_code)
     .bind(error_message)
-    .bind(retry_after_seconds.max(0) as f64)
+    .bind(retry_after_seconds.clamp(0, AUTH_INTENT_MAX_RETRY_DELAY_SECONDS) as f64)
+    .fetch_optional(pool)
+    .await?;
+    into_intent(row)
+}
+
+/// 将 kind/payload 等永久数据错误置为 failed；暂时 Redis 错误不得调用本入口。
+pub async fn fail_intent_permanently(
+    pool: &PgPool,
+    id: i64,
+    worker_id: &str,
+    error_code: &str,
+    error_message: &str,
+) -> Result<Option<AuthSessionIntent>, sqlx::Error> {
+    let row = sqlx::query_as::<_, AuthSessionIntentRow>(
+        "UPDATE auth_session_intents
+         SET state = 'failed', worker_id = NULL, lease_until = NULL,
+             last_error_code = $3, last_error_message = $4,
+             completed_at = now(), updated_at = now()
+         WHERE id = $1 AND state = 'running' AND worker_id = $2
+           AND lease_until > now()
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(worker_id)
+    .bind(error_code)
+    .bind(error_message)
     .fetch_optional(pool)
     .await?;
     into_intent(row)

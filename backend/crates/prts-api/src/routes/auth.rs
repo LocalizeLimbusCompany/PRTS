@@ -8,10 +8,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use prts_common::Error;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
+use sqlx::PgConnection;
 
-use crate::auth::session::{self, IssuedTokens};
+use crate::auth::session::{self, IssueKind, IssuedTokens};
 use crate::dto::UserDto;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 use crate::{appsettings, db_err};
 
@@ -28,13 +30,13 @@ pub struct TokenResponse {
 }
 
 impl TokenResponse {
-    fn build(tokens: IssuedTokens, user: &prts_db::models::User) -> Self {
+    fn build(tokens: IssuedTokens, user: UserDto) -> Self {
         Self {
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
             token_type: "Bearer".to_string(),
             expires_in: tokens.access_expires_in,
-            user: user.into(),
+            user,
         }
     }
 }
@@ -57,6 +59,7 @@ pub struct RegisterReq {
         (status = 400, description = "参数错误 / 仅 OAuth 模式"),
         (status = 403, description = "注册已关闭"),
         (status = 409, description = "用户名或邮箱已存在"),
+        (status = 503, description = "审计服务不可用，注册与令牌签发均未提交", body = ErrorResponse),
     )
 )]
 pub async fn register(
@@ -101,13 +104,15 @@ pub async fn register(
     let hash = prts_auth::password::hash_password(&req.password)
         .map_err(|e| Error::internal(format!("hash error: {e}")))?;
     // P1：邮箱投递尚未接入，统一创建为 active（require_email_verification 的实际拦截待 SMTP 接入）。
-    let user = prts_db::users::create_password_user(&state.db, username, email, &hash, "active")
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let user = prts_db::users::create_password_user_tx(&mut tx, username, email, &hash, "active")
         .await
         .map_err(db_err)?;
-    let user = maybe_bootstrap_super_admin(&state, user).await?;
+    let user = maybe_bootstrap_super_admin_tx(&mut tx, &state, user).await?;
 
-    let tokens = session::issue(&state, user.id).await?;
-    Ok(Json(TokenResponse::build(tokens, &user)))
+    let tokens = session::issue_tx(&mut tx, &state, user.id, IssueKind::Register).await?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(TokenResponse::build(tokens, (&user).into())))
 }
 
 /// 登录请求（`username` 可为用户名或邮箱）。
@@ -125,6 +130,7 @@ pub struct LoginReq {
         (status = 200, description = "登录成功", body = TokenResponse),
         (status = 401, description = "凭证错误"),
         (status = 403, description = "账号被禁用"),
+        (status = 503, description = "审计服务不可用，未返回认证结论或令牌", body = ErrorResponse),
     )
 )]
 pub async fn login(
@@ -136,22 +142,38 @@ pub async fn login(
         .map_err(db_err)?
     {
         Some(u) => u,
-        None => prts_db::users::find_by_email(&state.db, &req.username)
+        None => match prts_db::users::find_by_email(&state.db, &req.username)
             .await
             .map_err(db_err)?
-            .ok_or(Error::Unauthorized)?,
+        {
+            Some(user) => user,
+            None => {
+                session::record_failed_authentication(&state, 0, "password", "invalid_credentials")
+                    .await?;
+                return Err(Error::Unauthorized.into());
+            }
+        },
     };
 
-    let hash = user.password_hash.as_deref().ok_or(Error::Unauthorized)?;
-    if !prts_auth::password::verify_password(&req.password, hash) {
+    let password_matches = user
+        .password_hash
+        .as_deref()
+        .is_some_and(|hash| prts_auth::password::verify_password(&req.password, hash));
+    if !password_matches {
+        session::record_failed_authentication(&state, user.id, "password", "invalid_credentials")
+            .await?;
         return Err(Error::Unauthorized.into());
     }
     if user.status != "active" {
+        session::record_failed_authentication(&state, user.id, "password", "account_inactive")
+            .await?;
         return Err(Error::Forbidden.into());
     }
 
-    let tokens = session::issue(&state, user.id).await?;
-    Ok(Json(TokenResponse::build(tokens, &user)))
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let tokens = session::issue_tx(&mut tx, &state, user.id, IssueKind::Login).await?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(TokenResponse::build(tokens, (&user).into())))
 }
 
 /// 刷新令牌请求。
@@ -167,25 +189,25 @@ pub struct RefreshReq {
     responses(
         (status = 200, description = "刷新成功", body = TokenResponse),
         (status = 401, description = "refresh 无效或已过期"),
+        (status = 503, description = "审计服务不可用，令牌轮换未提交", body = ErrorResponse),
     )
 )]
 pub async fn refresh(
     State(state): State<AppState>,
     Json(req): Json<RefreshReq>,
 ) -> Result<Json<TokenResponse>, ApiError> {
-    let tokens = session::refresh(&state, &req.refresh_token).await?;
-    let user = prts_db::users::find_by_id(&state.db, tokens.user_id)
-        .await
-        .map_err(db_err)?
-        .ok_or(Error::Unauthorized)?;
-    Ok(Json(TokenResponse::build(tokens, &user)))
+    let refreshed = session::refresh(&state, &req.refresh_token).await?;
+    Ok(Json(TokenResponse::build(refreshed.tokens, refreshed.user)))
 }
 
 /// 登出（吊销 refresh token）。
 #[utoipa::path(
     post, path = "/auth/logout", tag = "auth",
     request_body = RefreshReq,
-    responses((status = 204, description = "已登出"))
+    responses(
+        (status = 204, description = "已登出"),
+        (status = 503, description = "审计服务不可用，有效会话未被吊销", body = ErrorResponse)
+    )
 )]
 pub async fn logout(
     State(state): State<AppState>,
@@ -244,7 +266,10 @@ pub struct OAuthCallbackQuery {
 /// 第三方登录回调：换取身份、登录或创建用户，并跳转回前端（令牌经 URL fragment 传递）。
 #[utoipa::path(
     get, path = "/auth/oauth/{provider}/callback", tag = "auth",
-    responses((status = 303, description = "跳转回前端"))
+    responses(
+        (status = 303, description = "跳转回前端"),
+        (status = 503, description = "审计服务不可用，未返回 OAuth 认证结论或令牌", body = ErrorResponse)
+    )
 )]
 pub async fn oauth_callback(
     State(state): State<AppState>,
@@ -256,53 +281,79 @@ pub async fn oauth_callback(
         return Err(Error::NotFound.into());
     }
     if let Some(err) = q.error.as_deref() {
+        audit_oauth_failure(&state, &provider, "provider_error").await?;
         return Ok(Redirect::to(&format!("{base}/#/login?error={err}")));
     }
 
-    let code = q.code.ok_or_else(|| Error::bad_request("缺少 code"))?;
-    let st = q.state.ok_or_else(|| Error::bad_request("缺少 state"))?;
-    let verifier = session::take_oauth_state(&state, &st)
-        .await?
-        .ok_or_else(|| Error::bad_request("state 无效或已过期"))?;
+    let Some(code) = q.code else {
+        audit_oauth_failure(&state, &provider, "missing_code").await?;
+        return Err(Error::bad_request("缺少 code").into());
+    };
+    let Some(st) = q.state else {
+        audit_oauth_failure(&state, &provider, "missing_state").await?;
+        return Err(Error::bad_request("缺少 state").into());
+    };
+    let Some(verifier) = session::take_oauth_state(&state, &st).await? else {
+        audit_oauth_failure(&state, &provider, "invalid_state").await?;
+        return Err(Error::bad_request("state 无效或已过期").into());
+    };
 
-    let zoot = state
-        .zoot_provider()
-        .ok_or_else(|| Error::bad_request("ZOOT 登录未配置"))?;
-    let identity = zoot
-        .complete(&code, &verifier)
-        .await
-        .map_err(|e| Error::internal(format!("oauth complete error: {e}")))?;
+    let Some(zoot) = state.zoot_provider() else {
+        audit_oauth_failure(&state, &provider, "provider_unavailable").await?;
+        return Err(Error::bad_request("ZOOT 登录未配置").into());
+    };
+    let identity = match zoot.complete(&code, &verifier).await {
+        Ok(identity) => identity,
+        Err(error) => {
+            audit_oauth_failure(&state, &provider, "exchange_failed").await?;
+            return Err(Error::internal(format!("oauth complete error: {error}")).into());
+        }
+    };
 
-    let user = match prts_db::users::find_by_external(
-        &state.db,
-        &identity.provider,
-        &identity.external_id,
-    )
-    .await
-    .map_err(db_err)?
-    {
-        Some(u) => u,
+    let existing =
+        prts_db::users::find_by_external(&state.db, &identity.provider, &identity.external_id)
+            .await
+            .map_err(db_err)?;
+    let username = if existing.is_none() {
+        Some(unique_username(&state, &identity.username, &identity.external_id).await?)
+    } else {
+        None
+    };
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let (user, new_user) = match existing {
+        Some(user) => (user, false),
         None => {
-            let username =
-                unique_username(&state, &identity.username, &identity.external_id).await?;
-            prts_db::users::create_oauth_user(
-                &state.db,
-                &username,
+            let user = prts_db::users::create_oauth_user_tx(
+                &mut tx,
+                username.as_deref().expect("new OAuth user has username"),
                 identity.avatar_url.as_deref(),
                 &identity.provider,
                 &identity.external_id,
                 &identity.extra,
             )
             .await
-            .map_err(db_err)?
+            .map_err(db_err)?;
+            (user, true)
         }
     };
 
     if user.status != "active" {
+        tx.rollback().await.map_err(db_err)?;
+        audit_oauth_failure(&state, &provider, "account_inactive").await?;
         return Err(Error::Forbidden.into());
     }
 
-    let tokens = session::issue(&state, user.id).await?;
+    let tokens = session::issue_tx(
+        &mut tx,
+        &state,
+        user.id,
+        IssueKind::OAuth {
+            provider: &identity.provider,
+            new_user,
+        },
+    )
+    .await?;
+    tx.commit().await.map_err(db_err)?;
     let redirect = format!(
         "{base}/#/oauth?access_token={}&refresh_token={}&expires_in={}",
         tokens.access_token, tokens.refresh_token, tokens.access_expires_in
@@ -311,23 +362,62 @@ pub async fn oauth_callback(
 }
 
 /// 若用户名与配置的 bootstrap_admin 一致，则授予 super_admin 并返回更新后的用户。
-async fn maybe_bootstrap_super_admin(
+async fn maybe_bootstrap_super_admin_tx(
+    conn: &mut PgConnection,
     state: &AppState,
-    user: prts_db::models::User,
+    mut user: prts_db::models::User,
 ) -> Result<prts_db::models::User, ApiError> {
     let target = state.settings.auth.bootstrap_admin.trim();
     if !target.is_empty() && user.username == target && user.platform_role.is_none() {
-        prts_db::users::set_platform_role(&state.db, user.id, Some("super_admin"))
+        prts_db::users::set_platform_role_tx(&mut *conn, user.id, Some("super_admin"))
             .await
             .map_err(db_err)?;
-        if let Some(updated) = prts_db::users::find_by_id(&state.db, user.id)
-            .await
-            .map_err(db_err)?
-        {
-            return Ok(updated);
-        }
+        prts_db::audit::append_event_tx(
+            conn,
+            AuditActor {
+                id: None,
+                kind: AuditActorKind::System,
+                ip: None,
+            },
+            AuditEvent::AuthBootstrapRoleGranted {
+                user_id: user.id,
+                role: "super_admin",
+            },
+        )
+        .await
+        .map_err(|_| Error::AuditUnavailable)?;
+        user.platform_role = Some("super_admin".to_string());
     }
     Ok(user)
+}
+
+async fn audit_oauth_failure(
+    state: &AppState,
+    provider: &str,
+    reason_code: &str,
+) -> Result<(), ApiError> {
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|_| Error::AuditUnavailable)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: None,
+            kind: AuditActorKind::Anonymous,
+            ip: None,
+        },
+        AuditEvent::AuthOAuthFailed {
+            target_id: provider,
+            provider,
+            reason_code,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(|_| Error::AuditUnavailable)?;
+    Ok(())
 }
 
 /// 为 OAuth 新用户找一个未占用的用户名。

@@ -12,8 +12,7 @@ use prts_core::permission::nodes;
 use prts_db::search_settings::SearchConfig;
 
 use crate::auth::CurrentUser;
-use crate::db_err;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
 // ============================= DTO =============================
@@ -120,7 +119,8 @@ pub async fn get_search_settings(
         (status = 200, description = "更新后的搜索配置", body = SearchSettingsDto),
         (status = 400, description = "请求体格式错误"),
         (status = 401, description = "未认证"),
-        (status = 403, description = "权限不足")
+        (status = 403, description = "权限不足"),
+        (status = 503, description = "审计服务不可用，搜索设置未更新", body = ErrorResponse)
     )
 )]
 pub async fn put_search_settings(
@@ -129,21 +129,30 @@ pub async fn put_search_settings(
     Json(body): Json<SearchConfigDto>,
 ) -> Result<Json<SearchSettingsDto>, ApiError> {
     user.require_platform(nodes::PLATFORM_SETTINGS)?;
-
-    prts_db::search_settings::set(&state.db, body.into(), Some(user.id))
-        .await
-        .map_err(db_err)?;
-
-    // 重新读取（已规范化）并更新内存快照
-    let fresh = prts_db::search_settings::get(&state.db)
-        .await
-        .map_err(db_err)?;
-    *state.search_rt.write().await = fresh.clone();
-
-    let embedding_key_present = state.settings.embedding.qwen.is_configured();
-
+    let updated = state
+        .search_settings_updater
+        .update(user.id, body.into())
+        .await?;
     Ok(Json(SearchSettingsDto {
-        config: fresh.into(),
-        embedding_key_present,
+        config: updated.into(),
+        embedding_key_present: state.settings.embedding.qwen.is_configured(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn put_search_settings_delegates_to_cancel_safe_worker() {
+        let source = include_str!("admin_settings.rs");
+        let route = source
+            .split_once("pub async fn put_search_settings(")
+            .expect("PUT handler exists")
+            .1
+            .split_once("#[cfg(test)]")
+            .expect("PUT handler ends before tests")
+            .0;
+        assert!(route.contains("search_settings_updater"));
+        assert!(!route.contains("state.db.begin"));
+        assert!(!route.contains("search_rt.write"));
+    }
 }

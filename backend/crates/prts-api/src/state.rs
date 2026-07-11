@@ -23,6 +23,8 @@ pub struct AppState {
     pub embedder: Arc<Option<prts_search::qwen::QwenProvider>>,
     /// 搜索运行时配置（管理后台可热改；worker / 查询每次读快照）。
     pub search_rt: Arc<tokio::sync::RwLock<prts_db::search_settings::SearchConfig>>,
+    /// 受监督的搜索设置单写者；已入队更新不随 HTTP 请求取消而丢失。
+    pub search_settings_updater: crate::search_settings_worker::SearchSettingsUpdater,
     /// durable worker 唤醒控制；业务事务提交后通知 worker 检查队列。
     pub job_worker: crate::job_worker::JobWorkerControl,
 }

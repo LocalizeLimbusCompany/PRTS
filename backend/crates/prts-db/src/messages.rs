@@ -4,13 +4,24 @@
 //! `list_threads` 聚合出每个对话方的最后一条消息与我方未读数。
 //! 收发双方须共享 ≥1 项目的门限校验在应用层（`prts-api`）完成，本层只管存取。
 
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use crate::models::{ConversationThread, Message};
 
 /// 落库一条私信并返回完整行。
 pub async fn create(
     pool: &PgPool,
+    sender_id: i64,
+    recipient_id: i64,
+    content: &str,
+) -> Result<Message, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    create_tx(&mut connection, sender_id, recipient_id, content).await
+}
+
+/// 在调用方事务内创建私信。
+pub async fn create_tx(
+    conn: &mut PgConnection,
     sender_id: i64,
     recipient_id: i64,
     content: &str,
@@ -22,7 +33,7 @@ pub async fn create(
     .bind(sender_id)
     .bind(recipient_id)
     .bind(content)
-    .fetch_one(pool)
+    .fetch_one(conn)
     .await
 }
 
@@ -93,15 +104,25 @@ pub async fn list_threads(pool: &PgPool, me: i64) -> Result<Vec<ConversationThre
 
 /// 将某会话中「对方 `other` → 我 `me`」尚未读的消息全部标记为已读。
 pub async fn mark_read(pool: &PgPool, me: i64, other: i64) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    let mut connection = pool.acquire().await?;
+    mark_read_tx(&mut connection, me, other).await.map(|_| ())
+}
+
+/// 在调用方事务内标记私信已读，并返回实际更新数供审计。
+pub async fn mark_read_tx(
+    conn: &mut PgConnection,
+    me: i64,
+    other: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
         "UPDATE messages SET read_at = now()
          WHERE recipient_id = $1 AND sender_id = $2 AND read_at IS NULL",
     )
     .bind(me)
     .bind(other)
-    .execute(pool)
+    .execute(conn)
     .await?;
-    Ok(())
+    Ok(result.rows_affected())
 }
 
 /// 我方（`me`）全部未读私信总数（跨所有会话）。

@@ -13,11 +13,12 @@ use serde_json::json;
 use utoipa::ToSchema;
 
 use prts_common::Error;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 use prts_realtime::UserEvent;
 
 use crate::auth::{project as paccess, CurrentUser};
 use crate::db_err;
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
 // ============================= DTO =============================
@@ -137,6 +138,7 @@ pub struct MarkReadReq {
     responses(
         (status = 200, description = "标记成功"),
         (status = 401, description = "未认证"),
+        (status = 503, description = "审计服务不可用，通知状态未更新", body = ErrorResponse),
     )
 )]
 pub async fn mark_read(
@@ -145,9 +147,27 @@ pub async fn mark_read(
     Json(body): Json<MarkReadReq>,
 ) -> Result<StatusCode, ApiError> {
     let ids = body.ids.unwrap_or_default();
-    prts_db::notifications::mark_read(&state.db, user.id, &ids)
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let count = prts_db::notifications::mark_read_tx(&mut tx, user.id, &ids)
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::NotificationMarkedRead {
+            user_id: user.id,
+            notification_ids: &ids,
+            count,
+            all: ids.is_empty(),
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
     Ok(StatusCode::OK)
 }
 
@@ -177,6 +197,7 @@ pub struct PokeReq {
         (status = 401, description = "未认证"),
         (status = 403, description = "无权访问该项目"),
         (status = 404, description = "项目不存在"),
+        (status = 503, description = "审计服务不可用，poke 未发送", body = ErrorResponse),
     )
 )]
 pub async fn poke(
@@ -188,22 +209,6 @@ pub async fn poke(
     // 发送者必须对该项目有查看权限（`require_view` 在私有项目中要求成员资格）。
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_view()?;
-
-    // 额外显式校验：发送者必须是项目成员（`require_view` 对公开项目不要求成员资格）。
-    let sender_role = prts_db::memberships::find_role(&state.db, id, user.id)
-        .await
-        .map_err(db_err)?;
-    if sender_role.is_none() {
-        return Err(Error::bad_request("发送者不是该项目成员").into());
-    }
-
-    // 收件人必须是项目成员。
-    let recipient_role = prts_db::memberships::find_role(&state.db, id, body.to_user_id)
-        .await
-        .map_err(db_err)?;
-    if recipient_role.is_none() {
-        return Err(Error::bad_request("收件人不是该项目成员").into());
-    }
 
     // 验证文本。
     let text = body.text.trim().to_string();
@@ -227,9 +232,49 @@ pub async fn poke(
         "project_id": id,
         "text": text,
     });
-    let n = prts_db::notifications::create(&state.db, body.to_user_id, "poke", &payload)
+    let text_length = text.chars().count();
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    paccess::load_locked_tx(&mut tx, &user, project)
+        .await?
+        .require_view()?;
+    if prts_db::memberships::find_role_tx(&mut tx, id, user.id)
+        .await
+        .map_err(db_err)?
+        .is_none()
+    {
+        return Err(Error::bad_request("发送者不是该项目成员").into());
+    }
+    if prts_db::memberships::find_role_tx(&mut tx, id, body.to_user_id)
+        .await
+        .map_err(db_err)?
+        .is_none()
+    {
+        return Err(Error::bad_request("收件人不是该项目成员").into());
+    }
+    let n = prts_db::notifications::create_tx(&mut tx, body.to_user_id, "poke", &payload)
         .await
         .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::PokeSent {
+            project_id: id,
+            recipient_id: body.to_user_id,
+            notification_id: n.id,
+            text_length,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
 
     // 实时推送给收件人（跨实例经 Redis）。
     state
