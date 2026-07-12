@@ -53,7 +53,7 @@ async function create() {
     })
     showCreate.value = false
     $q.notify({ type: 'positive', message: '项目已创建' })
-    router.push({ name: 'project', params: { id: p.id } })
+    router.push({ name: 'project-info', params: { id: p.id } })
   } catch (e) {
     $q.notify({ type: 'negative', message: apiErrorMessage(e, '创建失败') })
   } finally {
@@ -108,7 +108,7 @@ async function create() {
           flat
           bordered
           class="proj-card cursor-pointer"
-          @click="router.push({ name: 'project', params: { id: p.id } })"
+          @click="router.push({ name: 'project-info', params: { id: p.id } })"
         >
           <q-card-section>
             <div class="row items-center no-wrap">

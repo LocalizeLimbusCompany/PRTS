@@ -2,6 +2,8 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
 
+import { projectRoutes } from './projectRoutes'
+
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
@@ -29,19 +31,7 @@ const router = createRouter({
       name: 'projects',
       component: () => import('@/views/ProjectsView.vue'),
     },
-    {
-      path: '/projects/:id(\\d+)',
-      name: 'project',
-      component: () => import('@/views/ProjectDetailView.vue'),
-      props: (route) => ({ id: Number(route.params.id) }),
-    },
-    {
-      path: '/projects/:id(\\d+)/editor',
-      name: 'editor',
-      component: () => import('@/views/EditorView.vue'),
-      props: (route) => ({ id: Number(route.params.id) }),
-      meta: { requiresAuth: true },
-    },
+    ...projectRoutes,
     {
       path: '/me',
       name: 'me',

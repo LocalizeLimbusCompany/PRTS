@@ -9,6 +9,98 @@
     "supported": "Markdown supported",
     "remaining": "{count} characters remaining"
   },
+  "project": {
+    "workspaceNav": "Project workspace navigation",
+    "loadFailed": "Failed to load project",
+    "openEditor": "Translation editor",
+    "private": "Private",
+    "public": "Public",
+    "soon": "Coming soon",
+    "progress": "Progress",
+    "entries": "entries",
+    "infoHeading": "Project overview",
+    "sourceLanguages": "Source languages",
+    "primarySource": "Primary source language",
+    "targetLanguage": "Target language",
+    "description": "Project introduction",
+    "noDescription": "No project introduction has been added yet.",
+    "metadata": "Project details",
+    "slug": "Project identifier",
+    "visibility": "Visibility",
+    "createdAt": "Created",
+    "save": "Save",
+    "cancel": "Cancel",
+    "sections": {
+      "info": "Information",
+      "files": "Files",
+      "tasks": "Tasks",
+      "terms": "Terms",
+      "leaderboard": "Leaderboard",
+      "download": "Download",
+      "manage": "Manage"
+    },
+    "states": {
+      "untranslated": "Untranslated",
+      "translated": "Translated",
+      "questioned": "Questioned",
+      "checked": "Checked",
+      "reviewed": "Reviewed"
+    },
+    "files": {
+      "heading": "Browse project files",
+      "count": "files",
+      "search": "Search file or directory names",
+      "state": "File state",
+      "allStates": "All states",
+      "complete": "Complete",
+      "sort": "Sort by",
+      "sortName": "Name",
+      "sortProgress": "Progress",
+      "sortEntries": "Entry count",
+      "sortUpdated": "Recently updated",
+      "root": "Project root",
+      "name": "Name",
+      "updated": "Updated",
+      "empty": "No files or directories match these filters"
+    },
+    "download": {
+      "heading": "Export project",
+      "archive": "Project archive",
+      "description": "Export the current project files as a ZIP archive for offline work or backup.",
+      "action": "Download ZIP",
+      "noPermission": "You do not have permission to export this project."
+    },
+    "leaderboard": {
+      "heading": "Contribution leaderboard is not available yet",
+      "description": "Contribution statistics will open after the scoring model is complete. This page will not show a meaningless all-zero ranking."
+    },
+    "manage": {
+      "heading": "Project management",
+      "information": "Basic information",
+      "name": "Project name",
+      "descriptionPlaceholder": "Describe the project, translation guidelines, and how to contribute…",
+      "languageNotice": "Primary source language settings will open after the rebuild service is ready.",
+      "saved": "Project settings saved"
+    },
+    "legacy": {
+      "notice": "File upload, membership, and deletion controls below will move into their dedicated management modules.",
+      "upload": "Compatibility upload",
+      "uploadHint": "Select one or more JSON files; pasting a JSON array is no longer required.",
+      "chooseFiles": "Choose JSON files",
+      "uploadAction": "Upload files",
+      "uploaded": "Upload complete",
+      "members": "Project members",
+      "people": "people",
+      "addMember": "Add member",
+      "username": "Username",
+      "role": "Project role",
+      "danger": "Danger zone",
+      "deleteHint": "The legacy deletion flow remains until delayed deletion and math verification are available.",
+      "deleteTitle": "Delete project",
+      "deleteWarning": "Delete “{name}”? This action cannot currently be undone.",
+      "deleteAction": "Delete project"
+    }
+  },
   "home": {
     "title": "Welcome to PRTS",
     "subtitle": "An open, public localization collaboration platform",

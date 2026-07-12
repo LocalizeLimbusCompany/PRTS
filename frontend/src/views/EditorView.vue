@@ -380,7 +380,7 @@ onMounted(async () => {
   <q-page class="editor-page">
     <!-- toolbar -->
     <div class="editor-bar">
-      <q-btn flat dense round icon="mdi-arrow-left" :to="{ name: 'project', params: { id: props.id } }">
+      <q-btn flat dense round icon="mdi-arrow-left" :to="{ name: 'project-info', params: { id: props.id } }">
         <q-tooltip>返回项目</q-tooltip>
       </q-btn>
       <div class="prts-display ellipsis editor-title">{{ project?.name ?? '…' }}</div>

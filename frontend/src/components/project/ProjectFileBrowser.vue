@@ -1,0 +1,271 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
+
+import type { FileDto, FolderDto } from '@/api/types'
+import {
+  projectFileItem,
+  projectFileProgress,
+  projectFolderItem,
+  sortProjectFileItems,
+  type ProjectBrowserItem,
+  type ProjectFileSort,
+} from '@/lib/projectFiles'
+import { STATE_ORDER } from '@/lib/states'
+
+const props = defineProps<{
+  projectId: number
+  folders: FolderDto[]
+  files: FileDto[]
+}>()
+
+const router = useRouter()
+const { t } = useI18n()
+const query = ref('')
+const currentFolderId = ref<number | null>(null)
+const sort = ref<ProjectFileSort>('name')
+const state = ref('all')
+
+const folderById = computed(() => new Map(props.folders.map((folder) => [folder.id, folder])))
+
+const items = computed(() => {
+  const normalizedQuery = query.value.trim().toLocaleLowerCase()
+  const all = [
+    ...props.folders.map((folder) => projectFolderItem(folder, props.files)),
+    ...props.files.map(projectFileItem),
+  ].filter((item) => {
+    const inFolder = normalizedQuery ? true : item.folderId === currentFolderId.value
+    const matchesName = normalizedQuery
+      ? item.name.toLocaleLowerCase().includes(normalizedQuery) ||
+        item.path.toLocaleLowerCase().includes(normalizedQuery)
+      : true
+    const matchesState =
+      state.value === 'all' ||
+      (state.value === 'complete'
+        ? item.entryCount > 0 && (item.stateCounts.untranslated ?? 0) === 0
+        : (item.stateCounts[state.value] ?? 0) > 0)
+    return inFolder && matchesName && matchesState
+  })
+
+  return sortProjectFileItems(all, sort.value)
+})
+
+const breadcrumbs = computed(() => {
+  const result: FolderDto[] = []
+  let folder = currentFolderId.value === null ? undefined : folderById.value.get(currentFolderId.value)
+  while (folder) {
+    result.unshift(folder)
+    folder = folder.parent_id === null ? undefined : folderById.value.get(folder.parent_id)
+  }
+  return result
+})
+
+const stateOptions = computed(() => [
+  { label: t('project.files.allStates'), value: 'all' },
+  ...STATE_ORDER.map((value) => ({ label: t(`project.states.${value}`), value })),
+  { label: t('project.files.complete'), value: 'complete' },
+])
+
+const sortOptions = computed(() => [
+  { label: t('project.files.sortName'), value: 'name' },
+  { label: t('project.files.sortProgress'), value: 'progress' },
+  { label: t('project.files.sortEntries'), value: 'entries' },
+  { label: t('project.files.sortUpdated'), value: 'updated' },
+])
+
+function progressPercent(item: ProjectBrowserItem): string {
+  const value = projectFileProgress(item)
+  return value === null ? '—' : `${Math.round(value * 100)}%`
+}
+
+function open(item: ProjectBrowserItem) {
+  if (item.kind === 'folder') {
+    currentFolderId.value = item.id
+    query.value = ''
+    return
+  }
+  router.push({ name: 'editor', params: { id: props.projectId }, query: { file: item.id } })
+}
+</script>
+
+<template>
+  <section class="file-browser">
+    <div class="file-browser__toolbar">
+      <q-input v-model="query" dense outlined clearable :placeholder="$t('project.files.search')">
+        <template #prepend><q-icon name="mdi-magnify" /></template>
+      </q-input>
+      <q-select
+        v-model="state"
+        dense
+        outlined
+        emit-value
+        map-options
+        :options="stateOptions"
+        :label="$t('project.files.state')"
+      />
+      <q-select
+        v-model="sort"
+        dense
+        outlined
+        emit-value
+        map-options
+        :options="sortOptions"
+        :label="$t('project.files.sort')"
+      />
+    </div>
+
+    <div class="file-browser__breadcrumbs prts-mono">
+      <button type="button" @click="currentFolderId = null">{{ $t('project.files.root') }}</button>
+      <template v-for="folder in breadcrumbs" :key="folder.id">
+        <q-icon name="mdi-chevron-right" />
+        <button type="button" @click="currentFolderId = folder.id">{{ folder.name }}</button>
+      </template>
+    </div>
+
+    <div class="file-browser__head prts-label">
+      <span>{{ $t('project.files.name') }}</span>
+      <span>{{ $t('project.progress') }}</span>
+      <span>{{ $t('project.entries') }}</span>
+      <span>{{ $t('project.files.updated') }}</span>
+    </div>
+    <div v-if="items.length === 0" class="prts-empty">{{ $t('project.files.empty') }}</div>
+    <template v-else>
+      <button
+        v-for="item in items"
+        :key="`${item.kind}-${item.id}`"
+        type="button"
+        class="file-browser__row"
+        @click="open(item)"
+      >
+        <span class="file-browser__name">
+          <q-icon
+            :name="item.kind === 'folder' ? 'mdi-folder-outline' : 'mdi-file-document-outline'"
+            :color="item.kind === 'folder' ? 'grey' : 'primary'"
+            size="19px"
+          />
+          <span>
+            <strong>{{ item.name }}</strong>
+            <small class="prts-mono">{{ item.path }}</small>
+          </span>
+        </span>
+        <span class="file-browser__progress">
+          <span class="prts-mono">{{ progressPercent(item) }}</span>
+          <q-linear-progress :value="projectFileProgress(item) ?? 0" size="4px" color="primary" />
+        </span>
+        <span class="prts-mono">{{ item.entryCount }}</span>
+        <span class="prts-dim">{{ new Date(item.updatedAt).toLocaleDateString() }}</span>
+      </button>
+    </template>
+  </section>
+</template>
+
+<style scoped>
+.file-browser {
+  border: 1px solid var(--prts-border);
+  background: var(--prts-panel);
+}
+
+.file-browser__toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 180px 180px;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--prts-border);
+}
+
+.file-browser__breadcrumbs {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--prts-border-soft);
+  color: var(--prts-text-dim);
+  font-size: 11px;
+}
+
+.file-browser__breadcrumbs button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.file-browser__head,
+.file-browser__row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 160px 92px 120px;
+  align-items: center;
+  gap: 18px;
+  padding: 10px 14px;
+}
+
+.file-browser__head {
+  border-bottom: 1px solid var(--prts-border);
+  background: var(--prts-panel-2);
+}
+
+.file-browser__row {
+  width: 100%;
+  min-height: 60px;
+  border: 0;
+  border-bottom: 1px solid var(--prts-border-soft);
+  background: transparent;
+  color: var(--prts-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-browser__row:hover {
+  background: var(--prts-panel-2);
+}
+
+.file-browser__name,
+.file-browser__name > span,
+.file-browser__progress {
+  display: grid;
+}
+
+.file-browser__name {
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.file-browser__name strong,
+.file-browser__name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser__name small {
+  color: var(--prts-text-faint);
+  font-size: 10px;
+}
+
+.file-browser__progress {
+  gap: 5px;
+}
+
+@media (max-width: 980px) {
+  .file-browser__toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .file-browser__toolbar :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .file-browser__head,
+  .file-browser__row {
+    grid-template-columns: minmax(180px, 1fr) 120px 70px;
+  }
+
+  .file-browser__head :last-child,
+  .file-browser__row > :last-child {
+    display: none;
+  }
+}
+</style>

@@ -9,6 +9,98 @@
     "supported": "支持 Markdown",
     "remaining": "还可输入 {count} 字"
   },
+  "project": {
+    "workspaceNav": "项目工作区导航",
+    "loadFailed": "项目加载失败",
+    "openEditor": "翻译编辑器",
+    "private": "私有",
+    "public": "公开",
+    "soon": "稍后开放",
+    "progress": "进度",
+    "entries": "词条",
+    "infoHeading": "项目概览",
+    "sourceLanguages": "源语言",
+    "primarySource": "主源语言",
+    "targetLanguage": "目标语言",
+    "description": "项目介绍",
+    "noDescription": "项目暂未填写介绍。",
+    "metadata": "项目资料",
+    "slug": "项目标识",
+    "visibility": "可见性",
+    "createdAt": "创建时间",
+    "save": "保存",
+    "cancel": "取消",
+    "sections": {
+      "info": "信息",
+      "files": "文件",
+      "tasks": "任务",
+      "terms": "术语",
+      "leaderboard": "排行榜",
+      "download": "下载",
+      "manage": "管理"
+    },
+    "states": {
+      "untranslated": "未翻译",
+      "translated": "已翻译",
+      "questioned": "有疑问",
+      "checked": "已检查",
+      "reviewed": "已审核"
+    },
+    "files": {
+      "heading": "浏览项目文件",
+      "count": "个文件",
+      "search": "搜索文件名或目录名",
+      "state": "文件状态",
+      "allStates": "全部状态",
+      "complete": "已完成",
+      "sort": "排序方式",
+      "sortName": "名称",
+      "sortProgress": "进度",
+      "sortEntries": "词条数",
+      "sortUpdated": "最近更新",
+      "root": "项目根目录",
+      "name": "名称",
+      "updated": "最近更新",
+      "empty": "没有符合条件的文件或目录"
+    },
+    "download": {
+      "heading": "导出项目",
+      "archive": "项目归档包",
+      "description": "将当前项目文件导出为 ZIP 归档，供离线处理或备份。",
+      "action": "下载 ZIP",
+      "noPermission": "你没有导出此项目的权限。"
+    },
+    "leaderboard": {
+      "heading": "贡献排行榜尚未开放",
+      "description": "贡献统计与排行榜将在评分模型完成后开放；这里不会展示没有实际意义的零分榜单。"
+    },
+    "manage": {
+      "heading": "项目管理",
+      "information": "基本信息",
+      "name": "项目名称",
+      "descriptionPlaceholder": "介绍项目背景、翻译规范和参与方式……",
+      "languageNotice": "主源语言设置将在重建服务就绪后开放。",
+      "saved": "项目设置已保存"
+    },
+    "legacy": {
+      "notice": "以下文件上传、成员和删除控件将在对应管理模块完成后迁移。",
+      "upload": "兼容上传",
+      "uploadHint": "选择一个或多个 JSON 文件；无需粘贴 JSON 数组。",
+      "chooseFiles": "选择 JSON 文件",
+      "uploadAction": "上传文件",
+      "uploaded": "上传完成",
+      "members": "项目成员",
+      "people": "人",
+      "addMember": "添加成员",
+      "username": "用户名",
+      "role": "项目角色",
+      "danger": "危险操作",
+      "deleteHint": "延迟删除与数学验证上线前，沿用旧删除流程。",
+      "deleteTitle": "删除项目",
+      "deleteWarning": "确认删除“{name}”？此操作当前不可恢复。",
+      "deleteAction": "删除项目"
+    }
+  },
   "home": {
     "title": "欢迎使用 PRTS",
     "subtitle": "开源的公开本地化协作平台",

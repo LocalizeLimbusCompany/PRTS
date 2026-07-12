@@ -74,6 +74,7 @@ export interface FolderDto {
   parent_id: number | null
   name: string
   path: string
+  created_at: string
 }
 
 export interface FileDto {
@@ -82,6 +83,9 @@ export interface FileDto {
   name: string
   path: string
   entry_count: number
+  state_counts: Record<string, number>
+  created_at: string
+  updated_at: string
 }
 
 export interface ProjectTree {

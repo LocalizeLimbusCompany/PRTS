@@ -21,6 +21,7 @@ pub struct FolderDto {
     pub parent_id: Option<i64>,
     pub name: String,
     pub path: String,
+    pub created_at: String,
 }
 
 /// 文件对外表示。
@@ -32,6 +33,8 @@ pub struct FileDto {
     pub path: String,
     pub entry_count: i32,
     pub state_counts: std::collections::HashMap<String, i64>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// 项目文件树。
@@ -73,6 +76,7 @@ pub async fn get_tree(
                 parent_id: f.parent_id,
                 name: f.name,
                 path: f.path,
+                created_at: f.created_at.to_rfc3339(),
             })
             .collect(),
         files: files
@@ -94,6 +98,8 @@ pub async fn get_tree(
                     path: f.path,
                     entry_count: stats.map_or(0, |value| value.visible_total as i32),
                     state_counts,
+                    created_at: f.created_at.to_rfc3339(),
+                    updated_at: f.updated_at.to_rfc3339(),
                 }
             })
             .collect(),
