@@ -308,7 +308,7 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     AuditedEntrypoint {
         entrypoint: "routes::project_media::delete_project_avatar",
         action: "project.avatar_deleted",
-        allowed_payload_keys: &[],
+        allowed_payload_keys: &["had_avatar"],
     },
     AuditedEntrypoint {
         entrypoint: "routes::projects::change_primary_source",

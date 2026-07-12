@@ -558,7 +558,7 @@ pub async fn append_event_tx(
             "project",
             project_id.to_string(),
             Some(project_id),
-            serde_json::json!({}),
+            serde_json::json!({"had_avatar": true}),
         ),
         AuditEvent::ProjectPrimarySourceChanged {
             project_id,
