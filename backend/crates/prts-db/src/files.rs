@@ -14,7 +14,8 @@ async fn get_or_create_folder(
 ) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar::<_, i64>(
         "INSERT INTO folders (project_id, parent_id, name, path) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (project_id, path) DO UPDATE SET name = EXCLUDED.name
+         ON CONFLICT (project_id, path) WHERE deleted_at IS NULL
+         DO UPDATE SET name = EXCLUDED.name
          RETURNING id",
     )
     .bind(project_id)
@@ -63,7 +64,8 @@ pub async fn ensure_file_at_path_tx(
 
     sqlx::query_as::<_, File>(
         "INSERT INTO files (project_id, folder_id, name, path) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (project_id, path) DO UPDATE SET name = EXCLUDED.name
+         ON CONFLICT (project_id, path) WHERE deleted_at IS NULL
+         DO UPDATE SET name = EXCLUDED.name
          RETURNING *",
     )
     .bind(project_id)

@@ -5345,13 +5345,13 @@ async fn upload_history_schema_contract_is_complete_and_gated() {
     assert_eq!(readiness, (10, true, false));
 
     let constraints: Vec<(String, String)> = sqlx::query_as(
-        "SELECT info.constraint_name, pg_get_constraintdef(constraint.oid)
+        "SELECT info.constraint_name, pg_get_constraintdef(constraint_row.oid)
          FROM information_schema.table_constraints AS info
          JOIN pg_namespace AS namespace ON namespace.nspname = info.constraint_schema
          JOIN pg_class AS table_class ON table_class.relnamespace = namespace.oid
               AND table_class.relname = info.table_name
-         JOIN pg_constraint AS constraint ON constraint.conname = info.constraint_name
-              AND constraint.conrelid = table_class.oid
+         JOIN pg_constraint AS constraint_row ON constraint_row.conname = info.constraint_name
+              AND constraint_row.conrelid = table_class.oid
          WHERE info.table_schema = 'public'
            AND info.constraint_name = ANY($1::TEXT[])
          ORDER BY constraint_name",
