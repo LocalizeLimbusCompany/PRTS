@@ -106,7 +106,10 @@ fn snapshot_dto(snapshot: prts_db::uploads::UploadBatchSnapshot) -> UploadBatchD
 }
 
 fn normalize_upload_path(raw: &str) -> Result<String, ApiError> {
-    let normalized = raw.trim().replace('\\', "/");
+    if raw != raw.trim() {
+        return Err(Error::bad_request("upload_path_invalid").into());
+    }
+    let normalized = raw.replace('\\', "/");
     if normalized.is_empty() || normalized.len() > 1024 || normalized.starts_with('/') {
         return Err(Error::bad_request("upload_path_invalid").into());
     }

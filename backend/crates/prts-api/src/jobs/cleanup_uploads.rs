@@ -88,8 +88,8 @@ fn database_error(error: sqlx::Error) -> JobExecutionError {
 mod tests {
     use super::*;
 
-    #[test]
-    fn rejects_temp_key_traversal() {
+    #[tokio::test]
+    async fn rejects_temp_key_traversal() {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/test").unwrap();
         let handler = CleanupUploadsHandler::new(pool, "uploads");
         assert!(handler.path_for("../secret").is_err());
