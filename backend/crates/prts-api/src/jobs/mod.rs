@@ -39,10 +39,10 @@ impl JobErrorCode {
     }
 }
 
-pub mod reindex_project;
-pub mod repair_languages;
 pub mod cleanup_uploads;
 pub mod process_upload;
+pub mod reindex_project;
+pub mod repair_languages;
 
 /// 任务执行失败的稳定信息。
 #[derive(Debug, Clone)]

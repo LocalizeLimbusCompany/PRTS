@@ -145,7 +145,9 @@ fn is_reserved_path_segment(segment: &str) -> bool {
         || device_name
             .strip_prefix("COM")
             .or_else(|| device_name.strip_prefix("LPT"))
-            .is_some_and(|number| matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
+            .is_some_and(|number| {
+                matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+            })
 }
 
 fn temp_key(project_id: i64, batch_hint: &str) -> String {
@@ -297,8 +299,7 @@ pub async fn create_batch(
     let config = prts_db::upload_settings::get(&state.db)
         .await
         .map_err(db_err)?;
-    let (declarations, total_bytes) =
-        validate_declarations(project_id, request.files, &config)?;
+    let (declarations, total_bytes) = validate_declarations(project_id, request.files, &config)?;
 
     let expires_at = chrono::Utc::now()
         + chrono::Duration::hours(i64::from(config.upload_batch_expiry_hours));
@@ -861,7 +862,10 @@ mod tests {
             "folder/invalid?.json",
             "folder/not-json.txt",
         ] {
-            assert!(normalize_upload_path(invalid).is_err(), "accepted {invalid}");
+            assert!(
+                normalize_upload_path(invalid).is_err(),
+                "accepted {invalid}"
+            );
         }
         assert_eq!(
             normalize_upload_path("folder\\nested\\file.JSON").unwrap(),
@@ -882,7 +886,10 @@ mod tests {
         assert!(route.contains("header::RANGE"));
         assert!(route.contains("header::CONTENT_RANGE"));
         assert!(route.contains("upload_resume_not_supported"));
-        assert!(route.find("upload_resume_not_supported").unwrap() < route.find("into_data_stream").unwrap());
+        assert!(
+            route.find("upload_resume_not_supported").unwrap()
+                < route.find("into_data_stream").unwrap()
+        );
     }
 
     #[test]

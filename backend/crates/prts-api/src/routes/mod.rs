@@ -15,8 +15,8 @@ pub mod project_media;
 pub mod projects;
 pub mod search;
 pub mod suggestions;
-pub mod users;
 pub mod uploads;
+pub mod users;
 pub mod ws;
 
 use axum::routing::get;
