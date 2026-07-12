@@ -179,6 +179,9 @@ pub enum AuditEvent<'a> {
     SearchSettingsUpdated {
         changed_fields: &'a [&'a str],
     },
+    UploadSettingsUpdated {
+        changed_fields: &'a [&'a str],
+    },
     UserPlatformRoleChanged {
         user_id: i64,
         previous_role: Option<&'a str>,
@@ -462,6 +465,13 @@ pub async fn append_event_tx(
             "search_settings.updated",
             "settings",
             "search.config".to_string(),
+            None,
+            serde_json::json!({"changed_fields": changed_fields}),
+        ),
+        AuditEvent::UploadSettingsUpdated { changed_fields } => (
+            "upload_settings.updated",
+            "settings",
+            "upload.config".to_string(),
             None,
             serde_json::json!({"changed_fields": changed_fields}),
         ),

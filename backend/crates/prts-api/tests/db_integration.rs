@@ -43,6 +43,8 @@ mod files_routes;
 mod language_resolution_routes;
 #[path = "../src/routes/messages.rs"]
 mod messages_routes;
+#[path = "../src/routes/meta.rs"]
+mod meta_routes;
 #[path = "../src/routes/notifications.rs"]
 mod notifications_routes;
 #[path = "../src/routes/projects.rs"]
@@ -75,6 +77,7 @@ use prts_db::{
 
 static MIGRATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 static SEARCH_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static UPLOAD_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -271,6 +274,11 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     AuditedEntrypoint {
         entrypoint: "routes::admin_settings::put_search_settings",
         action: "search_settings.updated",
+        allowed_payload_keys: &["changed_fields"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::admin_settings::put_upload_settings",
+        action: "upload_settings.updated",
         allowed_payload_keys: &["changed_fields"],
     },
     AuditedEntrypoint {
@@ -499,6 +507,13 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "upload_settings.updated",
+        target_type: "settings",
+        target_id_policy: TargetIdPolicy::Constant("upload.config"),
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "user.platform_role_changed",
         target_type: "user",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -664,6 +679,8 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "messages::create",
     "messages::mark_read",
     "jobs::manual_retry",
+    "upload_settings::set_tx",
+    "upload_settings::set_locked_tx",
     "language_resolution::complete_owner_resolution_tx",
     "language_resolution::update_entry_original_tx",
     "language_resolution::retry_failed_project_repair_tx",
@@ -697,6 +714,8 @@ const UNAUDITED_READS: &[&str] = &[
     "users::list_api_keys",
     "admin::get_settings",
     "admin_settings::get_search_settings",
+    "admin_settings::get_upload_settings",
+    "meta::upload_config",
     "projects::list_projects",
     "projects::get_project",
     "projects::list_members",
@@ -719,7 +738,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        31,
+        33,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -727,11 +746,11 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         16,
         "auth/session writer inventory 发生漂移"
     );
-    assert_eq!(UNAUDITED_READS.len(), 20, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 38, "审计入口 inventory 发生漂移");
+    assert_eq!(UNAUDITED_READS.len(), 22, "普通读取 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 39, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        35,
+        36,
         "action 合同 inventory 发生漂移"
     );
 
@@ -843,7 +862,7 @@ async fn audit_contract_project_lock_serializes_membership_upserts_for_missing_r
     let second_pool = state.db.clone();
     let project_id = project.id;
     let member_id = member.id;
-    let mut second = tokio::spawn(async move {
+    let second = tokio::spawn(async move {
         let mut tx = second_pool.begin().await.unwrap();
         projects::find_by_id_for_update_tx(&mut tx, project_id)
             .await
@@ -990,8 +1009,6 @@ async fn audit_contract_concurrent_search_puts_keep_db_and_runtime_in_commit_ord
 /// 请求在 worker 已进入 DB 事务后取消，已入队更新仍必须完成 DB/audit/runtime 收敛。
 #[tokio::test]
 async fn audit_contract_cancelled_search_put_still_converges_db_runtime_and_audit() {
-    use axum::extract::State;
-    use axum::Json;
     use std::time::Duration;
 
     let _search_settings_guard = SEARCH_SETTINGS_TEST_LOCK.lock().await;
@@ -3696,6 +3713,98 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
         .await
         .unwrap();
     *state.search_rt.write().await = previous_search;
+}
+
+/// 上传设置管理、公开只读 DTO 与 fail-closed 审计共享同一持久化真值。
+#[tokio::test]
+async fn upload_settings_routes_enforce_permissions_and_audit_rollback() {
+    use axum::extract::State;
+    use axum::Json;
+
+    let _upload_settings_guard = UPLOAD_SETTINGS_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let admin = audit_contract_create_user(&state.db, "upload-settings-admin", Some("admin")).await;
+    let ordinary = audit_contract_create_user(&state.db, "upload-settings-user", None).await;
+    let previous = prts_db::upload_settings::get(&state.db).await.unwrap();
+
+    let denied = admin_settings_routes::get_upload_settings(
+        State(state.clone()),
+        audit_contract_current_user(&ordinary),
+    )
+    .await
+    .expect_err_api("普通用户不得读取管理端上传设置");
+    assert_eq!(denied.code(), "forbidden");
+
+    let Json(public_config) = meta_routes::upload_config(State(state.clone()))
+        .await
+        .expect_api("公开 meta 可读取上传客户端限制");
+    assert_eq!(
+        public_config.max_files_per_batch,
+        previous.max_files_per_batch
+    );
+    assert_eq!(
+        public_config.max_bytes_per_file,
+        previous.max_bytes_per_file
+    );
+    assert_eq!(
+        public_config.max_bytes_per_batch,
+        previous.max_bytes_per_batch
+    );
+    assert_eq!(
+        public_config.client_concurrency,
+        previous.client_concurrency
+    );
+
+    let updated = dto::upload::UploadConfigDto {
+        max_files_per_batch: 640,
+        max_bytes_per_file: 96 * 1024 * 1024,
+        max_bytes_per_batch: 3 * 1024 * 1024 * 1024,
+        client_concurrency: 5,
+    };
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let audit_failure = admin_settings_routes::put_upload_settings(
+        State(failing_state),
+        audit_contract_current_user(&admin),
+        Json(updated.clone()),
+    )
+    .await
+    .expect_err_api("上传设置审计失败必须回滚");
+    audit_contract_assert_unavailable(audit_failure).await;
+    assert_eq!(
+        prts_db::upload_settings::get(&state.db).await.unwrap(),
+        previous
+    );
+
+    let Json(saved) = admin_settings_routes::put_upload_settings(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Json(updated),
+    )
+    .await
+    .expect_api("管理员更新上传设置");
+    assert_eq!(saved.client_concurrency, 5);
+    let rows = audit_contract_rows_for_actor(&state.db, admin.id).await;
+    audit_contract_assert_actions(&rows, &["upload_settings.updated"]);
+    audit_contract_assert_exact_targets(
+        &rows,
+        &[("upload_settings.updated", "upload.config".to_string())],
+    );
+    let upload_audit = rows
+        .iter()
+        .find(|row| row.action == "upload_settings.updated")
+        .expect("上传设置审计存在");
+    let payload = upload_audit
+        .payload
+        .as_object()
+        .expect("上传设置审计为对象");
+    assert_eq!(payload.len(), 1);
+    assert!(payload.contains_key("changed_fields"));
+
+    let mut tx = state.db.begin().await.unwrap();
+    prts_db::upload_settings::set_tx(&mut tx, &previous, Some(admin.id))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
 }
 
 /// 可选认证只能吞掉无凭证/无效凭证，不能把 API-key touch 的审计故障降级成游客。
@@ -7040,6 +7149,48 @@ async fn search_settings_set_and_get_normalizes_values() {
     assert_eq!(got.tm_top_n, 3, "tm_top_n 应被 clamp 到上限 3");
 
     search_settings::set(&pool, previous, None).await.unwrap();
+}
+
+/// 上传限制只接受安全边界，并由 settings 表持久化完整字节值。
+#[tokio::test]
+async fn upload_settings_defaults_validation_and_repository_roundtrip() {
+    use prts_db::upload_settings::{self, UploadConfig};
+
+    let _upload_settings_guard = UPLOAD_SETTINGS_TEST_LOCK.lock().await;
+    let pool = pool().await;
+    let previous = upload_settings::get(&pool).await.unwrap();
+    let config = UploadConfig {
+        max_files_per_batch: 750,
+        max_bytes_per_file: 128 * 1024 * 1024,
+        max_bytes_per_batch: 3 * 1024 * 1024 * 1024,
+        client_concurrency: 4,
+        upload_batch_expiry_hours: 24,
+    };
+    let mut tx = pool.begin().await.unwrap();
+    let change = upload_settings::set_tx(&mut tx, &config, None)
+        .await
+        .unwrap();
+    assert_eq!(change.before, previous);
+    assert_eq!(change.after, config);
+    tx.commit().await.unwrap();
+    assert_eq!(upload_settings::get(&pool).await.unwrap(), config);
+
+    let mut tx = pool.begin().await.unwrap();
+    let invalid = UploadConfig {
+        client_concurrency: 0,
+        ..config.clone()
+    };
+    assert!(upload_settings::set_tx(&mut tx, &invalid, None)
+        .await
+        .is_err());
+    tx.rollback().await.unwrap();
+    assert_eq!(upload_settings::get(&pool).await.unwrap(), config);
+
+    let mut tx = pool.begin().await.unwrap();
+    upload_settings::set_tx(&mut tx, &previous, None)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
 }
 
 /// 验证 prts-db::notifications 仓储圆环（迁移 0005）：

@@ -55,6 +55,12 @@ pub async fn update_settings(
     user.require_platform(nodes::PLATFORM_SETTINGS)?;
     let mut settings: Vec<_> = req.settings.into_iter().collect();
     settings.sort_by(|left, right| left.0.cmp(&right.0));
+    if settings
+        .iter()
+        .any(|(key, _)| matches!(key.as_str(), "search.config" | "upload.config"))
+    {
+        return Err(Error::bad_request("保留设置必须通过对应的类型化设置端点修改").into());
+    }
     let keys: Vec<String> = settings.iter().map(|(key, _)| key.clone()).collect();
     let mut tx = state.db.begin().await.map_err(db_err)?;
     for (key, value) in &settings {

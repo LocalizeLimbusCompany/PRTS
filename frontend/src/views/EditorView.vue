@@ -380,7 +380,7 @@ onMounted(async () => {
   <q-page class="editor-page">
     <!-- toolbar -->
     <div class="editor-bar">
-      <q-btn flat dense round icon="arrow_back" :to="{ name: 'project', params: { id: props.id } }">
+      <q-btn flat dense round icon="mdi-arrow-left" :to="{ name: 'project', params: { id: props.id } }">
         <q-tooltip>返回项目</q-tooltip>
       </q-btn>
       <div class="prts-display ellipsis editor-title">{{ project?.name ?? '…' }}</div>
@@ -404,14 +404,14 @@ onMounted(async () => {
       />
       <q-toggle v-if="isMember" v-model="includeHidden" label="含隐藏" dense />
       <!-- 搜索模式指示徽标 -->
-      <q-chip v-if="isSearchMode" dense square color="secondary" text-color="dark" icon="manage_search">
+      <q-chip v-if="isSearchMode" dense square color="secondary" text-color="dark" icon="mdi-file-search-outline">
         搜索中
       </q-chip>
       <q-chip
         v-if="onlineUsers.length"
         dense
         square
-        icon="people"
+        icon="mdi-account-multiple-outline"
         color="primary"
         text-color="dark"
         class="prts-mono"
@@ -438,8 +438,8 @@ onMounted(async () => {
               <span v-if="isHit(item)" class="relevance-badge" :title="'相关度 ' + relevancePct(item.relevance) + '%'">
                 {{ relevancePct(item.relevance) }}%
               </span>
-              <q-icon v-if="item.locked" name="lock" size="14px" class="prts-dim" />
-              <q-icon v-if="item.hidden" name="visibility_off" size="14px" class="prts-dim" />
+              <q-icon v-if="item.locked" name="mdi-lock-outline" size="14px" class="prts-dim" />
+              <q-icon v-if="item.hidden" name="mdi-eye-off-outline" size="14px" class="prts-dim" />
               <template v-if="otherEditing(item.id)">
                 <q-avatar
                   v-if="editorOf(item.id)?.avatar_url"
@@ -468,7 +468,7 @@ onMounted(async () => {
                           flat
                           no-caps
                           dense
-                          icon="mail"
+                          icon="mdi-email-outline"
                           :label="t('dm.entry')"
                           @click="openDm(editorOf(item.id))"
                         />
@@ -517,7 +517,7 @@ onMounted(async () => {
                           flat
                           no-caps
                           dense
-                          icon="mail"
+                          icon="mdi-email-outline"
                           :label="t('dm.entry')"
                           @click="openDm(editorOf(item.id))"
                         />
@@ -537,7 +537,7 @@ onMounted(async () => {
                     </div>
                   </q-menu>
                 </q-avatar>
-                <q-icon v-else name="edit" size="13px" color="amber">
+                <q-icon v-else name="mdi-pencil-outline" size="13px" color="amber">
                   <q-tooltip>{{ t('editor.editingNow') }}</q-tooltip>
                 </q-icon>
               </template>
@@ -559,7 +559,7 @@ onMounted(async () => {
           flat
           dense
           no-caps
-          icon="arrow_back"
+          icon="mdi-arrow-left"
           label="词条列表"
           class="q-ma-sm"
           @click="mobilePanel = false"
@@ -574,7 +574,7 @@ onMounted(async () => {
               {{ selected.key }}
             </div>
             <q-space />
-            <q-btn flat dense round size="sm" icon="history" @click="openHistory">
+            <q-btn flat dense round size="sm" icon="mdi-history" @click="openHistory">
               <q-tooltip>历史</q-tooltip>
             </q-btn>
             <q-btn
@@ -648,7 +648,7 @@ onMounted(async () => {
               no-caps
               :color="saveBtn.color"
               :text-color="saveBtn.color ? 'dark' : undefined"
-              icon="save"
+              icon="mdi-content-save-outline"
               :label="t('editor.btn_' + saveBtn.labelKey)"
               :loading="saving"
               :disable="saveBtn.disabled"

@@ -19,6 +19,34 @@ pub struct Settings {
     pub auth: AuthSettings,
     #[serde(default)]
     pub embedding: EmbeddingSettings,
+    #[serde(default)]
+    pub media: MediaSettings,
+}
+
+/// 用户上传媒体与临时上传流的持久化路径；不包含业务限制或密钥。
+#[derive(Debug, Clone, Deserialize)]
+pub struct MediaSettings {
+    #[serde(default = "default_media_dir")]
+    pub directory: String,
+    #[serde(default = "default_upload_temp_dir")]
+    pub upload_temp_directory: String,
+}
+
+fn default_media_dir() -> String {
+    "./data/media".to_string()
+}
+
+fn default_upload_temp_dir() -> String {
+    "./data/upload-temp".to_string()
+}
+
+impl Default for MediaSettings {
+    fn default() -> Self {
+        Self {
+            directory: default_media_dir(),
+            upload_temp_directory: default_upload_temp_dir(),
+        }
+    }
 }
 
 /// 认证相关配置。密钥与 OAuth 凭证经环境变量注入（`PRTS__AUTH__*`）。

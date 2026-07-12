@@ -160,7 +160,7 @@ function shortTime(iso: string): string {
   <q-page class="mt-page">
     <!-- 头部：返回 + 对方头名 -->
     <div class="mt-header">
-      <q-btn flat dense round icon="arrow_back" :to="{ name: 'messages' }">
+      <q-btn flat dense round icon="mdi-arrow-left" :to="{ name: 'messages' }">
         <q-tooltip>{{ t('messages.title') }}</q-tooltip>
       </q-btn>
       <q-avatar size="32px" color="primary" text-color="dark">
@@ -217,7 +217,7 @@ function shortTime(iso: string): string {
         no-caps
         color="primary"
         text-color="dark"
-        icon="send"
+        icon="mdi-send"
         :label="t('messages.send')"
         :loading="sending"
         :disable="!draft.trim()"

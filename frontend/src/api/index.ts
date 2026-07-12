@@ -6,6 +6,7 @@ import type {
   EntryVersionDto,
   ExternalAccountDto,
   MemberDto,
+  JobDto,
   MessageDto,
   NotificationDto,
   ThreadDto,
@@ -37,6 +38,13 @@ export const authApi = {
   },
   oauthStart(provider: string) {
     return http.get<{ authorize_url: string }>(`/auth/oauth/${provider}/start`).then((r) => r.data)
+  },
+}
+
+/** 持久化后台任务。 */
+export const jobsApi = {
+  get(id: number) {
+    return http.get<JobDto>(`/jobs/${id}`).then((response) => response.data)
   },
 }
 

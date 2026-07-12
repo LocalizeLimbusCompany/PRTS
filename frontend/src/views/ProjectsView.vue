@@ -76,7 +76,7 @@ async function create() {
         no-caps
         color="primary"
         text-color="dark"
-        icon="add"
+        icon="mdi-plus"
         label="新建项目"
         @click="showCreate = true"
       />
@@ -119,7 +119,7 @@ async function create() {
             <div class="prts-mono prts-dim q-mt-xs" style="font-size: 11px">{{ p.slug }}</div>
             <div class="q-mt-sm row items-center prts-mono" style="font-size: 12px; gap: 6px">
               <span class="prts-dim">{{ p.source_langs.join(' · ') || '—' }}</span>
-              <q-icon name="east" size="14px" class="prts-dim" />
+              <q-icon name="mdi-arrow-right" size="14px" class="prts-dim" />
               <span class="text-accent">{{ p.target_lang }}</span>
             </div>
             <div

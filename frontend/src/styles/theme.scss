@@ -5,12 +5,15 @@
    ============================================================ */
 
 :root {
-  /* 思源宋体（标题）/ 思源黑体（正文）/ JetBrains Mono（等宽）—— 均本地自托管 */
-  --font-display: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+  /* 思源黑体（标题/正文）/ JetBrains Mono（等宽）—— 均本地自托管 */
+  --font-display:
+    'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-sans:
     'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI',
     sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --font-mono:
+    'JetBrains Mono', 'Noto Sans SC', ui-monospace, 'SFMono-Regular', Menlo, 'Microsoft YaHei',
+    monospace;
   --prts-radius: 4px;
   --prts-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
   --prts-nav-h: 56px;
@@ -112,7 +115,7 @@ body {
 ::-webkit-scrollbar-thumb {
   background: var(--prts-border);
   border: 2px solid var(--prts-bg);
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
 a {
@@ -143,6 +146,15 @@ a:hover {
 .q-btn {
   font-family: var(--font-mono);
   letter-spacing: 0.04em;
+}
+.q-btn:not(.q-btn--round),
+.q-card,
+.q-menu,
+.q-field__control,
+.q-chip,
+.q-tab-panels,
+.q-dialog__inner > div {
+  border-radius: var(--prts-radius);
 }
 
 /* —— 工具类 —— */

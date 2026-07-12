@@ -60,6 +60,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(health::liveness))
         .routes(routes!(health::readiness))
         .routes(routes!(meta::version))
+        .routes(routes!(meta::upload_config))
         // 认证
         .routes(routes!(auth::register))
         .routes(routes!(auth::login))
@@ -79,6 +80,10 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(
             admin_settings::get_search_settings,
             admin_settings::put_search_settings
+        ))
+        .routes(routes!(
+            admin_settings::get_upload_settings,
+            admin_settings::put_upload_settings
         ))
         // 项目
         .routes(routes!(projects::create_project, projects::list_projects))
@@ -274,6 +279,7 @@ mod tests {
             ("/admin/settings", "put"),
             ("/admin/users/{id}/role", "post"),
             ("/admin/settings/search", "put"),
+            ("/admin/settings/upload", "put"),
             ("/projects", "post"),
             ("/projects/{id}", "put"),
             ("/projects/{id}", "delete"),

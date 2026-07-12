@@ -12,6 +12,8 @@ import {
   type MemberDto,
   type ProjectDetailDto,
 } from '@/api'
+import MarkdownView from '@/components/MarkdownView.vue'
+import { hasProjectCapability } from '@/lib/capabilities'
 import { ROLE_LABELS, STATE_ORDER, roleLabel, stateLabel } from '@/lib/states'
 import { useAuthStore } from '@/stores/auth'
 
@@ -26,13 +28,15 @@ const files = ref<FileDto[]>([])
 const members = ref<MemberDto[]>([])
 const loading = ref(true)
 
-const myRole = computed(() => {
-  if (auth.isAdmin) return 'owner'
-  return members.value.find((m) => m.user_id === auth.user?.id)?.role ?? null
-})
-const canManage = computed(() => ['owner', 'manager'].includes(myRole.value ?? ''))
-const canUpload = computed(() => canManage.value)
-const canDelete = computed(() => myRole.value === 'owner' || auth.isAdmin)
+const canManage = computed(() =>
+  hasProjectCapability(detail.value?.capabilities, 'manage_project'),
+)
+const canUpload = computed(() =>
+  hasProjectCapability(detail.value?.capabilities, 'upload_files'),
+)
+const canDelete = computed(() =>
+  hasProjectCapability(detail.value?.capabilities, 'delete_project'),
+)
 
 const progress = computed(() => {
   if (!detail.value || detail.value.entry_count === 0) return 0
@@ -56,7 +60,7 @@ const treeNodes = computed<TreeNode[]>(() => {
     folderNodes.set(f.id, {
       key: `d${f.id}`,
       label: f.name,
-      icon: 'folder',
+      icon: 'mdi-folder-outline',
       isFile: false,
       children: [],
     })
@@ -72,7 +76,7 @@ const treeNodes = computed<TreeNode[]>(() => {
     const node: TreeNode = {
       key: `f${file.id}`,
       label: file.name,
-      icon: 'description',
+      icon: 'mdi-file-document-outline',
       isFile: true,
       fileId: file.id,
       count: file.entry_count,
@@ -242,12 +246,15 @@ function openDm(m: MemberDto) {
           <div class="prts-mono prts-dim q-mt-xs" style="font-size: 12px">
             {{ detail.project.slug }} ·
             <span>{{ detail.project.source_langs.join(' · ') || '—' }}</span>
-            <q-icon name="east" size="13px" />
+            <q-icon name="mdi-arrow-right" size="13px" />
             <span class="text-accent">{{ detail.project.target_lang }}</span>
           </div>
-          <div v-if="detail.project.description" class="prts-dim q-mt-sm" style="max-width: 720px">
-            {{ detail.project.description }}
-          </div>
+          <MarkdownView
+            v-if="detail.project.description"
+            class="prts-dim q-mt-sm"
+            style="max-width: 720px"
+            :source="detail.project.description"
+          />
         </div>
         <div class="col-auto row q-gutter-sm">
           <q-btn
@@ -255,16 +262,16 @@ function openDm(m: MemberDto) {
             no-caps
             color="primary"
             text-color="dark"
-            icon="edit_note"
+            icon="mdi-file-edit-outline"
             label="翻译编辑器"
             :to="{ name: 'editor', params: { id: props.id } }"
           />
-          <q-btn outline no-caps color="primary" icon="download" label="导出" @click="doExport" />
+          <q-btn outline no-caps color="primary" icon="mdi-download" label="导出" @click="doExport" />
           <q-btn
             v-if="canUpload"
             outline
             no-caps
-            icon="upload"
+            icon="mdi-upload"
             label="上传"
             @click="showUpload = true"
           />
@@ -273,7 +280,7 @@ function openDm(m: MemberDto) {
             flat
             round
             dense
-            icon="delete"
+            icon="mdi-delete-outline"
             color="negative"
             @click="confirmDelete"
           >
@@ -353,7 +360,7 @@ function openDm(m: MemberDto) {
               dense
               no-caps
               size="sm"
-              icon="person_add"
+              icon="mdi-account-plus-outline"
               label="添加"
               @click="showAddMember = true"
             />
@@ -379,7 +386,7 @@ function openDm(m: MemberDto) {
                       round
                       dense
                       size="sm"
-                      icon="mail"
+                      icon="mdi-email-outline"
                       @click="openDm(m)"
                     >
                       <q-tooltip>私信</q-tooltip>
@@ -390,7 +397,7 @@ function openDm(m: MemberDto) {
                       round
                       dense
                       size="sm"
-                      icon="close"
+                      icon="mdi-close"
                       @click="removeMember(m)"
                     />
                   </div>
@@ -423,7 +430,7 @@ function openDm(m: MemberDto) {
             :disable="uploading"
             @update:model-value="onPickFile"
           >
-            <template #prepend><q-icon name="attach_file" /></template>
+            <template #prepend><q-icon name="mdi-paperclip" /></template>
           </q-file>
           <q-input
             v-model="uploadJson"

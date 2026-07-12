@@ -3,6 +3,12 @@
     "tagline": "Localization Platform",
     "switchLang": "中文"
   },
+  "markdown": {
+    "write": "Write",
+    "preview": "Preview",
+    "supported": "Markdown supported",
+    "remaining": "{count} characters remaining"
+  },
   "home": {
     "title": "Welcome to PRTS",
     "subtitle": "An open, public localization collaboration platform",

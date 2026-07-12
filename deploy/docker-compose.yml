@@ -77,7 +77,12 @@ services:
       PRTS__DATABASE__MIGRATION_URL: ''
       PRTS__DATABASE__RUNTIME_ROLE: ${POSTGRES_RUNTIME_USER:-prts_runtime}
       PRTS__REDIS__URL: redis://redis:6379
+      PRTS__MEDIA__DIRECTORY: /app/data/media
+      PRTS__MEDIA__UPLOAD_TEMP_DIRECTORY: /app/data/upload-temp
       RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+    volumes:
+      - media:/app/data/media
+      - uploadtemp:/app/data/upload-temp
     ports:
       # 宿主机端口可经 .env 的 BACKEND_PORT 调整（默认 3000 被占用时改这里）
       - '${BACKEND_PORT:-3000}:3000' # 暴露以便访问 Swagger UI（/swagger-ui）；生产可仅内网
@@ -103,3 +108,5 @@ services:
 volumes:
   pgdata:
   redisdata:
+  media:
+  uploadtemp:

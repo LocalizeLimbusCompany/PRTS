@@ -1,6 +1,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from './session'
+import { i18n } from '@/i18n'
 
 /**
  * 全局 axios 实例。baseURL `/api`，开发由 Vite 代理、生产由 nginx 反代（均剥离 /api 前缀）。
@@ -9,6 +10,7 @@ import { clearTokens, getAccessToken, getRefreshToken, setTokens } from './sessi
 export const http = axios.create({ baseURL: '/api', timeout: 15_000 })
 
 http.interceptors.request.use((config) => {
+  config.headers['Accept-Language'] = i18n.global.locale.value
   const token = getAccessToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`

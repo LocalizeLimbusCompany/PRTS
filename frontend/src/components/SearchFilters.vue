@@ -115,7 +115,7 @@ defineExpose({ clearAll })
       @clear="clearAll"
     >
       <template #prepend>
-        <q-icon name="search" />
+        <q-icon name="mdi-magnify" />
       </template>
     </q-input>
 

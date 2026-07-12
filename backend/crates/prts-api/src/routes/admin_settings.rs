@@ -9,9 +9,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use prts_core::permission::nodes;
+use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 use prts_db::search_settings::SearchConfig;
+use prts_db::upload_settings::UploadConfig;
 
 use crate::auth::CurrentUser;
+use crate::db_err;
+use crate::dto::upload::UploadConfigDto;
 use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
@@ -139,6 +143,109 @@ pub async fn put_search_settings(
     }))
 }
 
+/// 读取平台上传限制。
+#[utoipa::path(
+    get,
+    path = "/admin/settings/upload",
+    tag = "admin",
+    responses(
+        (status = 200, description = "当前上传限制", body = UploadConfigDto),
+        (status = 401, description = "未认证"),
+        (status = 403, description = "权限不足")
+    )
+)]
+pub async fn get_upload_settings(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<UploadConfigDto>, ApiError> {
+    user.require_platform(nodes::PLATFORM_SETTINGS)?;
+    let config = prts_db::upload_settings::get(&state.db)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(config.into()))
+}
+
+/// 更新平台上传限制；限制和审计在同一事务提交。
+#[utoipa::path(
+    put,
+    path = "/admin/settings/upload",
+    tag = "admin",
+    request_body = UploadConfigDto,
+    responses(
+        (status = 200, description = "更新后的上传限制", body = UploadConfigDto),
+        (status = 400, description = "上传限制超出安全边界", body = ErrorResponse),
+        (status = 401, description = "未认证"),
+        (status = 403, description = "权限不足"),
+        (status = 503, description = "审计服务不可用，上传设置未更新", body = ErrorResponse)
+    )
+)]
+pub async fn put_upload_settings(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(body): Json<UploadConfigDto>,
+) -> Result<Json<UploadConfigDto>, ApiError> {
+    user.require_platform(nodes::PLATFORM_SETTINGS)?;
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let current_user = prts_db::users::find_by_id_for_update_tx(&mut tx, user.id)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::Unauthorized)?;
+    let current_role = current_user
+        .platform_role
+        .as_deref()
+        .and_then(prts_core::PlatformRole::parse);
+    if !current_role.is_some_and(|role| role.has(nodes::PLATFORM_SETTINGS)) {
+        return Err(prts_common::Error::Forbidden.into());
+    }
+    let current = prts_db::upload_settings::get_for_update_tx(&mut tx)
+        .await
+        .map_err(db_err)?;
+    let config = UploadConfig {
+        max_files_per_batch: body.max_files_per_batch,
+        max_bytes_per_file: body.max_bytes_per_file,
+        max_bytes_per_batch: body.max_bytes_per_batch,
+        client_concurrency: body.client_concurrency,
+        upload_batch_expiry_hours: current.upload_batch_expiry_hours,
+    };
+    prts_db::upload_settings::validate(&config).map_err(prts_common::Error::bad_request)?;
+    let change = prts_db::upload_settings::set_locked_tx(&mut tx, current, &config, Some(user.id))
+        .await
+        .map_err(db_err)?;
+    let changed_fields = upload_changed_fields(&change.before, &change.after);
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::UploadSettingsUpdated {
+            changed_fields: &changed_fields,
+        },
+    )
+    .await
+    .map_err(|_| prts_common::Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(config.into()))
+}
+
+fn upload_changed_fields(before: &UploadConfig, after: &UploadConfig) -> Vec<&'static str> {
+    let mut changed = Vec::with_capacity(4);
+    if before.max_files_per_batch != after.max_files_per_batch {
+        changed.push("max_files_per_batch");
+    }
+    if before.max_bytes_per_file != after.max_bytes_per_file {
+        changed.push("max_bytes_per_file");
+    }
+    if before.max_bytes_per_batch != after.max_bytes_per_batch {
+        changed.push("max_bytes_per_batch");
+    }
+    if before.client_concurrency != after.client_concurrency {
+        changed.push("client_concurrency");
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -148,8 +255,8 @@ mod tests {
             .split_once("pub async fn put_search_settings(")
             .expect("PUT handler exists")
             .1
-            .split_once("#[cfg(test)]")
-            .expect("PUT handler ends before tests")
+            .split_once("/// 读取平台上传限制。")
+            .expect("search PUT handler ends before upload handlers")
             .0;
         assert!(route.contains("search_settings_updater"));
         assert!(!route.contains("state.db.begin"));

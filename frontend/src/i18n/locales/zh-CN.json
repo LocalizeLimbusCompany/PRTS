@@ -3,6 +3,12 @@
     "tagline": "翻译协作平台",
     "switchLang": "English"
   },
+  "markdown": {
+    "write": "编辑",
+    "preview": "预览",
+    "supported": "支持 Markdown",
+    "remaining": "还可输入 {count} 字"
+  },
   "home": {
     "title": "欢迎使用 PRTS",
     "subtitle": "开源的公开本地化协作平台",

@@ -33,7 +33,7 @@ onMounted(async () => {
   <q-page class="auth-page">
     <q-card class="auth-card column items-center" style="text-align: center">
       <template v-if="error">
-        <q-icon name="error_outline" size="40px" color="negative" />
+        <q-icon name="mdi-alert-circle-outline" size="40px" color="negative" />
         <div class="prts-h2 q-mt-md">登录失败</div>
         <div class="prts-dim q-mt-xs">{{ error }}</div>
         <q-btn flat no-caps color="primary" to="/login" label="返回登录" class="q-mt-md" />

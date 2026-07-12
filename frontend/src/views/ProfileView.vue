@@ -157,7 +157,7 @@ async function revokeKey(id: number) {
     <q-card flat bordered class="q-mb-lg">
       <q-list v-if="accounts.length" separator>
         <q-item v-for="a in accounts" :key="a.provider + a.external_id">
-          <q-item-section avatar><q-icon name="link" color="primary" /></q-item-section>
+          <q-item-section avatar><q-icon name="mdi-link-variant" color="primary" /></q-item-section>
           <q-item-section>
             <q-item-label>{{ a.provider }}</q-item-label>
             <q-item-label caption class="prts-mono">{{ a.external_id }}</q-item-label>
@@ -171,7 +171,7 @@ async function revokeKey(id: number) {
     <div class="row items-center q-mb-sm">
       <div class="prts-label">API KEY</div>
       <q-space />
-      <q-btn flat dense no-caps size="sm" icon="add" label="新建" @click="openCreate" />
+      <q-btn flat dense no-caps size="sm" icon="mdi-plus" label="新建" @click="openCreate" />
     </div>
     <q-card flat bordered>
       <q-list v-if="keys.length" separator>
@@ -189,7 +189,7 @@ async function revokeKey(id: number) {
               round
               dense
               size="sm"
-              icon="delete"
+              icon="mdi-delete-outline"
               color="negative"
               @click="revokeKey(k.id)"
             />
@@ -219,7 +219,7 @@ async function revokeKey(id: number) {
             </div>
             <q-input :model-value="createdKey" readonly outlined dense input-class="prts-mono">
               <template #append
-                ><q-btn flat dense round icon="content_copy" @click="copyKey"
+                ><q-btn flat dense round icon="mdi-content-copy" @click="copyKey"
               /></template>
             </q-input>
           </template>

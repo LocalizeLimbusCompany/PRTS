@@ -27,16 +27,38 @@ export interface ProjectDto {
   description: string
   visibility: string
   source_langs: string[]
+  primary_source_lang: string | null
   target_lang: string
+  language_repair_state: string
+  primary_source_changed_at: string | null
+  lexical_state: string
+  embedding_state: string
+  avatar_url: string | null
   owner_id: number
   created_at: string
   updated_at: string
+}
+
+export interface ProjectCapabilities {
+  view_project: boolean
+  manage_project: boolean
+  manage_members: boolean
+  upload_files: boolean
+  download: boolean
+  edit_entry: boolean
+  review_entry: boolean
+  edit_locked_entry: boolean
+  force_save_presence: boolean
+  resolve_languages: boolean
+  change_primary_source: boolean
+  delete_project: boolean
 }
 
 export interface ProjectDetailDto {
   project: ProjectDto
   state_counts: Record<string, number>
   entry_count: number
+  capabilities: ProjectCapabilities
 }
 
 export interface MemberDto {
@@ -96,6 +118,33 @@ export interface UploadResult {
   created: number
   updated: number
   unchanged: number
+}
+
+/** 服务端下发的上传运行时限制；上传客户端不得复制这些默认值。 */
+export interface UploadConfigDto {
+  max_files_per_batch: number
+  max_bytes_per_file: number
+  max_bytes_per_batch: number
+  client_concurrency: number
+}
+
+export interface JobDto {
+  id: number
+  kind: string
+  project_id: number | null
+  state: string
+  stage: string
+  progress_current: number
+  progress_total: number | null
+  attempts: number
+  max_attempts: number
+  next_retry_at: string | null
+  last_error_code: string | null
+  manual_retry_allowed: boolean
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  updated_at: string
 }
 
 export interface ApiKeyDto {

@@ -189,7 +189,7 @@ async function saveSearchSettings() {
         rounded
         class="q-mb-md text-warning"
         style="background: var(--prts-bg-elev); border: 1px solid currentColor; font-size: 13px"
-        icon="warning"
+        icon="mdi-alert-outline"
       >
         {{ t('admin.search.keyMissingWarning') }}
       </q-banner>

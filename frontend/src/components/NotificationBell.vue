@@ -37,7 +37,7 @@ function summary(n: NotificationDto): string {
 </script>
 
 <template>
-  <q-btn flat round dense class="q-mr-xs" icon="notifications">
+  <q-btn flat round dense class="q-mr-xs" icon="mdi-bell-outline">
     <q-badge v-if="unread > 0" color="negative" floating rounded>{{ unread }}</q-badge>
     <q-tooltip>{{ t('notifications.bell') }}</q-tooltip>
 

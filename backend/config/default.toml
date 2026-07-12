@@ -20,3 +20,7 @@ max_connections = 10
 
 [redis]
 url = "redis://localhost:6379"
+
+[media]
+directory = "./data/media"
+upload_temp_directory = "./data/upload-temp"

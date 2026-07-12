@@ -1,8 +1,14 @@
 //! 服务元信息端点。
 
+use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 use utoipa::ToSchema;
+
+use crate::db_err;
+use crate::dto::upload::UploadConfigDto;
+use crate::error::ApiError;
+use crate::state::AppState;
 
 /// 服务版本信息。
 #[derive(Serialize, ToSchema)]
@@ -25,4 +31,20 @@ pub async fn version() -> Json<VersionInfo> {
         name: env!("CARGO_PKG_NAME").to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+/// 返回当前上传客户端限制，不包含清理保留期或内部存储路径。
+#[utoipa::path(
+    get,
+    path = "/meta/upload-config",
+    tag = "meta",
+    responses((status = 200, description = "上传客户端运行时限制", body = UploadConfigDto))
+)]
+pub async fn upload_config(
+    State(state): State<AppState>,
+) -> Result<Json<UploadConfigDto>, ApiError> {
+    let config = prts_db::upload_settings::get(&state.db)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(config.into()))
 }

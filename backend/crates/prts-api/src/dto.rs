@@ -7,6 +7,8 @@ use prts_db::models::User;
 
 #[path = "dto/capabilities.rs"]
 pub mod capabilities;
+#[path = "dto/upload.rs"]
+pub mod upload;
 
 /// 用户对外表示。
 #[derive(Debug, Serialize, ToSchema)]
