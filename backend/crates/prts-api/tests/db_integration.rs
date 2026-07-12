@@ -53,10 +53,10 @@ mod notifications_routes;
 mod project_media_routes;
 #[path = "../src/routes/projects.rs"]
 mod projects_routes;
-#[path = "../src/routes/users.rs"]
-mod users_routes;
 #[path = "../src/routes/uploads.rs"]
 mod uploads_routes;
+#[path = "../src/routes/users.rs"]
+mod users_routes;
 
 /// 将数据库错误映射为真实 handler 使用的统一 API 错误。
 fn db_err(error: prts_db::DbError) -> error::ApiError {
@@ -5321,13 +5321,15 @@ async fn upload_history_schema_contract_is_complete_and_gated() {
            AND table_name = ANY($1::TEXT[])
          ORDER BY table_name",
     )
-    .bind(&[
-        "file_change_items",
-        "file_change_sets",
-        "upload_batch_files",
-        "upload_batches",
-        "upload_file_attempts",
-    ][..])
+    .bind(
+        &[
+            "file_change_items",
+            "file_change_sets",
+            "upload_batch_files",
+            "upload_batches",
+            "upload_file_attempts",
+        ][..],
+    )
     .fetch_all(&pool)
     .await
     .unwrap();
@@ -5354,14 +5356,16 @@ async fn upload_history_schema_contract_is_complete_and_gated() {
            AND info.constraint_name = ANY($1::TEXT[])
          ORDER BY constraint_name",
     )
-    .bind(&[
-        "files_deletion_change_set_fk",
-        "file_change_sets_project_id_fkey",
-        "folders_deletion_change_set_fk",
-        "upload_batch_files_processing_job_id_fkey",
-        "upload_batch_files_target_file_id_fkey",
-        "upload_file_attempts_target_file_id_fkey",
-    ][..])
+    .bind(
+        &[
+            "files_deletion_change_set_fk",
+            "file_change_sets_project_id_fkey",
+            "folders_deletion_change_set_fk",
+            "upload_batch_files_processing_job_id_fkey",
+            "upload_batch_files_target_file_id_fkey",
+            "upload_file_attempts_target_file_id_fkey",
+        ][..],
+    )
     .fetch_all(&pool)
     .await
     .unwrap();
@@ -5371,7 +5375,10 @@ async fn upload_history_schema_contract_is_complete_and_gated() {
             assert!(!definition.contains("ON DELETE CASCADE"));
             assert!(!definition.contains("ON DELETE SET NULL"));
         } else {
-            assert!(definition.contains("ON DELETE SET NULL"), "{name}: {definition}");
+            assert!(
+                definition.contains("ON DELETE SET NULL"),
+                "{name}: {definition}"
+            );
         }
     }
 
@@ -5440,23 +5447,15 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
     .await
     .unwrap()
     .is_none());
-    assert!(prts_db::uploads::mark_attempt_received_tx(
-        &mut tx,
-        file.id,
-        first_attempt.id,
-        4,
-    )
-    .await
-    .unwrap());
-    let jobs = prts_db::uploads::queue_batch_tx(
-        &mut tx,
-        project_id,
-        batch.batch.id,
-        user_id,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    assert!(
+        prts_db::uploads::mark_attempt_received_tx(&mut tx, file.id, first_attempt.id, 4,)
+            .await
+            .unwrap()
+    );
+    let jobs = prts_db::uploads::queue_batch_tx(&mut tx, project_id, batch.batch.id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
     let processing_job_id = jobs[0].id;
     tx.commit().await.unwrap();
 
@@ -5514,7 +5513,10 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
         .unwrap()
         .unwrap();
     assert_eq!(snapshot.attempts.len(), 2);
-    assert_eq!(snapshot.attempts[0].error_code.as_deref(), Some("processing_failed"));
+    assert_eq!(
+        snapshot.attempts[0].error_code.as_deref(),
+        Some("processing_failed")
+    );
     assert_eq!(snapshot.files[0].processing_job_id, Some(processing_job_id));
 
     let mut tx = pool.begin().await.unwrap();
@@ -5531,15 +5533,10 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
     prts_db::uploads::mark_attempt_received_tx(&mut tx, file.id, retry.id, 4)
         .await
         .unwrap();
-    let jobs = prts_db::uploads::queue_batch_tx(
-        &mut tx,
-        project_id,
-        batch.batch.id,
-        user_id,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let jobs = prts_db::uploads::queue_batch_tx(&mut tx, project_id, batch.batch.id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(jobs[0].id, processing_job_id);
     assert_eq!(jobs[0].payload["attempt_id"], retry.id);
     assert_eq!(jobs[0].attempts, 0);
@@ -5569,14 +5566,11 @@ async fn upload_batch_incomplete_cancel_expiry_and_cleanup_are_durable() {
     )
     .await
     .unwrap();
-    assert!(prts_db::uploads::queue_batch_tx(
-        &mut tx,
-        project_id,
-        batch.batch.id,
-        user_id,
-    )
-    .await
-    .is_err());
+    assert!(
+        prts_db::uploads::queue_batch_tx(&mut tx, project_id, batch.batch.id, user_id,)
+            .await
+            .is_err()
+    );
     tx.rollback().await.unwrap();
 
     let mut tx = pool.begin().await.unwrap();
@@ -5607,15 +5601,10 @@ async fn upload_batch_incomplete_cancel_expiry_and_cleanup_are_durable() {
     .unwrap();
     tx.commit().await.unwrap();
     let mut tx = pool.begin().await.unwrap();
-    let keys = prts_db::uploads::cancel_batch_tx(
-        &mut tx,
-        project_id,
-        batch.batch.id,
-        user_id,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let keys = prts_db::uploads::cancel_batch_tx(&mut tx, project_id, batch.batch.id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(keys.len(), 1);
     tx.commit().await.unwrap();
     let cancelled = prts_db::uploads::find_batch(&pool, project_id, batch.batch.id)
@@ -5632,13 +5621,12 @@ async fn upload_batch_incomplete_cancel_expiry_and_cleanup_are_durable() {
     prts_db::uploads::mark_attempt_cleaned(&pool, batch.attempts[0].id)
         .await
         .unwrap();
-    let cleaned_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT cleaned_at FROM upload_file_attempts WHERE id = $1",
-    )
-    .bind(batch.attempts[0].id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let cleaned_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT cleaned_at FROM upload_file_attempts WHERE id = $1")
+            .bind(batch.attempts[0].id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(cleaned_at.is_some());
 
     let mut tx = pool.begin().await.unwrap();

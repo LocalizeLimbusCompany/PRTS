@@ -301,8 +301,8 @@ pub async fn create_batch(
         .map_err(db_err)?;
     let (declarations, total_bytes) = validate_declarations(project_id, request.files, &config)?;
 
-    let expires_at = chrono::Utc::now()
-        + chrono::Duration::hours(i64::from(config.upload_batch_expiry_hours));
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::hours(i64::from(config.upload_batch_expiry_hours));
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, project_id)
         .await
@@ -311,15 +311,10 @@ pub async fn create_batch(
     let locked = paccess::load_locked_tx(&mut tx, &user, project).await?;
     locked.require_node(nodes::PROJECT_FILE_UPLOAD)?;
     locked.require_language_ready()?;
-    let snapshot = prts_db::uploads::create_batch_tx(
-        &mut tx,
-        project_id,
-        user.id,
-        &declarations,
-        expires_at,
-    )
-    .await
-    .map_err(db_err)?;
+    let snapshot =
+        prts_db::uploads::create_batch_tx(&mut tx, project_id, user.id, &declarations, expires_at)
+            .await
+            .map_err(db_err)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         AuditActor {
@@ -379,11 +374,7 @@ pub async fn receive_attempt(
     locked.require_node(nodes::PROJECT_FILE_UPLOAD)?;
     locked.require_language_ready()?;
     let Some((batch, file, attempt)) = prts_db::uploads::claim_attempt_for_receive_tx(
-        &mut tx,
-        project_id,
-        batch_id,
-        file_id,
-        attempt_id,
+        &mut tx, project_id, batch_id, file_id, attempt_id,
     )
     .await
     .map_err(db_err)?
@@ -419,7 +410,10 @@ pub async fn receive_attempt(
     .map_err(|_| Error::AuditUnavailable)?;
     tx.commit().await.map_err(db_err)?;
 
-    let destination = temp_path(&state.settings.media.upload_temp_directory, &attempt.temp_key)?;
+    let destination = temp_path(
+        &state.settings.media.upload_temp_directory,
+        &attempt.temp_key,
+    )?;
     let parent = destination
         .parent()
         .ok_or_else(|| Error::internal("upload temp path has no parent"))?;
@@ -611,7 +605,11 @@ pub async fn receive_attempt(
     }
     .await;
     if let Err(error) = finalize {
-        remove_temp(&state.settings.media.upload_temp_directory, &attempt.temp_key).await;
+        remove_temp(
+            &state.settings.media.upload_temp_directory,
+            &attempt.temp_key,
+        )
+        .await;
         return Err(error);
     }
     Ok(StatusCode::NO_CONTENT)
@@ -729,8 +727,8 @@ pub async fn retry_file(
     let config = prts_db::upload_settings::get(&state.db)
         .await
         .map_err(db_err)?;
-    let cleanup_after = chrono::Utc::now()
-        + chrono::Duration::hours(i64::from(config.upload_batch_expiry_hours));
+    let cleanup_after =
+        chrono::Utc::now() + chrono::Duration::hours(i64::from(config.upload_batch_expiry_hours));
     let key = temp_key(project_id, &format!("batch-{batch_id}"));
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, project_id)
@@ -813,12 +811,7 @@ pub async fn cancel_batch(
     let locked = paccess::load_locked_tx(&mut tx, &user, project).await?;
     locked.require_node(nodes::PROJECT_FILE_UPLOAD)?;
     locked.require_language_ready()?;
-    let temp_keys = prts_db::uploads::cancel_batch_tx(
-        &mut tx,
-        project_id,
-        batch_id,
-        user.id,
-    )
+    let temp_keys = prts_db::uploads::cancel_batch_tx(&mut tx, project_id, batch_id, user.id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;

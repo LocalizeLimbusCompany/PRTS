@@ -91,13 +91,11 @@ pub async fn create_batch_tx(
         .bind(expires_at)
         .fetch_one(&mut *conn)
         .await?;
-        sqlx::query(
-            "UPDATE upload_batch_files SET current_attempt_id = $2 WHERE id = $1",
-        )
-        .bind(file.id)
-        .bind(attempt.id)
-        .execute(&mut *conn)
-        .await?;
+        sqlx::query("UPDATE upload_batch_files SET current_attempt_id = $2 WHERE id = $1")
+            .bind(file.id)
+            .bind(attempt.id)
+            .execute(&mut *conn)
+            .await?;
         files.push(UploadBatchFile {
             current_attempt_id: Some(attempt.id),
             ..file
@@ -283,7 +281,9 @@ pub async fn queue_batch_tx(
         return Ok(None);
     };
     if !matches!(batch.state.as_str(), "uploading" | "draft") {
-        return Err(sqlx::Error::Protocol("upload batch cannot be completed".to_string()));
+        return Err(sqlx::Error::Protocol(
+            "upload batch cannot be completed".to_string(),
+        ));
     }
     let files = sqlx::query_as::<_, UploadBatchFile>(
         "SELECT * FROM upload_batch_files WHERE batch_id = $1 ORDER BY ordinal FOR UPDATE",
@@ -301,7 +301,9 @@ pub async fn queue_batch_tx(
     .fetch_one(&mut *conn)
     .await?;
     if ready != files.len() as i64 {
-        return Err(sqlx::Error::Protocol("upload batch is incomplete".to_string()));
+        return Err(sqlx::Error::Protocol(
+            "upload batch is incomplete".to_string(),
+        ));
     }
     let mut jobs = Vec::with_capacity(files.len());
     for file in files {
@@ -309,8 +311,9 @@ pub async fn queue_batch_tx(
             sqlx::Error::Protocol("upload file has no current attempt".to_string())
         })?;
         let job: Job = match file.processing_job_id {
-            Some(job_id) => sqlx::query_as(
-                "UPDATE jobs SET state = 'queued', stage = 'queued', run_after = now(),
+            Some(job_id) => {
+                sqlx::query_as(
+                    "UPDATE jobs SET state = 'queued', stage = 'queued', run_after = now(),
                      worker_id = NULL, lease_until = NULL, finished_at = NULL,
                      last_error_code = NULL, last_error_message = NULL,
                      attempts = 0, progress_current = 0, progress_total = $5,
@@ -320,16 +323,18 @@ pub async fn queue_batch_tx(
                  WHERE id = $1 AND kind = 'upload_process'
                    AND upload_batch_file_id = $3
                  RETURNING *",
-            )
-            .bind(job_id)
-            .bind(batch_id)
-            .bind(file.id)
-            .bind(attempt_id)
-            .bind(file.declared_bytes)
-            .fetch_one(&mut *conn)
-            .await?,
-            None => sqlx::query_as(
-                "INSERT INTO jobs (
+                )
+                .bind(job_id)
+                .bind(batch_id)
+                .bind(file.id)
+                .bind(attempt_id)
+                .bind(file.declared_bytes)
+                .fetch_one(&mut *conn)
+                .await?
+            }
+            None => {
+                sqlx::query_as(
+                    "INSERT INTO jobs (
                      kind, project_id, stage, payload, progress_total,
                      max_attempts, upload_batch_file_id
                  ) VALUES (
@@ -337,14 +342,15 @@ pub async fn queue_batch_tx(
                      jsonb_build_object('batch_id', $2, 'batch_file_id', $3, 'attempt_id', $4),
                      $5, 1, $3
                  ) RETURNING *",
-            )
-            .bind(project_id)
-            .bind(batch_id)
-            .bind(file.id)
-            .bind(attempt_id)
-            .bind(file.declared_bytes)
-            .fetch_one(&mut *conn)
-            .await?,
+                )
+                .bind(project_id)
+                .bind(batch_id)
+                .bind(file.id)
+                .bind(attempt_id)
+                .bind(file.declared_bytes)
+                .fetch_one(&mut *conn)
+                .await?
+            }
         };
         sqlx::query(
             "UPDATE upload_batch_files SET state = 'queued', processing_job_id = $2 WHERE id = $1",
@@ -355,12 +361,10 @@ pub async fn queue_batch_tx(
         .await?;
         jobs.push(job);
     }
-    sqlx::query(
-        "UPDATE upload_batches SET state = 'queued', completed_at = now() WHERE id = $1",
-    )
-    .bind(batch_id)
-    .execute(conn)
-    .await?;
+    sqlx::query("UPDATE upload_batches SET state = 'queued', completed_at = now() WHERE id = $1")
+        .bind(batch_id)
+        .execute(conn)
+        .await?;
     Ok(Some(jobs))
 }
 
@@ -401,7 +405,9 @@ pub async fn retry_file_tx(
         return Ok(None);
     };
     if !matches!(file.state.as_str(), "failed" | "cancelled" | "expired") {
-        return Err(sqlx::Error::Protocol("upload file cannot be retried".to_string()));
+        return Err(sqlx::Error::Protocol(
+            "upload file cannot be retried".to_string(),
+        ));
     }
     let next_number: i32 = sqlx::query_scalar(
         "SELECT COALESCE(max(attempt_number), 0) + 1
@@ -431,12 +437,10 @@ pub async fn retry_file_tx(
     .bind(attempt.id)
     .execute(&mut *conn)
     .await?;
-    sqlx::query(
-        "UPDATE upload_batches SET state = 'uploading', completed_at = NULL WHERE id = $1",
-    )
-    .bind(batch_id)
-    .execute(conn)
-    .await?;
+    sqlx::query("UPDATE upload_batches SET state = 'uploading', completed_at = NULL WHERE id = $1")
+        .bind(batch_id)
+        .execute(conn)
+        .await?;
     Ok(Some(attempt))
 }
 
@@ -563,12 +567,10 @@ pub async fn expire_due(pool: &PgPool, limit: i64) -> Result<Vec<String>, sqlx::
     .bind(&batch_ids)
     .execute(&mut *tx)
     .await?;
-    sqlx::query(
-        "UPDATE upload_batches SET state = 'expired' WHERE id = ANY($1::BIGINT[])",
-    )
-    .bind(&batch_ids)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("UPDATE upload_batches SET state = 'expired' WHERE id = ANY($1::BIGINT[])")
+        .bind(&batch_ids)
+        .execute(&mut *tx)
+        .await?;
     let expired = sqlx::query_as::<_, (i64, i64, i64)>(
         "SELECT project_id_snapshot, id, declared_file_count::BIGINT
          FROM upload_batches WHERE id = ANY($1::BIGINT[])",

@@ -135,6 +135,7 @@ export interface UploadConfigDto {
   max_bytes_per_file: number
   max_bytes_per_batch: number
   client_concurrency: number
+  upload_batch_expiry_hours: number
 }
 
 export interface JobDto {
