@@ -67,7 +67,10 @@ pub struct UploadResult {
 }
 
 /// 上传词条到项目（按路径自动建文件夹/文件）。需项目「上传」权限。
-#[utoipa::path(post, path = "/projects/{id}/upload", tag = "entry", deprecated, request_body = UploadReq,
+#[utoipa::path(post, path = "/projects/{id}/upload", tag = "entry",
+    summary = "旧版内联 JSON 上传（已弃用）",
+    description = "兼容旧客户端的已弃用端点；新客户端应使用流式 upload-batches API。",
+    request_body = UploadReq,
     responses(
         (status = 200, body = UploadResult),
         (status = 400),

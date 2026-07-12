@@ -2,7 +2,6 @@
 
 use std::path::{Component, Path as FilePath, PathBuf};
 
-use axum::body::Body;
 use axum::extract::{Path, Request, State};
 use axum::http::{header, StatusCode};
 use axum::Json;
@@ -861,7 +860,9 @@ mod tests {
             );
         }
         assert_eq!(
-            normalize_upload_path("folder\\nested\\file.JSON").unwrap(),
+            normalize_upload_path("folder\\nested\\file.JSON")
+                .ok()
+                .expect("valid upload path"),
             "folder/nested/file.JSON"
         );
     }
