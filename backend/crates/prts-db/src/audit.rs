@@ -199,6 +199,15 @@ pub enum AuditEvent<'a> {
         changed_fields: &'a [&'a str],
         visibility: &'a str,
     },
+    ProjectAvatarUpdated {
+        project_id: i64,
+        content_type: &'a str,
+        encoded_bytes: usize,
+        replaced: bool,
+    },
+    ProjectAvatarDeleted {
+        project_id: i64,
+    },
     ProjectPrimarySourceChanged {
         project_id: i64,
         previous_primary_source: &'a str,
@@ -527,6 +536,29 @@ pub async fn append_event_tx(
                 "changed_fields": changed_fields,
                 "visibility": visibility,
             }),
+        ),
+        AuditEvent::ProjectAvatarUpdated {
+            project_id,
+            content_type,
+            encoded_bytes,
+            replaced,
+        } => (
+            "project.avatar_updated",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "content_type": content_type,
+                "encoded_bytes": encoded_bytes,
+                "replaced": replaced,
+            }),
+        ),
+        AuditEvent::ProjectAvatarDeleted { project_id } => (
+            "project.avatar_deleted",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({}),
         ),
         AuditEvent::ProjectPrimarySourceChanged {
             project_id,

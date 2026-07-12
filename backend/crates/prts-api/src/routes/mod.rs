@@ -12,6 +12,7 @@ pub mod messages;
 pub mod meta;
 pub mod notifications;
 pub mod projects;
+pub mod project_media;
 pub mod search;
 pub mod suggestions;
 pub mod users;
@@ -95,6 +96,9 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
         .routes(routes!(projects::change_primary_source))
+        .routes(routes!(project_media::get_project_avatar))
+        .routes(routes!(project_media::upload_project_avatar))
+        .routes(routes!(project_media::delete_project_avatar))
         .routes(routes!(
             language_resolution::get_project_language_resolution,
             language_resolution::resolve_project_languages
@@ -284,6 +288,8 @@ mod tests {
             ("/projects", "post"),
             ("/projects/{id}", "put"),
             ("/projects/{id}", "delete"),
+            ("/projects/{id}/avatar", "post"),
+            ("/projects/{id}/avatar", "delete"),
             ("/projects/{id}/members", "post"),
             ("/projects/{id}/members/{user_id}", "delete"),
             ("/projects/{id}/files/{file_id}", "delete"),

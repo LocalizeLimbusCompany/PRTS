@@ -15,6 +15,8 @@ pub struct AppState {
     pub cache: Cache,
     /// 运行时配置（只读）。
     pub settings: Arc<Settings>,
+    /// 项目头像等媒体的持久化存储。
+    pub media: Arc<dyn crate::media::MediaStore>,
     /// ZOOT OAuth provider（未配置则为 None）。
     pub zoot: Arc<Option<OAuth2Provider>>,
     /// 实时协作 hub（WebSocket + Redis pub/sub）。

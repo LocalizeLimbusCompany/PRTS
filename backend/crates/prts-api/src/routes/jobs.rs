@@ -361,6 +361,9 @@ mod db_tests {
             db,
             cache,
             settings,
+            media: Arc::new(crate::media::LocalMediaStore::new(
+                std::env::temp_dir().join("prts-test-media"),
+            )),
             zoot: Arc::new(None),
             realtime,
             embedder: Arc::new(None),

@@ -82,6 +82,23 @@
       "languageNotice": "Languages use a dedicated workflow; the target language is locked after the first entry is created.",
       "saved": "Project settings saved"
     },
+    "avatar": {
+      "heading": "Project avatar",
+      "description": "Crop the image in your browser; only the final WebP avatar reaches the server.",
+      "choose": "Choose image",
+      "remove": "Remove avatar",
+      "cropLabel": "Avatar framing",
+      "cropHeading": "Crop to a square",
+      "zoom": "Zoom",
+      "horizontal": "Horizontal position",
+      "vertical": "Vertical position",
+      "outputHint": "Exports a 256 × 256 WebP. The source image is never uploaded.",
+      "useCrop": "Use this avatar",
+      "invalidImage": "This image could not be read. Choose a different file.",
+      "encodeFailed": "The browser could not create a WebP avatar. Try another image or browser.",
+      "updated": "Project avatar updated",
+      "deleted": "Project avatar removed"
+    },
     "language": {
       "heading": "Languages and search indexes",
       "description": "A primary-source change rebuilds lexical search first, then backfills vectors. Search resumes as soon as lexical indexing completes.",

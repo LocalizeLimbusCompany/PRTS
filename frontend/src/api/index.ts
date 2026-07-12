@@ -152,6 +152,18 @@ export const projectsApi = {
     const r = await http.get(`/projects/${id}/export`, { responseType: 'blob' })
     return r.data as Blob
   },
+  async avatar(id: number): Promise<Blob> {
+    const response = await http.get(`/projects/${id}/avatar`, { responseType: 'blob' })
+    return response.data as Blob
+  },
+  uploadAvatar(id: number, avatar: Blob) {
+    return http.post(`/projects/${id}/avatar`, avatar, {
+      headers: { 'Content-Type': 'image/webp' },
+    })
+  },
+  deleteAvatar(id: number) {
+    return http.delete(`/projects/${id}/avatar`)
+  },
 }
 
 /** 上传与词条。 */

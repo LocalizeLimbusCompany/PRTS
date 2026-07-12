@@ -6,8 +6,10 @@ import { useRouter } from 'vue-router'
 
 import { apiErrorMessage, projectsApi } from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
+import AvatarCropDialog from '@/components/project/AvatarCropDialog.vue'
 import LegacyProjectControls from '@/components/project/LegacyProjectControls.vue'
 import LanguageResolutionDialog from '@/components/project/LanguageResolutionDialog.vue'
+import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import { useJobProgress } from '@/composables/useJobProgress'
 import { hasProjectCapability } from '@/lib/capabilities'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
@@ -21,6 +23,9 @@ const form = ref({ name: '', description: '', visibility: 'public' })
 const changingPrimary = ref(false)
 const showResolution = ref(false)
 const languageForm = ref({ source_langs: [] as string[], primary_source_lang: '' })
+const avatarFile = ref<File | null>(null)
+const showAvatarCrop = ref(false)
+const changingAvatar = ref(false)
 
 const lexicalJobId = computed(() => detail.value?.project.lexical_job_id)
 const embeddingJobId = computed(() => detail.value?.project.embedding_job_id)
@@ -103,6 +108,38 @@ async function retryStage(stage: 'lexical' | 'embedding') {
 async function resolvedLanguages() {
   await reload()
 }
+
+function selectAvatar(file: File | null) {
+  avatarFile.value = file
+  showAvatarCrop.value = Boolean(file)
+}
+
+async function uploadAvatar(blob: Blob) {
+  changingAvatar.value = true
+  try {
+    await projectsApi.uploadAvatar(projectId.value, blob)
+    avatarFile.value = null
+    await reload()
+    $q.notify({ type: 'positive', message: t('project.avatar.updated') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    changingAvatar.value = false
+  }
+}
+
+async function deleteAvatar() {
+  changingAvatar.value = true
+  try {
+    await projectsApi.deleteAvatar(projectId.value)
+    await reload()
+    $q.notify({ type: 'positive', message: t('project.avatar.deleted') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    changingAvatar.value = false
+  }
+}
 </script>
 
 <template>
@@ -118,6 +155,44 @@ async function resolvedLanguages() {
     <q-card flat bordered>
       <q-card-section class="manage-view__form">
         <div class="prts-label">{{ $t('project.manage.information') }}</div>
+        <div class="manage-view__avatar">
+          <ProjectAvatar
+            v-if="detail"
+            :project-id="detail.project.id"
+            :name="detail.project.name"
+            :avatar-url="detail.project.avatar_url"
+            :avatar-updated-at="detail.project.avatar_updated_at"
+            size="88px"
+          />
+          <div class="manage-view__avatar-copy">
+            <strong>{{ $t('project.avatar.heading') }}</strong>
+            <span class="prts-dim">{{ $t('project.avatar.description') }}</span>
+            <div class="row q-gutter-sm">
+              <q-file
+                :model-value="avatarFile"
+                class="manage-view__avatar-file"
+                dense
+                outlined
+                accept="image/*"
+                :label="$t('project.avatar.choose')"
+                :disable="changingAvatar"
+                @update:model-value="selectAvatar"
+              >
+                <template #prepend><q-icon name="mdi-image-plus-outline" /></template>
+              </q-file>
+              <q-btn
+                v-if="detail?.project.avatar_url"
+                flat
+                no-caps
+                color="negative"
+                icon="mdi-delete-outline"
+                :label="$t('project.avatar.remove')"
+                :loading="changingAvatar"
+                @click="deleteAvatar"
+              />
+            </div>
+          </div>
+        </div>
         <q-input v-model="form.name" outlined :label="$t('project.manage.name')" />
         <q-input
           :model-value="detail?.project.slug"
@@ -289,6 +364,11 @@ async function resolvedLanguages() {
       :project-id="projectId"
       @resolved="resolvedLanguages"
     />
+    <AvatarCropDialog
+      v-model="showAvatarCrop"
+      :file="avatarFile"
+      @cropped="uploadAvatar"
+    />
   </section>
 </template>
 
@@ -347,9 +427,30 @@ async function resolvedLanguages() {
 }
 
 .manage-view__form > .prts-label,
+.manage-view__avatar,
 .manage-view__description,
 .manage-view__actions {
   grid-column: 1 / -1;
+}
+
+.manage-view__avatar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--prts-border-soft);
+  background: var(--prts-panel-2);
+}
+
+.manage-view__avatar-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 7px;
+}
+
+.manage-view__avatar-file {
+  width: min(360px, 100%);
 }
 
 .manage-view__actions {
@@ -367,6 +468,11 @@ async function resolvedLanguages() {
   .manage-view__stages,
   .manage-view__language-form {
     grid-template-columns: 1fr;
+  }
+
+  .manage-view__avatar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

@@ -82,6 +82,23 @@
       "languageNotice": "语言设置由专用流程管理；项目产生词条后目标语言不可更改。",
       "saved": "项目设置已保存"
     },
+    "avatar": {
+      "heading": "项目头像",
+      "description": "选择图片后在浏览器内裁剪；服务器只接收最终的 WebP 头像。",
+      "choose": "选择图片",
+      "remove": "删除头像",
+      "cropLabel": "头像取景",
+      "cropHeading": "裁剪为正方形",
+      "zoom": "缩放",
+      "horizontal": "水平位置",
+      "vertical": "垂直位置",
+      "outputHint": "输出为 256 × 256 WebP，原图不会上传。",
+      "useCrop": "使用此头像",
+      "invalidImage": "无法读取这张图片，请选择其他文件。",
+      "encodeFailed": "浏览器无法生成 WebP 头像，请更换图片或浏览器。",
+      "updated": "项目头像已更新",
+      "deleted": "项目头像已删除"
+    },
     "language": {
       "heading": "语言与搜索索引",
       "description": "主源变化会先重建词法索引，再回填向量；词法完成后即可恢复搜索。",

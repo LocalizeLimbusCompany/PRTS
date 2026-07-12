@@ -12,6 +12,7 @@ mod error;
 mod job_retry;
 mod job_worker;
 mod jobs;
+mod media;
 mod openapi;
 mod routes;
 mod search_settings_worker;
@@ -125,10 +126,14 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let addr = settings.server.addr();
+    let media = Arc::new(crate::media::LocalMediaStore::new(
+        settings.media.directory.clone(),
+    ));
     let state = AppState {
         db,
         cache,
         settings: Arc::new(settings),
+        media,
         zoot: Arc::new(zoot),
         realtime,
         embedder,

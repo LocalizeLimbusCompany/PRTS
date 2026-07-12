@@ -203,6 +203,42 @@ pub async fn update_tx(
     .await
 }
 
+/// 在调用方事务内更新项目头像元数据。
+pub async fn set_avatar_tx(
+    conn: &mut PgConnection,
+    id: i64,
+    key: &str,
+    content_type: &str,
+) -> Result<Project, sqlx::Error> {
+    sqlx::query_as::<_, Project>(
+        "UPDATE projects
+         SET avatar_key = $2, avatar_content_type = $3, avatar_updated_at = now()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(key)
+    .bind(content_type)
+    .fetch_one(conn)
+    .await
+}
+
+/// 在调用方事务内清除项目头像元数据。
+pub async fn clear_avatar_tx(
+    conn: &mut PgConnection,
+    id: i64,
+) -> Result<Project, sqlx::Error> {
+    sqlx::query_as::<_, Project>(
+        "UPDATE projects
+         SET avatar_key = NULL, avatar_content_type = NULL, avatar_updated_at = now()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .fetch_one(conn)
+    .await
+}
+
 /// 原子切换主源并关联本次词法重建任务。
 pub async fn change_primary_source_tx(
     conn: &mut PgConnection,

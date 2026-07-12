@@ -38,6 +38,7 @@ export interface ProjectDto {
   embedding_job_id: number | null
   embedding_degraded_reason: string | null
   avatar_url: string | null
+  avatar_updated_at: string | null
   owner_id: number
   created_at: string
   updated_at: string

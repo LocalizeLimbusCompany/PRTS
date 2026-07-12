@@ -41,6 +41,7 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true
+image.workspace = true
 
 # OpenAPI / Swagger
 utoipa.workspace = true

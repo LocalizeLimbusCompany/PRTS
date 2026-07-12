@@ -39,6 +39,7 @@ pub struct ProjectDto {
     pub embedding_job_id: Option<i64>,
     pub embedding_degraded_reason: Option<String>,
     pub avatar_url: Option<String>,
+    pub avatar_updated_at: Option<String>,
     pub owner_id: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -70,6 +71,7 @@ impl From<&prts_db::models::Project> for ProjectDto {
                 .avatar_key
                 .as_ref()
                 .map(|_| format!("/api/projects/{}/avatar", p.id)),
+            avatar_updated_at: p.avatar_updated_at.map(|value| value.to_rfc3339()),
             owner_id: p.owner_id,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),

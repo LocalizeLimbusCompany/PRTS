@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 
 import MarkdownView from '@/components/MarkdownView.vue'
+import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import ProjectProgress from '@/components/project/ProjectProgress.vue'
 import { langLabel } from '@/lib/langs'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
@@ -13,9 +14,19 @@ const project = computed(() => detail.value?.project)
 <template>
   <section v-if="detail && project" class="project-info">
     <div class="project-info__lead">
-      <div>
-        <div class="prts-label">{{ $t('project.sections.info') }}</div>
-        <h2 class="project-info__heading">{{ $t('project.infoHeading') }}</h2>
+      <div class="project-info__identity">
+        <ProjectAvatar
+          :project-id="project.id"
+          :name="project.name"
+          :avatar-url="project.avatar_url"
+          :avatar-updated-at="project.avatar_updated_at"
+          size="76px"
+        />
+        <div>
+          <div class="prts-label">{{ $t('project.sections.info') }}</div>
+          <h2 class="project-info__heading">{{ project.name }}</h2>
+          <div class="prts-dim q-mt-xs">{{ $t('project.infoHeading') }}</div>
+        </div>
       </div>
       <div class="project-info__language-flow prts-mono">
         <div>
@@ -83,6 +94,7 @@ const project = computed(() => detail.value?.project)
 }
 
 .project-info__lead,
+.project-info__identity,
 .project-info__language-flow,
 .project-info__tags {
   display: flex;
@@ -92,6 +104,10 @@ const project = computed(() => detail.value?.project)
 .project-info__lead {
   justify-content: space-between;
   gap: 28px;
+}
+
+.project-info__identity {
+  gap: 14px;
 }
 
 .project-info__heading {

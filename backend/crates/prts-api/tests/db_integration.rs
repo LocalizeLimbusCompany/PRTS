@@ -24,6 +24,8 @@ mod job_retry;
 mod job_worker;
 #[path = "../src/jobs/mod.rs"]
 mod jobs;
+#[path = "../src/media.rs"]
+mod media;
 #[path = "../src/search_settings_worker.rs"]
 mod search_settings_worker;
 #[path = "../src/state.rs"]
@@ -49,6 +51,8 @@ mod meta_routes;
 mod notifications_routes;
 #[path = "../src/routes/projects.rs"]
 mod projects_routes;
+#[path = "../src/routes/project_media.rs"]
+mod project_media_routes;
 #[path = "../src/routes/users.rs"]
 mod users_routes;
 
@@ -295,6 +299,16 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         entrypoint: "routes::projects::update_project",
         action: "project.updated",
         allowed_payload_keys: &["changed_fields", "visibility"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::project_media::upload_project_avatar",
+        action: "project.avatar_updated",
+        allowed_payload_keys: &["content_type", "encoded_bytes", "replaced"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::project_media::delete_project_avatar",
+        action: "project.avatar_deleted",
+        allowed_payload_keys: &[],
     },
     AuditedEntrypoint {
         entrypoint: "routes::projects::change_primary_source",
@@ -545,6 +559,20 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "project.avatar_updated",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.avatar_deleted",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "project.primary_source_changed",
         target_type: "project",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -676,6 +704,8 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "projects::create",
     "projects::create_with_primary_tx",
     "projects::update",
+    "projects::set_avatar_tx",
+    "projects::clear_avatar_tx",
     "projects::change_primary_source_tx",
     "projects::delete",
     "files::ensure_file_at_path",
@@ -737,6 +767,7 @@ const UNAUDITED_READS: &[&str] = &[
     "meta::upload_config",
     "projects::list_projects",
     "projects::get_project",
+    "project_media::get_project_avatar",
     "projects::list_members",
     "files::get_tree",
     "entries::list_entries",
@@ -757,7 +788,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        35,
+        37,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -765,11 +796,11 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         16,
         "auth/session writer inventory 发生漂移"
     );
-    assert_eq!(UNAUDITED_READS.len(), 22, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 40, "审计入口 inventory 发生漂移");
+    assert_eq!(UNAUDITED_READS.len(), 23, "普通读取 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 42, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        37,
+        39,
         "action 合同 inventory 发生漂移"
     );
 
@@ -1141,6 +1172,7 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
     let entries_source = include_str!("../src/routes/entries.rs");
     let files_source = include_str!("../src/routes/files.rs");
     let notifications_source = include_str!("../src/routes/notifications.rs");
+    let project_media_source = include_str!("../src/routes/project_media.rs");
     let job_retry_source = include_str!("../src/job_retry.rs");
     for (body, writer) in [
         (
@@ -1174,6 +1206,22 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
                 Some("/// 成员对外表示"),
             ),
             "projects::delete_tx",
+        ),
+        (
+            function_body(
+                project_media_source,
+                "pub async fn upload_project_avatar(",
+                Some("/// 删除项目头像"),
+            ),
+            "projects::set_avatar_tx",
+        ),
+        (
+            function_body(
+                project_media_source,
+                "pub async fn delete_project_avatar(",
+                Some("/// 按项目可见性读取头像"),
+            ),
+            "projects::clear_avatar_tx",
         ),
         (
             function_body(
@@ -1850,6 +1898,9 @@ async fn audit_contract_state_with_db(db: prts_db::Db) -> state::AppState {
         db,
         cache,
         settings,
+        media: Arc::new(media::LocalMediaStore::new(
+            std::env::temp_dir().join(format!("prts-audit-media-{}", audit_jobs_unique("state"))),
+        )),
         zoot: Arc::new(None),
         realtime,
         embedder: Arc::new(None),
@@ -4651,6 +4702,138 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             description_marker,
         ],
     );
+}
+
+/// 项目头像遵循公开/私有可见性，并在替换与删除时同步媒体、元数据和类型化审计。
+#[tokio::test]
+async fn project_avatar_lifecycle_enforces_visibility_and_audits_mutations() {
+    use axum::body::Body;
+    use axum::extract::{Path, State};
+    use axum::http::{header, Request, StatusCode};
+
+    fn webp(red: u8) -> Vec<u8> {
+        let pixels = vec![red, 20, 30, 255].repeat(64 * 64);
+        let mut bytes = Vec::new();
+        image::codecs::webp::WebPEncoder::new_lossless(&mut bytes)
+            .encode(&pixels, 64, 64, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        bytes
+    }
+
+    fn upload_request(bytes: Vec<u8>) -> Request<Body> {
+        Request::builder()
+            .header(header::CONTENT_TYPE, "image/webp")
+            .header(header::CONTENT_LENGTH, bytes.len())
+            .body(Body::from(bytes))
+            .unwrap()
+    }
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "avatar-owner", Some("maintainer")).await;
+    let outsider = audit_contract_create_user(&state.db, "avatar-outsider", None).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Avatar project {}", owner.id),
+            slug: Some(format!("avatar-project-{}", owner.id)),
+            description: None,
+            visibility: Some("public".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建头像测试项目");
+
+    let first = webp(40);
+    let second = webp(180);
+    assert_eq!(
+        project_media_routes::upload_project_avatar(
+            State(state.clone()),
+            Path(project.id),
+            audit_contract_current_user(&owner),
+            upload_request(first.clone()),
+        )
+        .await
+        .expect_api("首次上传头像"),
+        StatusCode::NO_CONTENT
+    );
+    let public_response = project_media_routes::get_project_avatar(
+        State(state.clone()),
+        Path(project.id),
+        auth::MaybeUser(None),
+    )
+    .await
+    .expect_api("公开项目允许游客读取头像");
+    assert_eq!(public_response.status(), StatusCode::OK);
+    assert_eq!(
+        axum::body::to_bytes(public_response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+        first
+    );
+
+    sqlx::query("UPDATE projects SET visibility = 'private' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let hidden = project_media_routes::get_project_avatar(
+        State(state.clone()),
+        Path(project.id),
+        auth::MaybeUser(Some(audit_contract_current_user(&outsider))),
+    )
+    .await
+    .expect_err_api("私有项目对外部用户隐藏头像");
+    assert_eq!(hidden.code(), "not_found");
+
+    project_media_routes::upload_project_avatar(
+        State(state.clone()),
+        Path(project.id),
+        audit_contract_current_user(&owner),
+        upload_request(second.clone()),
+    )
+    .await
+    .expect_api("替换项目头像");
+    assert_eq!(
+        state
+            .media
+            .read(&media::project_avatar_key(project.id))
+            .await
+            .unwrap(),
+        second
+    );
+    project_media_routes::delete_project_avatar(
+        State(state.clone()),
+        Path(project.id),
+        audit_contract_current_user(&owner),
+    )
+    .await
+    .expect_api("删除项目头像");
+    let stored = projects::find_by_id(&state.db, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.avatar_key.is_none());
+    assert!(state
+        .media
+        .read(&media::project_avatar_key(project.id))
+        .await
+        .is_err());
+
+    let rows = audit_contract_rows_for_actor(&state.db, owner.id).await;
+    let avatar_rows: Vec<_> = rows
+        .iter()
+        .filter(|row| row.action.starts_with("project.avatar_"))
+        .collect();
+    assert_eq!(avatar_rows.len(), 3);
+    assert_eq!(avatar_rows[0].action, "project.avatar_updated");
+    assert_eq!(avatar_rows[0].payload["replaced"], false);
+    assert_eq!(avatar_rows[1].action, "project.avatar_updated");
+    assert_eq!(avatar_rows[1].payload["replaced"], true);
+    assert_eq!(avatar_rows[2].action, "project.avatar_deleted");
 }
 
 /// 主源切换只允许唯一 owner；相同值无副作用，真实变化原子创建 job、状态和审计并启动七天冷却。

@@ -22,7 +22,7 @@ prts-search = { path = "crates/prts-search" }
 prts-realtime = { path = "crates/prts-realtime" }
 
 # —— 运行时 / Web ——
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "sync", "time", "fs"] }
 axum = { version = "0.8", features = ["ws"] }
 tower = { version = "0.5", features = ["util"] }
 futures-util = "0.3"
@@ -76,6 +76,7 @@ reqwest = { version = "0.12", features = ["json"] }
 url = "2"
 # 项目导出打包
 zip = { version = "2", default-features = false, features = ["deflate"] }
+image = { version = "=0.25.5", default-features = false, features = ["webp"] }
 
 [profile.release]
 opt-level = 3

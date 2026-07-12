@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 
 import { apiErrorMessage, projectsApi, type ProjectDetailDto } from '@/api'
+import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import { hasProjectCapability } from '@/lib/capabilities'
 import {
   PROJECT_WORKSPACE_SECTIONS,
@@ -60,10 +61,12 @@ watch(() => props.id, load)
     <template v-if="detail">
       <header class="project-shell__masthead">
         <div class="project-shell__identity">
-          <q-avatar square size="54px" class="project-shell__avatar">
-            <img v-if="detail.project.avatar_url" :src="detail.project.avatar_url" alt="" />
-            <span v-else>{{ detail.project.name.slice(0, 2).toUpperCase() }}</span>
-          </q-avatar>
+          <ProjectAvatar
+            :project-id="detail.project.id"
+            :name="detail.project.name"
+            :avatar-url="detail.project.avatar_url"
+            :avatar-updated-at="detail.project.avatar_updated_at"
+          />
           <div class="project-shell__title">
             <div class="prts-label">// {{ detail.project.slug }}</div>
             <div class="row items-center q-gutter-sm">
@@ -138,15 +141,6 @@ watch(() => props.id, load)
   align-items: center;
   min-width: 0;
   gap: 14px;
-}
-
-.project-shell__avatar {
-  flex: 0 0 auto;
-  border: 1px solid var(--prts-border);
-  background: var(--prts-panel-2);
-  color: var(--prts-accent);
-  font-family: var(--font-mono);
-  font-size: 16px;
 }
 
 .project-shell__title {
