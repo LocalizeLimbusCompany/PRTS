@@ -4710,6 +4710,7 @@ async fn project_avatar_lifecycle_enforces_visibility_and_audits_mutations() {
     use axum::body::Body;
     use axum::extract::{Path, State};
     use axum::http::{header, Request, StatusCode};
+    use axum::Json;
 
     fn webp(red: u8) -> Vec<u8> {
         let pixels = vec![red, 20, 30, 255].repeat(64 * 64);
