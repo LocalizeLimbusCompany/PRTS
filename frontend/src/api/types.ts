@@ -31,8 +31,12 @@ export interface ProjectDto {
   target_lang: string
   language_repair_state: string
   primary_source_changed_at: string | null
+  primary_source_cooldown_until: string | null
   lexical_state: string
+  lexical_job_id: number | null
   embedding_state: string
+  embedding_job_id: number | null
+  embedding_degraded_reason: string | null
   avatar_url: string | null
   owner_id: number
   created_at: string
@@ -149,6 +153,26 @@ export interface JobDto {
   started_at: string | null
   finished_at: string | null
   updated_at: string
+}
+
+export interface LanguageIssueDto {
+  id: number
+  entity_type: string
+  entity_id: string
+  issue_kind: string
+  raw_tag: string | null
+  canonical_tag: string | null
+  metadata: Record<string, unknown>
+  current_values: string[]
+}
+
+export interface ProjectLanguageResolutionDto {
+  project_id: number
+  source_langs: string[]
+  primary_source_lang: string | null
+  target_lang: string
+  state: string
+  issues: LanguageIssueDto[]
 }
 
 export interface ApiKeyDto {

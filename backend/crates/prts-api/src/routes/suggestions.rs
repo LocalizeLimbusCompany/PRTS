@@ -74,6 +74,15 @@ pub async fn entry_suggestions(
     // 校验对当前项目的访问权限（私有项目对游客返回 404）。
     let access = paccess::load(&state, user.as_ref(), id).await?;
     access.require_view()?;
+    access.require_language_ready()?;
+    if access.project.lexical_state != "ready" {
+        let code = if access.project.lexical_state == "failed" {
+            "project_lexical_rebuild_failed"
+        } else {
+            "project_lexical_rebuild_in_progress"
+        };
+        return Err(prts_common::Error::bad_request(code).into());
+    }
 
     let cfg = state.search_rt.read().await.clone();
 

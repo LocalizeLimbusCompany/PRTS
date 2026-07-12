@@ -57,6 +57,38 @@ pub async fn create_tx(
     .await
 }
 
+/// 在调用方事务内以显式 canonical 主源创建项目。
+#[allow(clippy::too_many_arguments)]
+pub async fn create_with_primary_tx(
+    conn: &mut PgConnection,
+    slug: &str,
+    name: &str,
+    description: &str,
+    visibility: &str,
+    source_langs: &[String],
+    primary_source_lang: &str,
+    target_lang: &str,
+    owner_id: i64,
+) -> Result<Project, sqlx::Error> {
+    sqlx::query_as::<_, Project>(
+        "INSERT INTO projects (
+             slug, name, description, visibility, source_langs,
+             primary_source_lang, target_lang, owner_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *",
+    )
+    .bind(slug)
+    .bind(name)
+    .bind(description)
+    .bind(visibility)
+    .bind(source_langs)
+    .bind(primary_source_lang)
+    .bind(target_lang)
+    .bind(owner_id)
+    .fetch_one(conn)
+    .await
+}
+
 /// 按 id 查找。
 pub async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Project>, sqlx::Error> {
     sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = $1")
@@ -167,6 +199,31 @@ pub async fn update_tx(
     .bind(visibility)
     .bind(source_langs)
     .bind(target_lang)
+    .fetch_one(conn)
+    .await
+}
+
+/// 原子切换主源并关联本次词法重建任务。
+pub async fn change_primary_source_tx(
+    conn: &mut PgConnection,
+    id: i64,
+    source_langs: &[String],
+    primary_source_lang: &str,
+    lexical_job_id: i64,
+) -> Result<Project, sqlx::Error> {
+    sqlx::query_as::<_, Project>(
+        "UPDATE projects
+         SET source_langs = $2, primary_source_lang = $3,
+             primary_source_changed_at = now(),
+             lexical_state = 'rebuilding', lexical_job_id = $4,
+             embedding_state = 'pending', embedding_job_id = NULL
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(id)
+    .bind(source_langs)
+    .bind(primary_source_lang)
+    .bind(lexical_job_id)
     .fetch_one(conn)
     .await
 }

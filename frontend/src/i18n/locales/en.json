@@ -79,8 +79,28 @@
       "information": "Basic information",
       "name": "Project name",
       "descriptionPlaceholder": "Describe the project, translation guidelines, and how to contribute…",
-      "languageNotice": "Primary source language settings will open after the rebuild service is ready.",
+      "languageNotice": "Languages use a dedicated workflow; the target language is locked after the first entry is created.",
       "saved": "Project settings saved"
+    },
+    "language": {
+      "heading": "Languages and search indexes",
+      "description": "A primary-source change rebuilds lexical search first, then backfills vectors. Search resumes as soon as lexical indexing completes.",
+      "lexical": "Lexical index",
+      "embedding": "Vector index",
+      "retry": "Retry this stage",
+      "changeAction": "Change primary source",
+      "changeQueued": "Primary source updated and rebuild queued",
+      "cooldownHint": "A real change starts a seven-day cooldown.",
+      "cooldownUntil": "Cooldown ends: {time}",
+      "resolutionLabel": "Language repair",
+      "resolutionHeading": "Resolve legacy project language ambiguity",
+      "resolutionDescription": "Choose the canonical language and retained source value for every ambiguous item. Lexical rebuilding starts after submission.",
+      "canonicalTag": "Canonical BCP-47 language tag",
+      "selectedValue": "Source value to retain",
+      "resolveAction": "Resolve language issues",
+      "reasons": {
+        "embedding_provider_unconfigured": "No vector provider is configured; lexical search remains available."
+      }
     },
     "legacy": {
       "notice": "File upload, membership, and deletion controls below will move into their dedicated management modules.",

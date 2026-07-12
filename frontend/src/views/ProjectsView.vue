@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 
@@ -35,9 +35,21 @@ const form = ref({
   slug: '',
   description: '',
   source_langs: ['en'] as string[],
+  primary_source_lang: 'en',
   target_lang: 'zh-Hans',
 })
 const isPrivate = ref(false)
+const primaryOptions = computed(() => form.value.source_langs)
+
+watch(
+  () => form.value.source_langs,
+  (languages) => {
+    if (languages.length === 1 || !languages.includes(form.value.primary_source_lang)) {
+      form.value.primary_source_lang = languages[0] ?? ''
+    }
+  },
+  { deep: true },
+)
 
 async function create() {
   if (!form.value.name.trim() || !form.value.target_lang) return
@@ -49,6 +61,7 @@ async function create() {
       description: form.value.description.trim(),
       visibility: isPrivate.value ? 'private' : 'public',
       source_langs: form.value.source_langs,
+      primary_source_lang: form.value.primary_source_lang,
       target_lang: form.value.target_lang,
     })
     showCreate.value = false
@@ -174,6 +187,16 @@ async function create() {
             :options="COMMON_LANGS"
             :option-label="langLabel"
             label="源语言（可多选 / 自定义 BCP-47）"
+            :disable="creating"
+          />
+          <q-select
+            v-if="form.source_langs.length > 1"
+            v-model="form.primary_source_lang"
+            outlined
+            dense
+            emit-value
+            :options="primaryOptions"
+            :label="$t('project.primarySource')"
             :disable="creating"
           />
           <q-select

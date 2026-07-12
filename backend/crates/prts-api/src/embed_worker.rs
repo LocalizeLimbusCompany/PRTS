@@ -25,9 +25,14 @@ pub fn spawn(db: PgPool, embedder: Arc<Option<QwenProvider>>, rt: Arc<RwLock<Sea
                 }
             };
             let rows: Vec<(i64, String)> = match sqlx::query_as(
-                "SELECT id, source_text FROM entries
-                 WHERE embedding IS NULL AND source_text <> '' AND embed_attempts < $1
-                 ORDER BY id LIMIT $2",
+                "SELECT entry.id, entry.source_text FROM entries AS entry
+                 JOIN projects AS project ON project.id = entry.project_id
+                 WHERE entry.embedding IS NULL AND entry.source_text <> ''
+                   AND entry.embed_attempts < $1
+                   AND project.language_repair_state = 'ready'
+                   AND project.lexical_state = 'ready'
+                   AND project.embedding_job_id IS NULL
+                 ORDER BY entry.id LIMIT $2",
             )
             .bind(MAX_ATTEMPTS)
             .bind(SELECT_LIMIT)

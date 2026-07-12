@@ -84,6 +84,14 @@ pub async fn search_entries(
     let access = paccess::load(&state, user.as_ref(), id).await?;
     access.require_view()?;
     access.require_language_ready()?;
+    if access.project.lexical_state != "ready" {
+        let code = if access.project.lexical_state == "failed" {
+            "project_lexical_rebuild_failed"
+        } else {
+            "project_lexical_rebuild_in_progress"
+        };
+        return Err(Error::bad_request(code).into());
+    }
 
     // 2. 确定主查询词；q 为空则 400
     let main_q =

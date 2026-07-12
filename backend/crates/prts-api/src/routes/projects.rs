@@ -32,8 +32,12 @@ pub struct ProjectDto {
     pub target_lang: String,
     pub language_repair_state: String,
     pub primary_source_changed_at: Option<String>,
+    pub primary_source_cooldown_until: Option<String>,
     pub lexical_state: String,
+    pub lexical_job_id: Option<i64>,
     pub embedding_state: String,
+    pub embedding_job_id: Option<i64>,
+    pub embedding_degraded_reason: Option<String>,
     pub avatar_url: Option<String>,
     pub owner_id: i64,
     pub created_at: String,
@@ -53,8 +57,15 @@ impl From<&prts_db::models::Project> for ProjectDto {
             target_lang: p.target_lang.clone(),
             language_repair_state: p.language_repair_state.clone(),
             primary_source_changed_at: p.primary_source_changed_at.map(|value| value.to_rfc3339()),
+            primary_source_cooldown_until: p
+                .primary_source_changed_at
+                .map(|value| (value + chrono::Duration::days(7)).to_rfc3339()),
             lexical_state: p.lexical_state.clone(),
+            lexical_job_id: p.lexical_job_id,
             embedding_state: p.embedding_state.clone(),
+            embedding_job_id: p.embedding_job_id,
+            embedding_degraded_reason: (p.embedding_state == "degraded")
+                .then(|| "embedding_provider_unconfigured".to_string()),
             avatar_url: p
                 .avatar_key
                 .as_ref()
@@ -125,6 +136,8 @@ pub struct CreateProjectReq {
     #[serde(default)]
     pub visibility: Option<String>,
     pub source_langs: Vec<String>,
+    /// 多源项目必须显式提交；单源项目可省略。
+    pub primary_source_lang: Option<String>,
     pub target_lang: String,
 }
 
@@ -147,13 +160,19 @@ pub async fn create_project(
     if name.is_empty() || name.len() > 128 {
         return Err(Error::bad_request("项目名需为 1–128 字符").into());
     }
-    let (source_langs, _primary_source_lang, target_lang) =
+    let (source_langs, primary_source_lang, target_lang) =
         prts_core::language::canonicalize_project_languages(
             &req.source_langs,
-            req.source_langs.first().map(String::as_str),
+            req.primary_source_lang.as_deref(),
             &req.target_lang,
         )
         .map_err(language_error)?;
+    let release_ready = prts_db::foundation::primary_source_release_ready(&state.db)
+        .await
+        .map_err(db_err)?;
+    if source_langs.len() > 1 && primary_source_lang != source_langs[0] && !release_ready {
+        return Err(Error::bad_request("primary_source_release_not_ready").into());
+    }
     let base = req
         .slug
         .as_deref()
@@ -167,13 +186,14 @@ pub async fn create_project(
     };
 
     let mut tx = state.db.begin().await.map_err(db_err)?;
-    let project = prts_db::projects::create_tx(
+    let project = prts_db::projects::create_with_primary_tx(
         &mut tx,
         &slug,
         name,
         req.description.as_deref().unwrap_or(""),
         visibility,
         &source_langs,
+        &primary_source_lang,
         &target_lang,
         user.id,
     )
@@ -258,7 +278,10 @@ pub async fn get_project(
     state_counts.insert("questioned".to_string(), stats.questioned_count);
     state_counts.insert("checked".to_string(), stats.checked_count);
     state_counts.insert("reviewed".to_string(), stats.reviewed_count);
-    let capabilities = access.capabilities(false).into();
+    let release_ready = prts_db::foundation::primary_source_release_ready(&state.db)
+        .await
+        .map_err(db_err)?;
+    let capabilities = access.capabilities(release_ready).into();
 
     Ok(Json(ProjectDetailDto {
         project: (&access.project).into(),
@@ -276,6 +299,162 @@ pub struct UpdateProjectReq {
     pub visibility: Option<String>,
     pub source_langs: Option<Vec<String>>,
     pub target_lang: Option<String>,
+}
+
+/// 主源语言切换请求。移除当前主源时必须在同一请求中提交替代后的完整源语言集合。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ChangePrimarySourceReq {
+    pub source_langs: Vec<String>,
+    pub primary_source_lang: String,
+}
+
+/// 切换项目主源，并原子排队词法重建任务。只有 `projects.owner_id` 指向的拥有者可调用。
+#[utoipa::path(
+    put,
+    path = "/projects/{id}/primary-source",
+    tag = "project",
+    request_body = ChangePrimarySourceReq,
+    responses(
+        (status = 200, description = "主源未变化或已排队重建", body = ProjectDto),
+        (status = 400, description = "语言、冷却或重建状态不允许变化", body = ErrorResponse),
+        (status = 403, description = "仅项目唯一拥有者可更改", body = ErrorResponse),
+        (status = 404, description = "项目不存在", body = ErrorResponse),
+        (status = 503, description = "foundation 或审计不可用，项目未变化", body = ErrorResponse)
+    )
+)]
+pub async fn change_primary_source(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<ChangePrimarySourceReq>,
+) -> Result<Json<ProjectDto>, ApiError> {
+    let release_ready = prts_db::foundation::primary_source_release_ready(&state.db)
+        .await
+        .map_err(db_err)?;
+    if !release_ready {
+        return Err(Error::bad_request("primary_source_release_not_ready").into());
+    }
+    let source_langs =
+        prts_core::canonicalize_language_tags(&req.source_langs).map_err(language_error)?;
+    if source_langs.is_empty() {
+        return Err(language_error(
+            prts_core::LanguageTagError::EmptySourceLanguages,
+        ));
+    }
+    let primary_source_lang =
+        prts_core::canonicalize_language_tag(&req.primary_source_lang).map_err(language_error)?;
+    if !source_langs.contains(&primary_source_lang) {
+        return Err(language_error(
+            prts_core::LanguageTagError::PrimaryNotInSourceLanguages,
+        ));
+    }
+
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let before = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    let locked_access = paccess::load_locked_tx(&mut tx, &user, before.clone()).await?;
+    if user.id != before.owner_id {
+        return Err(Error::Forbidden.into());
+    }
+    if before.language_repair_state != "ready" {
+        return Err(Error::ProjectLanguageResolutionRequired.into());
+    }
+    let previous_primary = before
+        .primary_source_lang
+        .as_deref()
+        .ok_or(Error::ProjectLanguageResolutionRequired)?;
+    if previous_primary == primary_source_lang {
+        tx.rollback().await.map_err(db_err)?;
+        return Ok(Json((&before).into()));
+    }
+    locked_access.require_node(nodes::PROJECT_MANAGE)?;
+
+    let cooldown_active = before
+        .primary_source_changed_at
+        .is_some_and(|changed_at| changed_at + chrono::Duration::days(7) > chrono::Utc::now());
+    let lexical_job_state = match before.lexical_job_id {
+        Some(job_id) => prts_db::jobs::find_by_id_for_update_tx(&mut tx, job_id)
+            .await
+            .map_err(db_err)?
+            .map(|job| job.state),
+        None => None,
+    };
+    let embedding_job_state = match before.embedding_job_id {
+        Some(job_id) => prts_db::jobs::find_by_id_for_update_tx(&mut tx, job_id)
+            .await
+            .map_err(db_err)?
+            .map(|job| job.state),
+        None => None,
+    };
+    prts_core::project_language::validate_primary_source_change(
+        release_ready,
+        true,
+        true,
+        cooldown_active,
+        lexical_job_state.as_deref(),
+        embedding_job_state.as_deref(),
+    )
+    .map_err(primary_source_change_error)?;
+
+    let entry_count = prts_db::entries::count_project_entries_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?;
+    let lexical_job = prts_db::jobs::create_tx(
+        &mut tx,
+        prts_db::jobs::NewJob {
+            kind: prts_db::jobs::JobKind::PrimarySourceLexicalReindex,
+            project_id: Some(id),
+            stage: "lexical".to_string(),
+            progress_total: Some(entry_count),
+            max_attempts: 5,
+            run_after: chrono::Utc::now(),
+        },
+    )
+    .await
+    .map_err(db_err)?;
+    let updated = prts_db::projects::change_primary_source_tx(
+        &mut tx,
+        id,
+        &source_langs,
+        &primary_source_lang,
+        lexical_job.id,
+    )
+    .await
+    .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ProjectPrimarySourceChanged {
+            project_id: id,
+            previous_primary_source: previous_primary,
+            new_primary_source: &primary_source_lang,
+            source_language_count: source_langs.len(),
+            lexical_job_id: lexical_job.id,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    state.job_worker.wake();
+    Ok(Json((&updated).into()))
+}
+
+fn primary_source_change_error(
+    error: prts_core::project_language::PrimarySourceChangeError,
+) -> ApiError {
+    match error {
+        prts_core::project_language::PrimarySourceChangeError::NotOwner => Error::Forbidden.into(),
+        prts_core::project_language::PrimarySourceChangeError::LanguageResolutionRequired => {
+            Error::ProjectLanguageResolutionRequired.into()
+        }
+        _ => Error::bad_request(error.code()).into(),
+    }
 }
 
 /// 更新项目元信息。需项目「管理」权限。
@@ -326,6 +505,14 @@ pub async fn update_project(
             &requested_target_lang,
         )
         .map_err(language_error)?;
+    if target_lang != before.target_lang
+        && prts_db::entries::count_project_entries_tx(&mut tx, id)
+            .await
+            .map_err(db_err)?
+            > 0
+    {
+        return Err(Error::bad_request("target_language_locked_after_first_entry").into());
+    }
     if before.language_repair_state != "ready" {
         return Err(Error::ProjectLanguageResolutionRequired.into());
     }

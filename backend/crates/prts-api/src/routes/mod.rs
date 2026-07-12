@@ -94,6 +94,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
+        .routes(routes!(projects::change_primary_source))
         .routes(routes!(
             language_resolution::get_project_language_resolution,
             language_resolution::resolve_project_languages

@@ -12,6 +12,7 @@ pub mod entry;
 pub mod jobs;
 pub mod language;
 pub mod permission;
+pub mod project_language;
 
 pub use entry::{EntryFlags, EntryState};
 pub use jobs::JobState;

@@ -154,8 +154,9 @@ async fn persist_failure(
     let retry_after = prts_core::jobs::retry_backoff_seconds(job.attempts);
     let retryable = error.retryable;
     let (error_code, error_message) = normalize_execution_error(error);
-    prts_db::jobs::fail_attempt(
-        db,
+    let mut tx = db.begin().await?;
+    let failed_job = prts_db::jobs::fail_attempt_tx(
+        &mut tx,
         job.id,
         worker_id,
         error_code,
@@ -164,6 +165,32 @@ async fn persist_failure(
         retry_after,
     )
     .await?;
+    if let Some(failed_job) = failed_job.filter(|updated| updated.state == "failed") {
+        match failed_job.kind.as_str() {
+            "primary_source_lexical_reindex" => {
+                sqlx::query(
+                    "UPDATE projects SET lexical_state = 'failed'
+                     WHERE id = $1 AND lexical_job_id = $2",
+                )
+                .bind(failed_job.project_id)
+                .bind(failed_job.id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            "primary_source_embedding_backfill" => {
+                sqlx::query(
+                    "UPDATE projects SET embedding_state = 'failed'
+                     WHERE id = $1 AND embedding_job_id = $2",
+                )
+                .bind(failed_job.project_id)
+                .bind(failed_job.id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            _ => {}
+        }
+    }
+    tx.commit().await?;
     Ok(())
 }
 

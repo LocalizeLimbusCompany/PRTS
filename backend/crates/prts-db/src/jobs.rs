@@ -415,6 +415,30 @@ pub async fn fail_attempt(
     retryable: bool,
     retry_after_seconds: i64,
 ) -> Result<Option<Job>, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    fail_attempt_tx(
+        &mut connection,
+        id,
+        worker_id,
+        error_code,
+        error_message,
+        retryable,
+        retry_after_seconds,
+    )
+    .await
+}
+
+/// 在调用方事务内记录执行错误，供业务阶段状态与 job 同步提交。
+#[allow(clippy::too_many_arguments)]
+pub async fn fail_attempt_tx(
+    conn: &mut PgConnection,
+    id: i64,
+    worker_id: &str,
+    error_code: &str,
+    error_message: &str,
+    retryable: bool,
+    retry_after_seconds: i64,
+) -> Result<Option<Job>, sqlx::Error> {
     sqlx::query_as(
         "UPDATE jobs
          SET state = CASE
@@ -443,7 +467,7 @@ pub async fn fail_attempt(
     .bind(error_message)
     .bind(retryable)
     .bind(retry_after_seconds.max(0) as f64)
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await
 }
 

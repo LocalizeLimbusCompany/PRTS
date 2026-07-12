@@ -79,8 +79,28 @@
       "information": "基本信息",
       "name": "项目名称",
       "descriptionPlaceholder": "介绍项目背景、翻译规范和参与方式……",
-      "languageNotice": "主源语言设置将在重建服务就绪后开放。",
+      "languageNotice": "语言设置由专用流程管理；项目产生词条后目标语言不可更改。",
       "saved": "项目设置已保存"
+    },
+    "language": {
+      "heading": "语言与搜索索引",
+      "description": "主源变化会先重建词法索引，再回填向量；词法完成后即可恢复搜索。",
+      "lexical": "词法索引",
+      "embedding": "向量索引",
+      "retry": "重试此阶段",
+      "changeAction": "更改主源语言",
+      "changeQueued": "主源语言已更新，重建任务已排队",
+      "cooldownHint": "真实变化后 7 天内不能再次更改。",
+      "cooldownUntil": "冷却截止：{time}",
+      "resolutionLabel": "语言修复",
+      "resolutionHeading": "解决旧项目语言歧义",
+      "resolutionDescription": "请为每个歧义项明确规范语言与保留的原文值。提交后将启动词法重建。",
+      "canonicalTag": "规范 BCP-47 语言码",
+      "selectedValue": "保留的原文值",
+      "resolveAction": "解决语言问题",
+      "reasons": {
+        "embedding_provider_unconfigured": "向量服务未配置，已降级为词法搜索。"
+      }
     },
     "legacy": {
       "notice": "以下文件上传、成员和删除控件将在对应管理模块完成后迁移。",

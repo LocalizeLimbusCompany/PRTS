@@ -40,6 +40,17 @@ pub struct EntryFilter {
     pub include_hidden: bool,
 }
 
+/// 在低频项目重建事务内统计全部词条，作为一次性 job 进度基线。
+pub async fn count_project_entries_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT count(*) FROM entries WHERE project_id = $1")
+        .bind(project_id)
+        .fetch_one(conn)
+        .await
+}
+
 fn normalize_state(s: Option<&str>) -> &'static str {
     match s {
         Some("translated") => "translated",

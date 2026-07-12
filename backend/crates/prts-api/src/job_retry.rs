@@ -56,6 +56,31 @@ pub(crate) async fn retry_job(
         .await
         .map_err(db_err)?
         .ok_or_else(|| Error::bad_request("job state changed; retry rejected"))?;
+    match updated.kind.as_str() {
+        "primary_source_lexical_reindex" => {
+            sqlx::query(
+                "UPDATE projects SET lexical_state = 'rebuilding'
+                 WHERE id = $1 AND lexical_job_id = $2",
+            )
+            .bind(project_id)
+            .bind(updated.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        "primary_source_embedding_backfill" => {
+            sqlx::query(
+                "UPDATE projects SET embedding_state = 'running'
+                 WHERE id = $1 AND embedding_job_id = $2",
+            )
+            .bind(project_id)
+            .bind(updated.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+        _ => {}
+    }
     prts_db::audit::append_job_retried_tx(
         &mut tx,
         prts_db::audit::AuditActor {

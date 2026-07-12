@@ -7,6 +7,7 @@ import type {
   ExternalAccountDto,
   MemberDto,
   JobDto,
+  ProjectLanguageResolutionDto,
   MessageDto,
   NotificationDto,
   ThreadDto,
@@ -45,6 +46,9 @@ export const authApi = {
 export const jobsApi = {
   get(id: number) {
     return http.get<JobDto>(`/jobs/${id}`).then((response) => response.data)
+  },
+  retry(id: number) {
+    return http.post<JobDto>(`/jobs/${id}/retry`).then((response) => response.data)
   },
 }
 
@@ -89,6 +93,7 @@ export const projectsApi = {
     description?: string
     visibility?: string
     source_langs: string[]
+    primary_source_lang?: string
     target_lang: string
   }) {
     return http.post<ProjectDto>('/projects', body).then((r) => r.data)
@@ -98,6 +103,29 @@ export const projectsApi = {
   },
   update(id: number, body: Record<string, unknown>) {
     return http.put<ProjectDto>(`/projects/${id}`, body).then((r) => r.data)
+  },
+  changePrimarySource(id: number, body: { source_langs: string[]; primary_source_lang: string }) {
+    return http.put<ProjectDto>(`/projects/${id}/primary-source`, body).then((r) => r.data)
+  },
+  languageResolution(id: number) {
+    return http
+      .get<ProjectLanguageResolutionDto>(`/projects/${id}/language-resolution`)
+      .then((r) => r.data)
+  },
+  resolveLanguages(
+    id: number,
+    body: {
+      source_langs: string[]
+      primary_source_lang: string
+      target_lang: string
+      issues: Array<{
+        issue_id: number
+        canonical_tag?: string
+        selected_value?: string
+      }>
+    },
+  ) {
+    return http.post(`/projects/${id}/language-resolution/resolve`, body)
   },
   remove(id: number) {
     return http.delete(`/projects/${id}`)

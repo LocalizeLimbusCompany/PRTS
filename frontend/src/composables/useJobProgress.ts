@@ -46,6 +46,23 @@ export function useJobProgress(jobId: MaybeRefOrGetter<number | null | undefined
     }
   }
 
+  async function retry() {
+    const id = toValue(jobId)
+    if (!id) return
+    stop()
+    loading.value = true
+    error.value = null
+    try {
+      job.value = await jobsApi.retry(id)
+      timer = setTimeout(() => void refresh(), intervalMs)
+    } catch (reason) {
+      error.value = reason
+      throw reason
+    } finally {
+      loading.value = false
+    }
+  }
+
   watch(
     () => toValue(jobId),
     (id) => {
@@ -58,5 +75,5 @@ export function useJobProgress(jobId: MaybeRefOrGetter<number | null | undefined
   )
   onScopeDispose(stop)
 
-  return { job, loading, error, progress, active, refresh, stop }
+  return { job, loading, error, progress, active, refresh, retry, stop }
 }

@@ -8,6 +8,7 @@ pub mod audit;
 pub mod auth_sessions;
 pub mod entries;
 pub mod files;
+pub mod foundation;
 pub mod jobs;
 pub mod language_resolution;
 pub mod memberships;

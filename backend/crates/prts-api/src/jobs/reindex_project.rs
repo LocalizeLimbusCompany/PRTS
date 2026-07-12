@@ -30,7 +30,12 @@ impl JobHandler for ReindexProjectHandler {
     ) -> BoxFuture<'a, Result<JobResult, JobExecutionError>> {
         Box::pin(async move {
             let project_id = job.project_id.ok_or_else(invalid_payload)?;
-            let mut cursor = 0i64;
+            let mut cursor = job
+                .payload
+                .get("cursor")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let mut processed = job.progress_current;
             loop {
                 let mut tx = self.db.begin().await.map_err(|_| database_error())?;
                 let ids: Vec<i64> = sqlx::query_scalar(
@@ -56,10 +61,16 @@ impl JobHandler for ReindexProjectHandler {
                 .await
                 .map_err(|_| database_error())?;
                 cursor = *ids.last().ok_or_else(invalid_payload)?;
+                processed += ids.len() as i64;
                 sqlx::query(
-                    "UPDATE jobs SET stage = 'lexical', progress_current = $2 WHERE id = $1",
+                    "UPDATE jobs
+                     SET stage = 'lexical', progress_current = $2,
+                         payload = jsonb_set(payload, '{cursor}', to_jsonb($3::BIGINT), TRUE),
+                         updated_at = now()
+                     WHERE id = $1",
                 )
                 .bind(job.id)
+                .bind(processed)
                 .bind(cursor)
                 .execute(&mut *tx)
                 .await
@@ -81,11 +92,15 @@ impl JobHandler for ReindexProjectHandler {
             {
                 Some(existing_id) => existing_id,
                 None => sqlx::query_scalar(
-                    "INSERT INTO jobs (kind, project_id, stage, payload, max_attempts)
-                     VALUES ('primary_source_embedding_backfill', $1, 'embedding', '{}', 5)
+                    "INSERT INTO jobs (
+                         kind, project_id, stage, payload, progress_total, max_attempts
+                     ) VALUES (
+                         'primary_source_embedding_backfill', $1, 'embedding', '{}', $2, 5
+                     )
                      RETURNING id",
                 )
                 .bind(project_id)
+                .bind(job.progress_total)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|_| database_error())?,
@@ -170,7 +185,12 @@ impl JobHandler for EmbeddingBackfillHandler {
                 .map_err(|_| database_error())?;
             tx.commit().await.map_err(|_| database_error())?;
 
-            let mut cursor = 0i64;
+            let mut cursor = job
+                .payload
+                .get("cursor")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0);
+            let mut processed = job.progress_current;
             loop {
                 let rows: Vec<(i64, String)> = sqlx::query_as(
                     "SELECT id, source_text FROM entries
@@ -223,10 +243,16 @@ impl JobHandler for EmbeddingBackfillHandler {
                         .last()
                         .map(|(entry_id, _)| *entry_id)
                         .unwrap_or(cursor);
+                    processed += chunk.len() as i64;
                     sqlx::query(
-                        "UPDATE jobs SET progress_current = $2, stage = 'embedding' WHERE id = $1",
+                        "UPDATE jobs
+                         SET progress_current = $2, stage = 'embedding',
+                             payload = jsonb_set(payload, '{cursor}', to_jsonb($3::BIGINT), TRUE),
+                             updated_at = now()
+                         WHERE id = $1",
                     )
                     .bind(job.id)
+                    .bind(processed)
                     .bind(cursor)
                     .execute(&mut *tx)
                     .await

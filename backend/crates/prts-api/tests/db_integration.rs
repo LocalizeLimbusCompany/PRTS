@@ -297,6 +297,16 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         allowed_payload_keys: &["changed_fields", "visibility"],
     },
     AuditedEntrypoint {
+        entrypoint: "routes::projects::change_primary_source",
+        action: "project.primary_source_changed",
+        allowed_payload_keys: &[
+            "previous_primary_source",
+            "new_primary_source",
+            "source_language_count",
+            "lexical_job_id",
+        ],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::language_resolution::resolve_project_languages",
         action: "project.language_resolution_completed",
         allowed_payload_keys: &[
@@ -535,6 +545,13 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "project.primary_source_changed",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "project.language_resolution_completed",
         target_type: "project",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -657,7 +674,9 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "users::mark_email_verified",
     "users::create_oauth_user",
     "projects::create",
+    "projects::create_with_primary_tx",
     "projects::update",
+    "projects::change_primary_source_tx",
     "projects::delete",
     "files::ensure_file_at_path",
     "files::get_or_create_folder",
@@ -738,7 +757,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        33,
+        35,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -747,10 +766,10 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         "auth/session writer inventory 发生漂移"
     );
     assert_eq!(UNAUDITED_READS.len(), 22, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 39, "审计入口 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 40, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        36,
+        37,
         "action 合同 inventory 发生漂移"
     );
 
@@ -1135,6 +1154,14 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
         (
             function_body(
                 projects_source,
+                "pub async fn change_primary_source(",
+                Some("fn primary_source_change_error("),
+            ),
+            "projects::change_primary_source_tx",
+        ),
+        (
+            function_body(
+                projects_source,
                 "pub async fn update_project(",
                 Some("/// 删除项目"),
             ),
@@ -1231,6 +1258,7 @@ async fn audit_contract_file_tree_routes_share_project_lock_and_count_deleted_su
             description: None,
             visibility: Some("private".to_string()),
             source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
         }),
     )
@@ -2241,6 +2269,7 @@ async fn audit_contract_project_creation_rolls_back_business_rows_when_audit_fai
             description: Some("BUSINESS_BODY_MUST_ROLL_BACK".to_string()),
             visibility: Some("private".to_string()),
             source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
         }),
     )
@@ -4390,6 +4419,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             description: Some(description_marker.to_string()),
             visibility: Some("private".to_string()),
             source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
         }),
     )
@@ -4621,6 +4651,171 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             description_marker,
         ],
     );
+}
+
+/// 主源切换只允许唯一 owner；相同值无副作用，真实变化原子创建 job、状态和审计并启动七天冷却。
+#[tokio::test]
+async fn primary_source_change_is_owner_only_atomic_and_cooled_down() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let worker_registered_before: bool = sqlx::query_scalar(
+        "SELECT lexical_worker_registered FROM workspace_foundation_state WHERE singleton",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE workspace_foundation_state
+         SET lexical_worker_registered = TRUE, reconciled_at = now()
+         WHERE singleton",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let owner = audit_contract_create_user(&state.db, "primary-change-owner", None).await;
+    let manager = audit_contract_create_user(&state.db, "primary-change-manager", None).await;
+    let slug = format!("primary-change-{}", owner.id);
+    let mut tx = state.db.begin().await.unwrap();
+    let project = projects::create_with_primary_tx(
+        &mut tx,
+        &slug,
+        "Primary source change",
+        "",
+        "private",
+        &["en".to_string(), "ja".to_string()],
+        "en",
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let forbidden = projects_routes::change_primary_source(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path(project.id),
+        Json(projects_routes::ChangePrimarySourceReq {
+            source_langs: vec!["en".to_string(), "ja".to_string()],
+            primary_source_lang: "ja".to_string(),
+        }),
+    )
+    .await;
+    assert!(forbidden.is_err());
+
+    let same = projects_routes::change_primary_source(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ChangePrimarySourceReq {
+            source_langs: vec!["en".to_string(), "ja".to_string()],
+            primary_source_lang: "EN".to_string(),
+        }),
+    )
+    .await
+    .expect_api("相同 canonical 主源无副作用成功")
+    .0;
+    assert!(same.primary_source_changed_at.is_none());
+    let jobs_before: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs WHERE project_id = $1")
+        .bind(project.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(jobs_before, 0);
+
+    let changed = projects_routes::change_primary_source(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ChangePrimarySourceReq {
+            source_langs: vec!["en".to_string(), "ja".to_string()],
+            primary_source_lang: "JA".to_string(),
+        }),
+    )
+    .await
+    .expect_api("owner 主源切换成功")
+    .0;
+    assert_eq!(changed.primary_source_lang.as_deref(), Some("ja"));
+    assert_eq!(changed.lexical_state, "rebuilding");
+    assert_eq!(changed.embedding_state, "pending");
+    assert!(changed.primary_source_changed_at.is_some());
+    let lexical_job_id: i64 =
+        sqlx::query_scalar("SELECT lexical_job_id FROM projects WHERE id = $1")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let job_kind: String = sqlx::query_scalar("SELECT kind FROM jobs WHERE id = $1")
+        .bind(lexical_job_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(job_kind, "primary_source_lexical_reindex");
+    let audit = audit_contract_rows_for_actor(&state.db, owner.id)
+        .await
+        .into_iter()
+        .find(|row| row.action == "project.primary_source_changed")
+        .expect("主源切换审计存在");
+    assert_eq!(audit.project_id, Some(project.id));
+    assert_eq!(
+        audit.payload,
+        serde_json::json!({
+            "previous_primary_source": "en",
+            "new_primary_source": "ja",
+            "source_language_count": 2,
+            "lexical_job_id": lexical_job_id,
+        })
+    );
+
+    sqlx::query("UPDATE jobs SET state = 'succeeded' WHERE id = $1")
+        .bind(lexical_job_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let cooled_down = projects_routes::change_primary_source(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ChangePrimarySourceReq {
+            source_langs: vec!["en".to_string(), "ja".to_string()],
+            primary_source_lang: "en".to_string(),
+        }),
+    )
+    .await;
+    assert!(cooled_down.is_err());
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(lexical_job_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
+        .bind(owner.id)
+        .bind(manager.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE workspace_foundation_state
+         SET lexical_worker_registered = $1 WHERE singleton",
+    )
+    .bind(worker_registered_before)
+    .execute(&state.db)
+    .await
+    .unwrap();
 }
 
 /// 通知 mark-read、poke、私信发送/已读都属于成功 mutation；正文只能进入业务表，不能进 audit。

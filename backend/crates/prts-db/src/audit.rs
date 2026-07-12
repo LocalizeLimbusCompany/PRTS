@@ -199,6 +199,13 @@ pub enum AuditEvent<'a> {
         changed_fields: &'a [&'a str],
         visibility: &'a str,
     },
+    ProjectPrimarySourceChanged {
+        project_id: i64,
+        previous_primary_source: &'a str,
+        new_primary_source: &'a str,
+        source_language_count: usize,
+        lexical_job_id: i64,
+    },
     ProjectLanguageResolutionCompleted {
         project_id: i64,
         issue_count: usize,
@@ -519,6 +526,24 @@ pub async fn append_event_tx(
             serde_json::json!({
                 "changed_fields": changed_fields,
                 "visibility": visibility,
+            }),
+        ),
+        AuditEvent::ProjectPrimarySourceChanged {
+            project_id,
+            previous_primary_source,
+            new_primary_source,
+            source_language_count,
+            lexical_job_id,
+        } => (
+            "project.primary_source_changed",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "previous_primary_source": previous_primary_source,
+                "new_primary_source": new_primary_source,
+                "source_language_count": source_language_count,
+                "lexical_job_id": lexical_job_id,
             }),
         ),
         AuditEvent::ProjectLanguageResolutionCompleted {
