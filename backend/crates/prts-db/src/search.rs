@@ -24,6 +24,11 @@ fn push_filters(
     if !include_hidden {
         qb.push(" AND hidden = FALSE");
     }
+    qb.push(" AND deleted_at IS NULL");
+    qb.push(
+        " AND EXISTS (SELECT 1 FROM files AS visible_file
+             WHERE visible_file.id = entries.file_id AND visible_file.deleted_at IS NULL)",
+    );
 }
 
 /// FTS：源/译两列各按其语言 config 匹配；ts_rank 求和排序。
@@ -151,11 +156,13 @@ pub async fn current_search_fields(
     pool: &PgPool,
     entry_id: i64,
 ) -> Result<Option<(String, Option<Vec<f32>>)>, sqlx::Error> {
-    let row: Option<(String, Option<Vector>)> =
-        sqlx::query_as("SELECT source_text, embedding FROM entries WHERE id = $1")
-            .bind(entry_id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String, Option<Vector>)> = sqlx::query_as(
+        "SELECT source_text, embedding FROM entries
+             WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(entry_id)
+    .fetch_optional(pool)
+    .await?;
     // pgvector::Vector 转 Vec<f32>：用 as_slice().to_vec()。
     Ok(row.map(|(st, emb)| (st, emb.map(|v| v.as_slice().to_vec()))))
 }
@@ -178,11 +185,14 @@ pub async fn suggestions_vector(
                 (1 - (e.embedding <=> $1))::float8 AS similarity
          FROM entries e
          JOIN projects p ON p.id = e.project_id
+         JOIN files f ON f.id = e.file_id
          JOIN memberships m ON m.project_id = p.id AND m.user_id = $2
          WHERE p.target_lang = $3
            AND e.state IN ('translated','questioned','checked','reviewed')
            AND e.translation <> '' AND e.source_text <> ''
            AND e.id <> $4 AND e.embedding IS NOT NULL
+           AND e.deleted_at IS NULL AND f.deleted_at IS NULL AND NOT e.hidden
+           AND p.language_repair_state = 'ready' AND p.lexical_state = 'ready'
            AND (1 - (e.embedding <=> $1)) >= $5
          ORDER BY e.embedding <=> $1
          LIMIT $6",
@@ -214,11 +224,14 @@ pub async fn suggestions_trgm(
                 similarity(e.source_text, $1)::float8 AS similarity
          FROM entries e
          JOIN projects p ON p.id = e.project_id
+         JOIN files f ON f.id = e.file_id
          JOIN memberships m ON m.project_id = p.id AND m.user_id = $2
          WHERE p.target_lang = $3
            AND e.state IN ('translated','questioned','checked','reviewed')
            AND e.translation <> '' AND e.source_text <> ''
            AND e.id <> $4
+           AND e.deleted_at IS NULL AND f.deleted_at IS NULL AND NOT e.hidden
+           AND p.language_repair_state = 'ready' AND p.lexical_state = 'ready'
            AND similarity(e.source_text, $1) >= $5
          ORDER BY similarity(e.source_text, $1) DESC
          LIMIT $6",

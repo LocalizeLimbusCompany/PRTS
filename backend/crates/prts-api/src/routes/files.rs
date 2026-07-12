@@ -31,6 +31,7 @@ pub struct FileDto {
     pub name: String,
     pub path: String,
     pub entry_count: i32,
+    pub state_counts: std::collections::HashMap<String, i64>,
 }
 
 /// 项目文件树。
@@ -57,6 +58,12 @@ pub async fn get_tree(
     let files = prts_db::files::list_files(&state.db, id)
         .await
         .map_err(db_err)?;
+    let file_stats = prts_db::stats::files(&state.db, id)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(|stats| (stats.file_id, stats))
+        .collect::<std::collections::HashMap<_, _>>();
 
     Ok(Json(ProjectTree {
         folders: folders
@@ -70,12 +77,24 @@ pub async fn get_tree(
             .collect(),
         files: files
             .into_iter()
-            .map(|f| FileDto {
-                id: f.id,
-                folder_id: f.folder_id,
-                name: f.name,
-                path: f.path,
-                entry_count: f.entry_count,
+            .map(|f| {
+                let stats = file_stats.get(&f.id);
+                let mut state_counts = std::collections::HashMap::new();
+                if let Some(stats) = stats {
+                    state_counts.insert("untranslated".to_string(), stats.untranslated_count);
+                    state_counts.insert("translated".to_string(), stats.translated_count);
+                    state_counts.insert("questioned".to_string(), stats.questioned_count);
+                    state_counts.insert("checked".to_string(), stats.checked_count);
+                    state_counts.insert("reviewed".to_string(), stats.reviewed_count);
+                }
+                FileDto {
+                    id: f.id,
+                    folder_id: f.folder_id,
+                    name: f.name,
+                    path: f.path,
+                    entry_count: stats.map_or(0, |value| value.visible_total as i32),
+                    state_counts,
+                }
             })
             .collect(),
     }))

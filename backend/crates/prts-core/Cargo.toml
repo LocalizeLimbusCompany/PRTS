@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 prts-common.workspace = true
 serde.workspace = true
+language-tags.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

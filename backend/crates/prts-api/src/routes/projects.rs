@@ -15,6 +15,7 @@ use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 
 use crate::auth::{project as paccess, CurrentUser, MaybeUser};
 use crate::db_err;
+use crate::dto::capabilities::ProjectCapabilitiesDto;
 use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
 
@@ -27,7 +28,13 @@ pub struct ProjectDto {
     pub description: String,
     pub visibility: String,
     pub source_langs: Vec<String>,
+    pub primary_source_lang: Option<String>,
     pub target_lang: String,
+    pub language_repair_state: String,
+    pub primary_source_changed_at: Option<String>,
+    pub lexical_state: String,
+    pub embedding_state: String,
+    pub avatar_url: Option<String>,
     pub owner_id: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -42,7 +49,16 @@ impl From<&prts_db::models::Project> for ProjectDto {
             description: p.description.clone(),
             visibility: p.visibility.clone(),
             source_langs: p.source_langs.clone(),
+            primary_source_lang: p.primary_source_lang.clone(),
             target_lang: p.target_lang.clone(),
+            language_repair_state: p.language_repair_state.clone(),
+            primary_source_changed_at: p.primary_source_changed_at.map(|value| value.to_rfc3339()),
+            lexical_state: p.lexical_state.clone(),
+            embedding_state: p.embedding_state.clone(),
+            avatar_url: p
+                .avatar_key
+                .as_ref()
+                .map(|_| format!("/api/projects/{}/avatar", p.id)),
             owner_id: p.owner_id,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
@@ -56,6 +72,7 @@ pub struct ProjectDetailDto {
     pub project: ProjectDto,
     pub state_counts: HashMap<String, i64>,
     pub entry_count: i64,
+    pub capabilities: ProjectCapabilitiesDto,
 }
 
 fn slugify(s: &str) -> String {
@@ -130,10 +147,13 @@ pub async fn create_project(
     if name.is_empty() || name.len() > 128 {
         return Err(Error::bad_request("项目名需为 1–128 字符").into());
     }
-    let target_lang = req.target_lang.trim();
-    if target_lang.is_empty() {
-        return Err(Error::bad_request("需指定目标语言").into());
-    }
+    let (source_langs, _primary_source_lang, target_lang) =
+        prts_core::language::canonicalize_project_languages(
+            &req.source_langs,
+            req.source_langs.first().map(String::as_str),
+            &req.target_lang,
+        )
+        .map_err(language_error)?;
     let base = req
         .slug
         .as_deref()
@@ -153,8 +173,8 @@ pub async fn create_project(
         name,
         req.description.as_deref().unwrap_or(""),
         visibility,
-        &req.source_langs,
-        target_lang,
+        &source_langs,
+        &target_lang,
         user.id,
     )
     .await
@@ -229,20 +249,22 @@ pub async fn get_project(
     let access = paccess::load(&state, user.as_ref(), id).await?;
     access.require_view()?;
 
-    let counts = prts_db::entries::count_by_state(&state.db, id)
+    let stats = prts_db::stats::project(&state.db, id)
         .await
         .map_err(db_err)?;
     let mut state_counts = HashMap::new();
-    let mut entry_count = 0i64;
-    for (s, c) in counts {
-        entry_count += c;
-        state_counts.insert(s, c);
-    }
+    state_counts.insert("untranslated".to_string(), stats.untranslated_count);
+    state_counts.insert("translated".to_string(), stats.translated_count);
+    state_counts.insert("questioned".to_string(), stats.questioned_count);
+    state_counts.insert("checked".to_string(), stats.checked_count);
+    state_counts.insert("reviewed".to_string(), stats.reviewed_count);
+    let capabilities = access.capabilities(false).into();
 
     Ok(Json(ProjectDetailDto {
         project: (&access.project).into(),
         state_counts,
-        entry_count,
+        entry_count: stats.visible_total,
+        capabilities,
     }))
 }
 
@@ -290,12 +312,26 @@ pub async fn update_project(
     let description = req
         .description
         .unwrap_or_else(|| before.description.clone());
-    let source_langs = req
+    let requested_source_langs = req
         .source_langs
         .unwrap_or_else(|| before.source_langs.clone());
-    let target_lang = req
+    let requested_target_lang = req
         .target_lang
         .unwrap_or_else(|| before.target_lang.clone());
+    let primary_source_lang = before.primary_source_lang.as_deref();
+    let (source_langs, canonical_primary, target_lang) =
+        prts_core::language::canonicalize_project_languages(
+            &requested_source_langs,
+            primary_source_lang,
+            &requested_target_lang,
+        )
+        .map_err(language_error)?;
+    if before.language_repair_state != "ready" {
+        return Err(Error::ProjectLanguageResolutionRequired.into());
+    }
+    if Some(canonical_primary.as_str()) != primary_source_lang {
+        return Err(Error::bad_request("主源语言只能通过专用重建流程更改").into());
+    }
     let mut changed_fields = Vec::with_capacity(5);
     if name != before.name {
         changed_fields.push("name");
@@ -340,6 +376,17 @@ pub async fn update_project(
     .map_err(|_| Error::AuditUnavailable)?;
     tx.commit().await.map_err(db_err)?;
     Ok(Json((&updated).into()))
+}
+
+fn language_error(error: prts_core::LanguageTagError) -> ApiError {
+    match error {
+        prts_core::LanguageTagError::Invalid => Error::InvalidLanguageTag.into(),
+        prts_core::LanguageTagError::Duplicate => Error::DuplicateLanguageTag.into(),
+        prts_core::LanguageTagError::EmptySourceLanguages
+        | prts_core::LanguageTagError::PrimaryNotInSourceLanguages => {
+            Error::bad_request(error.code()).into()
+        }
+    }
 }
 
 /// 删除项目。需项目「删除」权限。
@@ -427,7 +474,7 @@ pub async fn list_members(
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AddMemberReq {
     pub username: String,
-    /// owner | manager | reviewer | translator。
+    /// manager | reviewer | translator；本轮不支持拥有者转让。
     pub role: String,
 }
 
@@ -448,8 +495,8 @@ pub async fn add_member(
 ) -> Result<StatusCode, ApiError> {
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_MEMBER_MANAGE)?;
-    if ProjectRole::parse(&req.role).is_none() {
-        return Err(Error::bad_request("role 必须是 owner|manager|reviewer|translator").into());
+    if !matches!(req.role.as_str(), "manager" | "reviewer" | "translator") {
+        return Err(Error::bad_request("role 必须是 manager|reviewer|translator").into());
     }
     let target = prts_db::users::find_by_username(&state.db, req.username.trim())
         .await
@@ -460,9 +507,11 @@ pub async fn add_member(
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    paccess::load_locked_tx(&mut tx, &user, project)
-        .await?
-        .require_node(nodes::PROJECT_MEMBER_MANAGE)?;
+    let locked_access = paccess::load_locked_tx(&mut tx, &user, project).await?;
+    locked_access.require_node(nodes::PROJECT_MEMBER_MANAGE)?;
+    if locked_access.effective_role() == Some(ProjectRole::Manager) && req.role == "manager" {
+        return Err(Error::Forbidden.into());
+    }
     let previous_role = prts_db::memberships::find_role_tx(&mut tx, id, target.id)
         .await
         .map_err(db_err)?;

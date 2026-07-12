@@ -63,8 +63,19 @@ pub struct Project {
     pub description: String,
     pub visibility: String,
     pub source_langs: Vec<String>,
+    pub primary_source_lang: Option<String>,
     pub target_lang: String,
     pub owner_id: i64,
+    pub language_repair_state: String,
+    pub language_repair_job_id: Option<i64>,
+    pub primary_source_changed_at: Option<DateTime<Utc>>,
+    pub lexical_state: String,
+    pub lexical_job_id: Option<i64>,
+    pub embedding_state: String,
+    pub embedding_job_id: Option<i64>,
+    pub avatar_key: Option<String>,
+    pub avatar_content_type: Option<String>,
+    pub avatar_updated_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -96,6 +107,9 @@ pub struct Folder {
     pub parent_id: Option<i64>,
     pub name: String,
     pub path: String,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deleted_by: Option<i64>,
+    pub deletion_change_set_id: Option<uuid::Uuid>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -108,6 +122,9 @@ pub struct File {
     pub name: String,
     pub path: String,
     pub entry_count: i32,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deleted_by: Option<i64>,
+    pub deletion_change_set_id: Option<uuid::Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -125,6 +142,9 @@ pub struct Entry {
     pub state: String,
     pub locked: bool,
     pub hidden: bool,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deleted_by: Option<i64>,
+    pub deletion_change_set_id: Option<uuid::Uuid>,
     pub version: i64,
     pub updated_by: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -234,4 +254,58 @@ pub struct Job {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// 项目 effective-visible 物化统计。
+#[derive(Debug, Clone, FromRow)]
+pub struct ProjectStats {
+    pub project_id: i64,
+    pub visible_total: i64,
+    pub untranslated_count: i64,
+    pub translated_count: i64,
+    pub questioned_count: i64,
+    pub checked_count: i64,
+    pub reviewed_count: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 文件 effective-visible 物化统计。
+#[derive(Debug, Clone, FromRow)]
+pub struct FileStats {
+    pub file_id: i64,
+    pub project_id: i64,
+    pub visible_total: i64,
+    pub untranslated_count: i64,
+    pub translated_count: i64,
+    pub questioned_count: i64,
+    pub checked_count: i64,
+    pub reviewed_count: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 语言歧义诊断；metadata 禁止保存正文或秘密。
+#[derive(Debug, Clone, FromRow)]
+pub struct LanguageResolutionIssue {
+    pub id: i64,
+    pub project_id: Option<i64>,
+    pub entry_id: Option<i64>,
+    pub user_id: Option<i64>,
+    pub entity_type: String,
+    pub entity_id_snapshot: String,
+    pub issue_kind: String,
+    pub raw_tag: Option<String>,
+    pub canonical_tag: Option<String>,
+    pub metadata: serde_json::Value,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 平台管理员可见的 metadata-only 项目诊断摘要。
+#[derive(Debug, Clone, FromRow)]
+pub struct LanguageResolutionSummary {
+    pub project_id: i64,
+    pub project_slug: String,
+    pub issue_count: i64,
+    pub repair_state: String,
+    pub repair_job_id: Option<i64>,
 }

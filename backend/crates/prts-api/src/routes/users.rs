@@ -59,9 +59,15 @@ pub async fn update_me(
         .description
         .unwrap_or_else(|| current.description.clone());
     let avatar_url = req.avatar_url.or_else(|| current.avatar_url.clone());
-    let langs = req
+    let requested_langs = req
         .translation_langs
         .unwrap_or_else(|| current.translation_langs.clone());
+    let langs =
+        prts_core::canonicalize_language_tags(&requested_langs).map_err(|error| match error {
+            prts_core::LanguageTagError::Invalid => Error::InvalidLanguageTag,
+            prts_core::LanguageTagError::Duplicate => Error::DuplicateLanguageTag,
+            _ => Error::bad_request(error.code()),
+        })?;
     let mut changed_fields = Vec::with_capacity(3);
     if description != current.description {
         changed_fields.push("description");

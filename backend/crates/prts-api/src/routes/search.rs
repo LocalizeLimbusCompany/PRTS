@@ -83,6 +83,7 @@ pub async fn search_entries(
     // 1. 解析项目访问权限（私有项目对游客返回 404）
     let access = paccess::load(&state, user.as_ref(), id).await?;
     access.require_view()?;
+    access.require_language_ready()?;
 
     // 2. 确定主查询词；q 为空则 400
     let main_q =
@@ -115,10 +116,9 @@ pub async fn search_entries(
     // 6. 从项目结构获取源/目标语言
     let src_lang = access
         .project
-        .source_langs
-        .first()
-        .map(|s| s.as_str())
-        .unwrap_or("");
+        .primary_source_lang
+        .as_deref()
+        .ok_or(Error::ProjectLanguageResolutionRequired)?;
     let tgt_lang = access.project.target_lang.as_str();
 
     // 7. 文件过滤列表

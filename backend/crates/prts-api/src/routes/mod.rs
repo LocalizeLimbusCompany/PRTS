@@ -7,6 +7,7 @@ pub mod entries;
 pub mod files;
 pub mod health;
 pub mod jobs;
+pub mod language_resolution;
 pub mod messages;
 pub mod meta;
 pub mod notifications;
@@ -88,6 +89,14 @@ fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
+        .routes(routes!(
+            language_resolution::get_project_language_resolution,
+            language_resolution::resolve_project_languages
+        ))
+        .routes(routes!(
+            language_resolution::list_admin_language_resolutions
+        ))
+        .routes(routes!(language_resolution::retry_admin_language_repair))
         // 持久化任务进度与受控重试
         .routes(routes!(jobs::get_job))
         .routes(routes!(jobs::retry_job))

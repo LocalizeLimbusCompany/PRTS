@@ -88,6 +88,8 @@ fn status_for(code: &str) -> StatusCode {
         "not_found" => StatusCode::NOT_FOUND,
         "conflict" => StatusCode::CONFLICT,
         "AUDIT_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
+        "INVALID_LANGUAGE_TAG" | "DUPLICATE_LANGUAGE_TAG" => StatusCode::BAD_REQUEST,
+        "PROJECT_LANGUAGE_RESOLUTION_REQUIRED" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

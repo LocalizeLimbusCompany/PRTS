@@ -39,6 +39,8 @@ mod auth_routes;
 mod entries_routes;
 #[path = "../src/routes/files.rs"]
 mod files_routes;
+#[path = "../src/routes/language_resolution.rs"]
+mod language_resolution_routes;
 #[path = "../src/routes/messages.rs"]
 mod messages_routes;
 #[path = "../src/routes/notifications.rs"]
@@ -287,6 +289,21 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         allowed_payload_keys: &["changed_fields", "visibility"],
     },
     AuditedEntrypoint {
+        entrypoint: "routes::language_resolution::resolve_project_languages",
+        action: "project.language_resolution_completed",
+        allowed_payload_keys: &[
+            "issue_count",
+            "source_language_count",
+            "primary_source_language",
+            "target_language",
+        ],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::language_resolution::retry_admin_language_repair",
+        action: "project.language_repair_retried",
+        allowed_payload_keys: &["job_id", "previous_state"],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::projects::delete_project",
         action: "project.deleted",
         allowed_payload_keys: &["slug"],
@@ -503,6 +520,20 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "project.language_resolution_completed",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.language_repair_retried",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "project.deleted",
         target_type: "project",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -633,6 +664,9 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "messages::create",
     "messages::mark_read",
     "jobs::manual_retry",
+    "language_resolution::complete_owner_resolution_tx",
+    "language_resolution::update_entry_original_tx",
+    "language_resolution::retry_failed_project_repair_tx",
 ];
 
 /// DB-authoritative session 与 durable intent/outbox 的全部现有写边界。
@@ -675,6 +709,8 @@ const UNAUDITED_READS: &[&str] = &[
     "messages::list_threads",
     "messages::conversation",
     "messages::unread_count",
+    "language_resolution::get_project_language_resolution",
+    "language_resolution::list_admin_language_resolutions",
 ];
 
 #[test]
@@ -683,7 +719,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        28,
+        31,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -691,11 +727,11 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         16,
         "auth/session writer inventory 发生漂移"
     );
-    assert_eq!(UNAUDITED_READS.len(), 18, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 36, "审计入口 inventory 发生漂移");
+    assert_eq!(UNAUDITED_READS.len(), 20, "普通读取 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 38, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        33,
+        35,
         "action 合同 inventory 发生漂移"
     );
 
@@ -3817,6 +3853,408 @@ async fn audit_contract_job_retry_audit_failure_rolls_back_and_returns_503() {
         .unwrap();
 }
 
+/// Owner resolution 必须验证当前候选、锁后鉴权，并在审计失败时整事务回滚。
+#[tokio::test]
+async fn language_resolution_owner_selection_permissions_and_audit_rollback_are_atomic() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "language-resolution-owner", None).await;
+    let manager = audit_contract_create_user(&state.db, "language-resolution-manager", None).await;
+    let project = projects::create(
+        &state.db,
+        &format!("language-resolution-{}", owner.id),
+        "Language resolution",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&state.db, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert(&state.db, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+    let Json(uploaded) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "resolution/main.json",
+            &[("conflict", "owner-selected-source")],
+        )),
+    )
+    .await
+    .expect_api("创建 resolution 测试词条");
+    let entry_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE file_id = $1 AND key = 'conflict'")
+            .bind(uploaded.file_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let unresolved_original = serde_json::json!({
+        "en": "owner-selected-source",
+        "EN": "alternate-source"
+    });
+    sqlx::query(
+        "UPDATE projects SET language_repair_state = 'needs_language_resolution' WHERE id = $1",
+    )
+    .bind(project.id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE entries SET original = $2 WHERE id = $1")
+        .bind(entry_id)
+        .bind(&unresolved_original)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let issue_id: i64 = sqlx::query_scalar(
+        "INSERT INTO language_resolution_issues (
+             project_id, entry_id, entity_type, entity_id_snapshot, issue_kind,
+             raw_tag, canonical_tag, metadata
+         ) VALUES ($1, $2, 'entry', $2::TEXT, 'conflicting_original_keys',
+                   'EN', 'en', jsonb_build_object('key_count', 2))
+         RETURNING id",
+    )
+    .bind(project.id)
+    .bind(entry_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+
+    let hidden_from_manager = language_resolution_routes::get_project_language_resolution(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path(project.id),
+    )
+    .await
+    .expect_err_api("manager 不得读取 owner resolution 详情");
+    assert_eq!(hidden_from_manager.code(), "forbidden");
+    let Json(owner_view) = language_resolution_routes::get_project_language_resolution(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_api("owner 可读取当前冲突候选");
+    assert_eq!(owner_view.issues.len(), 1);
+    assert!(owner_view.issues[0]
+        .current_values
+        .contains(&"owner-selected-source".to_string()));
+    assert!(owner_view.issues[0]
+        .current_values
+        .contains(&"alternate-source".to_string()));
+
+    let request = || language_resolution_routes::ResolveProjectLanguagesReq {
+        source_langs: vec!["en".to_string()],
+        primary_source_lang: "en".to_string(),
+        target_lang: "zh-Hans".to_string(),
+        issues: vec![language_resolution_routes::IssueResolutionReq {
+            issue_id,
+            canonical_tag: Some("en".to_string()),
+            selected_value: Some("owner-selected-source".to_string()),
+        }],
+    };
+    let denied = language_resolution_routes::resolve_project_languages(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path(project.id),
+        Json(request()),
+    )
+    .await
+    .expect_err_api("manager 不得代替 owner 处理语言歧义");
+    assert_eq!(denied.code(), "forbidden");
+
+    let invalid = language_resolution_routes::resolve_project_languages(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(language_resolution_routes::ResolveProjectLanguagesReq {
+            issues: vec![language_resolution_routes::IssueResolutionReq {
+                issue_id,
+                canonical_tag: Some("en".to_string()),
+                selected_value: Some("not-a-current-candidate".to_string()),
+            }],
+            ..request()
+        }),
+    )
+    .await
+    .expect_err_api("owner 选择必须来自锁定后的当前候选");
+    assert_eq!(invalid.code(), "bad_request");
+
+    let jobs_before: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE project_id = $1 AND kind = 'language_repair'",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let failed = language_resolution_routes::resolve_project_languages(
+        State(failing_state),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(request()),
+    )
+    .await
+    .expect_err_api("审计失败必须回滚完整 resolution 事务");
+    audit_contract_assert_unavailable(failed).await;
+    let rolled_back: (
+        String,
+        serde_json::Value,
+        Option<chrono::DateTime<chrono::Utc>>,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT project.language_repair_state, entry.original, issue.resolved_at,
+                    (SELECT count(*) FROM jobs
+                     WHERE project_id = project.id AND kind = 'language_repair')
+             FROM projects AS project
+             JOIN entries AS entry ON entry.id = $2
+             JOIN language_resolution_issues AS issue ON issue.id = $3
+             WHERE project.id = $1",
+    )
+    .bind(project.id)
+    .bind(entry_id)
+    .bind(issue_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(rolled_back.0, "needs_language_resolution");
+    assert_eq!(rolled_back.1, unresolved_original);
+    assert!(rolled_back.2.is_none());
+    assert_eq!(rolled_back.3, jobs_before);
+
+    language_resolution_routes::resolve_project_languages(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(request()),
+    )
+    .await
+    .expect_api("owner resolution 成功排入 repair job");
+    let completed: (String, serde_json::Value, bool, i64) = sqlx::query_as(
+        "SELECT project.language_repair_state, entry.original,
+                issue.resolved_at IS NOT NULL, job.id
+         FROM projects AS project
+         JOIN entries AS entry ON entry.id = $2
+         JOIN language_resolution_issues AS issue ON issue.id = $3
+         JOIN jobs AS job ON job.id = project.language_repair_job_id
+         WHERE project.id = $1 AND job.kind = 'language_repair' AND job.state = 'queued'",
+    )
+    .bind(project.id)
+    .bind(entry_id)
+    .bind(issue_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(completed.0, "repairing");
+    assert_eq!(
+        completed.1,
+        serde_json::json!({"en": "owner-selected-source"})
+    );
+    assert!(completed.2);
+    assert!(completed.3 > 0);
+}
+
+/// Admin 只能看到 metadata 摘要，并且只可重试失败的同一 repair job。
+#[tokio::test]
+async fn language_resolution_admin_visibility_and_retry_are_metadata_only_and_state_safe() {
+    use axum::extract::{Path, Query, State};
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "language-admin-owner", None).await;
+    let admin = audit_contract_create_user(&state.db, "language-admin", Some("admin")).await;
+    let project = projects::create(
+        &state.db,
+        &format!("language-admin-{}", owner.id),
+        "Private language repair",
+        "private-body-marker-must-not-leak",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&state.db, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    let job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (
+             kind, project_id, state, stage, payload, attempts, max_attempts,
+             last_error_code, last_error_message, finished_at
+         ) VALUES (
+             'language_repair', $1, 'failed', 'entries', '{}', 2, 2,
+             'language_resolution_required', 'private-job-marker-must-not-leak', now()
+         ) RETURNING id",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE projects SET language_repair_state = 'needs_language_resolution',
+             language_repair_job_id = $2
+         WHERE id = $1",
+    )
+    .bind(project.id)
+    .bind(job_id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO language_resolution_issues (
+             project_id, entity_type, entity_id_snapshot, issue_kind, raw_tag, metadata
+         ) VALUES ($1, 'project', $1::TEXT, 'invalid_tag',
+                   'private-raw-tag-marker', jsonb_build_object('reason', 'private-reason-marker'))",
+    )
+    .bind(project.id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let axum::Json(summaries) = language_resolution_routes::list_admin_language_resolutions(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Query(language_resolution_routes::AdminResolutionQuery {
+            after_project_id: None,
+            limit: Some(100),
+        }),
+    )
+    .await
+    .expect_api("管理员读取语言修复摘要");
+    let summary = summaries
+        .iter()
+        .find(|summary| summary.project_id == project.id)
+        .expect("摘要包含目标项目");
+    assert_eq!(summary.issue_count, 1);
+    let serialized = serde_json::to_string(summary).unwrap();
+    for marker in [
+        "private-body-marker-must-not-leak",
+        "private-job-marker-must-not-leak",
+        "private-raw-tag-marker",
+        "private-reason-marker",
+    ] {
+        assert!(!serialized.contains(marker));
+    }
+
+    let blocked = language_resolution_routes::retry_admin_language_repair(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Path(project.id),
+    )
+    .await
+    .expect_err_api("管理员不得通过 retry 绕过 owner resolution");
+    assert_eq!(blocked.code(), "conflict");
+
+    let retry_project = projects::create(
+        &state.db,
+        &format!("language-retry-{}", owner.id),
+        "Repair infrastructure retry",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&state.db, retry_project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    let retry_job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (
+             kind, project_id, state, stage, payload, attempts, max_attempts,
+             last_error_code, last_error_message, finished_at
+         ) VALUES (
+             'language_repair', $1, 'failed', 'entries', '{}', 2, 2,
+             'database_unavailable', 'redacted database failure', now()
+         ) RETURNING id",
+    )
+    .bind(retry_project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE projects SET language_repair_state = 'repairing', language_repair_job_id = $2
+         WHERE id = $1",
+    )
+    .bind(retry_project.id)
+    .bind(retry_job_id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let audit_failure = language_resolution_routes::retry_admin_language_repair(
+        State(failing_state),
+        audit_contract_current_user(&admin),
+        Path(retry_project.id),
+    )
+    .await
+    .expect_err_api("管理员 repair retry 的审计失败必须回滚");
+    audit_contract_assert_unavailable(audit_failure).await;
+    let still_failed: (String, i32, i32, Option<String>) = sqlx::query_as(
+        "SELECT state, attempts, max_attempts, last_error_code FROM jobs WHERE id = $1",
+    )
+    .bind(retry_job_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        still_failed,
+        (
+            "failed".to_string(),
+            2,
+            2,
+            Some("database_unavailable".to_string())
+        )
+    );
+
+    language_resolution_routes::retry_admin_language_repair(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Path(retry_project.id),
+    )
+    .await
+    .expect_api("管理员重试失败的 repair job");
+    let retried: (i64, String, i32, i32, Option<String>) = sqlx::query_as(
+        "SELECT id, state, attempts, max_attempts, last_error_code FROM jobs WHERE id = $1",
+    )
+    .bind(retry_job_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(retried.0, retry_job_id);
+    assert_eq!(retried.1, "queued");
+    assert_eq!(retried.2, 3);
+    assert_eq!(retried.3, 4);
+    assert!(retried.4.is_none());
+
+    let duplicate = language_resolution_routes::retry_admin_language_repair(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Path(retry_project.id),
+    )
+    .await
+    .expect_err_api("queued repair job 不能被伪装成再次重试成功");
+    assert_eq!(duplicate.code(), "conflict");
+    let job_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE project_id = $1 AND kind = 'language_repair'",
+    )
+    .bind(retry_project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(job_count, 1);
+}
+
 /// 项目、成员、旧上传、词条编辑/flags、文件删除与敏感导出必须走真实事务审计。
 #[tokio::test]
 async fn audit_contract_projects_files_entries_memberships_and_export_are_audited_and_redacted() {
@@ -6733,7 +7171,16 @@ async fn suggestions_trgm_membership_scoped() {
         .await
         .unwrap();
 
-    // —— 建项目 B（U 作为 translator 加入） ——
+    // —— 建项目 B（独立 owner，U 作为 translator 加入） ——
+    let owner_b = users::create_password_user(
+        &pool,
+        &audit_jobs_unique("tm-owner"),
+        None,
+        &prts_auth::password::hash_password("password123").unwrap(),
+        "active",
+    )
+    .await
+    .unwrap();
     let proj_b = projects::create(
         &pool,
         "itest-tm-b",
@@ -6742,7 +7189,7 @@ async fn suggestions_trgm_membership_scoped() {
         "public",
         &["zh-Hans".to_string()],
         "en",
-        u.id, // owner 也是 U，所以 U 在 B 中
+        owner_b.id,
     )
     .await
     .unwrap();
@@ -6752,12 +7199,21 @@ async fn suggestions_trgm_membership_scoped() {
 
     // —— 建项目 C（U 不是成员；由另一个 owner 创建，使用直接 INSERT） ——
     // 为了避免引入额外用户，直接插入项目并让 U 不加入成员表
+    let owner_c = users::create_password_user(
+        &pool,
+        &audit_jobs_unique("tm-private-owner"),
+        None,
+        &prts_auth::password::hash_password("password123").unwrap(),
+        "active",
+    )
+    .await
+    .unwrap();
     let proj_c: (i64,) = sqlx::query_as(
         "INSERT INTO projects (slug, name, description, visibility, source_langs, target_lang, owner_id)
          VALUES ('itest-tm-c', 'TM Test C', '', 'public', ARRAY['zh-Hans'], 'en', $1)
          RETURNING id",
     )
-    .bind(u.id)
+    .bind(owner_c.id)
     .fetch_one(&pool)
     .await
     .unwrap();

@@ -83,6 +83,7 @@ pub async fn upload(
 ) -> Result<Json<UploadResult>, ApiError> {
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_FILE_UPLOAD)?;
+    access.require_language_ready()?;
 
     let path = req.path.trim().trim_matches('/');
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
@@ -106,9 +107,9 @@ pub async fn upload(
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    paccess::load_locked_tx(&mut tx, &user, project)
-        .await?
-        .require_node(nodes::PROJECT_FILE_UPLOAD)?;
+    let locked_access = paccess::load_locked_tx(&mut tx, &user, project).await?;
+    locked_access.require_node(nodes::PROJECT_FILE_UPLOAD)?;
+    locked_access.require_language_ready()?;
     let file = prts_db::files::ensure_file_at_path_tx(&mut tx, id, path)
         .await
         .map_err(db_err)?;

@@ -39,6 +39,28 @@ impl ProjectAccess {
         self.effective_role().map(|r| r.has(node)).unwrap_or(false)
     }
 
+    /// 当前主体的显式 capability；owner-only 能力只比较 `projects.owner_id`。
+    pub fn capabilities(
+        &self,
+        primary_source_release_ready: bool,
+    ) -> prts_core::capabilities::ProjectCapabilities {
+        prts_core::capabilities::ProjectCapabilities::for_subject(
+            self.can_view(),
+            self.effective_role(),
+            self.user_id == Some(self.project.owner_id),
+            primary_source_release_ready,
+        )
+    }
+
+    /// 语言歧义项目禁止普通搜索、上传和语言写入。
+    pub fn require_language_ready(&self) -> Result<(), ApiError> {
+        if self.project.language_repair_state == "ready" {
+            Ok(())
+        } else {
+            Err(Error::ProjectLanguageResolutionRequired.into())
+        }
+    }
+
     /// 要求可见，否则 404（不泄露私有项目存在性）。
     pub fn require_view(&self) -> Result<(), ApiError> {
         if self.can_view() {

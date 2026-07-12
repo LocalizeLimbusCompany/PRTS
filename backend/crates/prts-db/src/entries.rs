@@ -157,36 +157,41 @@ pub async fn list(
     after_id: Option<i64>,
     limit: i64,
 ) -> Result<Vec<Entry>, sqlx::Error> {
-    let mut qb = QueryBuilder::<Postgres>::new("SELECT * FROM entries WHERE project_id = ");
+    let mut qb = QueryBuilder::<Postgres>::new(
+        "SELECT entry.* FROM entries AS entry
+         JOIN files AS file ON file.id = entry.file_id
+         WHERE entry.project_id = ",
+    );
     qb.push_bind(project_id);
+    qb.push(" AND entry.deleted_at IS NULL AND file.deleted_at IS NULL");
 
     if let Some(fid) = filter.file_id {
-        qb.push(" AND file_id = ");
+        qb.push(" AND entry.file_id = ");
         qb.push_bind(fid);
     }
     if !filter.states.is_empty() {
-        qb.push(" AND state = ANY(");
+        qb.push(" AND entry.state = ANY(");
         qb.push_bind(filter.states.clone());
         qb.push(")");
     }
     if !filter.include_hidden {
-        qb.push(" AND hidden = FALSE");
+        qb.push(" AND entry.hidden = FALSE");
     }
     if let Some(q) = filter.query.as_deref().filter(|s| !s.is_empty()) {
         let pat = format!("%{q}%");
-        qb.push(" AND (key ILIKE ");
+        qb.push(" AND (entry.key ILIKE ");
         qb.push_bind(pat.clone());
-        qb.push(" OR translation ILIKE ");
+        qb.push(" OR entry.translation ILIKE ");
         qb.push_bind(pat.clone());
-        qb.push(" OR original::text ILIKE ");
+        qb.push(" OR entry.original::text ILIKE ");
         qb.push_bind(pat);
         qb.push(")");
     }
     if let Some(after) = after_id {
-        qb.push(" AND id > ");
+        qb.push(" AND entry.id > ");
         qb.push_bind(after);
     }
-    qb.push(" ORDER BY id LIMIT ");
+    qb.push(" ORDER BY entry.id LIMIT ");
     qb.push_bind(limit);
 
     qb.build_query_as::<Entry>().fetch_all(pool).await
@@ -198,11 +203,16 @@ pub async fn get(
     project_id: i64,
     entry_id: i64,
 ) -> Result<Option<Entry>, sqlx::Error> {
-    sqlx::query_as::<_, Entry>("SELECT * FROM entries WHERE id = $1 AND project_id = $2")
-        .bind(entry_id)
-        .bind(project_id)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, Entry>(
+        "SELECT entry.* FROM entries AS entry
+         JOIN files AS file ON file.id = entry.file_id
+         WHERE entry.id = $1 AND entry.project_id = $2
+           AND entry.deleted_at IS NULL AND file.deleted_at IS NULL",
+    )
+    .bind(entry_id)
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await
 }
 
 /// 在调用方事务内锁定项目所属词条并返回一致快照。
@@ -346,8 +356,14 @@ pub async fn count_by_state(
 
 /// 导出用：取项目全部词条（按文件、key 排序）。
 pub async fn list_for_export(pool: &PgPool, project_id: i64) -> Result<Vec<Entry>, sqlx::Error> {
-    sqlx::query_as::<_, Entry>("SELECT * FROM entries WHERE project_id = $1 ORDER BY file_id, key")
-        .bind(project_id)
-        .fetch_all(pool)
-        .await
+    sqlx::query_as::<_, Entry>(
+        "SELECT entry.* FROM entries AS entry
+         JOIN files AS file ON file.id = entry.file_id
+         WHERE entry.project_id = $1 AND entry.deleted_at IS NULL
+           AND file.deleted_at IS NULL AND NOT entry.hidden
+         ORDER BY entry.file_id, entry.key",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
 }

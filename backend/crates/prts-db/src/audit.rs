@@ -196,6 +196,18 @@ pub enum AuditEvent<'a> {
         changed_fields: &'a [&'a str],
         visibility: &'a str,
     },
+    ProjectLanguageResolutionCompleted {
+        project_id: i64,
+        issue_count: usize,
+        source_language_count: usize,
+        primary_source_language: &'a str,
+        target_language: &'a str,
+    },
+    ProjectLanguageRepairRetried {
+        project_id: i64,
+        job_id: i64,
+        previous_state: &'a str,
+    },
     ProjectDeleted {
         project_id: i64,
         slug: &'a str,
@@ -498,6 +510,35 @@ pub async fn append_event_tx(
                 "changed_fields": changed_fields,
                 "visibility": visibility,
             }),
+        ),
+        AuditEvent::ProjectLanguageResolutionCompleted {
+            project_id,
+            issue_count,
+            source_language_count,
+            primary_source_language,
+            target_language,
+        } => (
+            "project.language_resolution_completed",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "issue_count": issue_count,
+                "source_language_count": source_language_count,
+                "primary_source_language": primary_source_language,
+                "target_language": target_language,
+            }),
+        ),
+        AuditEvent::ProjectLanguageRepairRetried {
+            project_id,
+            job_id,
+            previous_state,
+        } => (
+            "project.language_repair_retried",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"job_id": job_id, "previous_state": previous_state}),
         ),
         AuditEvent::ProjectDeleted { project_id, slug } => (
             "project.deleted",

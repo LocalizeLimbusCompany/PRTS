@@ -57,6 +57,16 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("conflict", Locale::En) => "Version conflict, please refresh and retry",
         ("AUDIT_UNAVAILABLE", Locale::ZhCn) => "审计服务暂不可用",
         ("AUDIT_UNAVAILABLE", Locale::En) => "Audit service unavailable",
+        ("INVALID_LANGUAGE_TAG", Locale::ZhCn) => "语言标签不是有效的 BCP-47 格式",
+        ("INVALID_LANGUAGE_TAG", Locale::En) => "Invalid BCP-47 language tag",
+        ("DUPLICATE_LANGUAGE_TAG", Locale::ZhCn) => "语言标签规范化后重复",
+        ("DUPLICATE_LANGUAGE_TAG", Locale::En) => "Duplicate canonical language tag",
+        ("PROJECT_LANGUAGE_RESOLUTION_REQUIRED", Locale::ZhCn) => {
+            "项目语言存在歧义，需要拥有者先完成处理"
+        }
+        ("PROJECT_LANGUAGE_RESOLUTION_REQUIRED", Locale::En) => {
+            "Project language resolution is required"
+        }
         ("internal", Locale::ZhCn) => "服务器内部错误",
         ("internal", Locale::En) => "Internal server error",
         _ => return None,

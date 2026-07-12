@@ -25,6 +25,7 @@ pub enum JobKind {
     ProjectPurge(ProjectPurgeSnapshot),
     PrimarySourceLexicalReindex,
     PrimarySourceEmbeddingBackfill,
+    LanguageRepair,
     UploadProcess,
     UploadCleanup,
     FilePurge,
@@ -37,6 +38,7 @@ impl JobKind {
         match value {
             "primary_source_lexical_reindex" => Some(Self::PrimarySourceLexicalReindex),
             "primary_source_embedding_backfill" => Some(Self::PrimarySourceEmbeddingBackfill),
+            "language_repair" => Some(Self::LanguageRepair),
             "upload_process" => Some(Self::UploadProcess),
             "upload_cleanup" => Some(Self::UploadCleanup),
             "file_purge" => Some(Self::FilePurge),
@@ -50,6 +52,7 @@ impl JobKind {
             Self::ProjectPurge(_) => "project_purge",
             Self::PrimarySourceLexicalReindex => "primary_source_lexical_reindex",
             Self::PrimarySourceEmbeddingBackfill => "primary_source_embedding_backfill",
+            Self::LanguageRepair => "language_repair",
             Self::UploadProcess => "upload_process",
             Self::UploadCleanup => "upload_cleanup",
             Self::FilePurge => "file_purge",
@@ -72,12 +75,17 @@ impl JobKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobResult {
     Completed,
+    EmbeddingSkipped,
 }
 
 impl JobResult {
     fn into_json(self) -> serde_json::Value {
         match self {
             Self::Completed => serde_json::json!({}),
+            Self::EmbeddingSkipped => serde_json::json!({
+                "outcome": "skipped",
+                "reason": "embedding_provider_unconfigured",
+            }),
         }
     }
 }
@@ -95,7 +103,7 @@ pub struct NewJob {
 
 /// 在现有事务连接内创建任务，供业务写与审计原子提交。
 pub async fn create_tx(conn: &mut PgConnection, input: NewJob) -> Result<Job, sqlx::Error> {
-    if input.project_id.is_none() {
+    if input.project_id.is_none() && !matches!(&input.kind, JobKind::LanguageRepair) {
         return Err(sqlx::Error::Protocol(
             "new project-scoped job requires project_id".to_string(),
         ));
@@ -257,7 +265,7 @@ async fn claim_next_inner(
                     OR (state = 'running' AND lease_until <= now())
                )
                AND (
-                    kind = 'project_purge'
+                    kind IN ('project_purge', 'language_repair')
                     OR (
                         project_id IS NOT NULL
                         AND NOT (project_id = ANY($3::BIGINT[]))

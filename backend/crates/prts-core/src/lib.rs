@@ -7,10 +7,13 @@
 //! - 翻译工作流是单值枚举 [`EntryState`]；
 //! - `locked` / `hidden` 是**正交标志位**（[`EntryFlags`]），独立于工作流。
 
+pub mod capabilities;
 pub mod entry;
 pub mod jobs;
+pub mod language;
 pub mod permission;
 
 pub use entry::{EntryFlags, EntryState};
 pub use jobs::JobState;
+pub use language::{canonicalize_language_tag, canonicalize_language_tags, LanguageTagError};
 pub use permission::{PlatformRole, ProjectRole};

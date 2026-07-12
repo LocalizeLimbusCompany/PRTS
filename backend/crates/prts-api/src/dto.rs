@@ -5,6 +5,9 @@ use utoipa::ToSchema;
 
 use prts_db::models::User;
 
+#[path = "dto/capabilities.rs"]
+pub mod capabilities;
+
 /// 用户对外表示。
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UserDto {

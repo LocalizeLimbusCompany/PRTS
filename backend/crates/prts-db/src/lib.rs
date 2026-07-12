@@ -9,6 +9,7 @@ pub mod auth_sessions;
 pub mod entries;
 pub mod files;
 pub mod jobs;
+pub mod language_resolution;
 pub mod memberships;
 pub mod messages;
 pub mod models;
@@ -17,6 +18,7 @@ pub mod projects;
 pub mod search;
 pub mod search_settings;
 pub mod settings;
+pub mod stats;
 pub mod users;
 
 /// 数据库错误别名，便于上层映射而无需直接依赖 sqlx。

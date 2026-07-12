@@ -97,8 +97,27 @@ async fn main() -> anyhow::Result<()> {
     // 启动后台嵌入 sweep（clones cheap: pool 引用计数，Arc 指针）。
     crate::embed_worker::spawn(db.clone(), embedder.clone(), search_rt.clone());
 
-    // 持久化任务 worker。foundation 注册表为空时保持 dormant，后续阶段逐类注册 handler。
-    let job_registry = crate::jobs::JobRegistry::new(Vec::new());
+    // Foundation handlers：legacy 语言 repair 与主源两阶段重建均由同一可恢复 worker 领取。
+    let job_registry = crate::jobs::JobRegistry::new(vec![
+        Arc::new(crate::jobs::repair_languages::RepairLanguagesHandler::new(
+            db.clone(),
+        )),
+        Arc::new(crate::jobs::reindex_project::ReindexProjectHandler::new(
+            db.clone(),
+        )),
+        Arc::new(crate::jobs::reindex_project::EmbeddingBackfillHandler::new(
+            db.clone(),
+            embedder.clone(),
+            search_rt.clone(),
+        )),
+    ]);
+    sqlx::query(
+        "UPDATE workspace_foundation_state SET lexical_worker_registered = TRUE, updated_at = now()
+         WHERE singleton",
+    )
+    .execute(&db)
+    .await
+    .map_err(|error| anyhow::anyhow!("workspace foundation readiness update failed: {error}"))?;
     let (job_worker, mut job_worker_task) = crate::job_worker::spawn(
         db.clone(),
         job_registry.clone(),

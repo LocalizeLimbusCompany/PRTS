@@ -14,21 +14,33 @@ pub use prts_db::jobs::JobResult;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobErrorCode {
     HandlerUnavailable,
+    InvalidPayload,
+    DatabaseUnavailable,
+    LanguageResolutionRequired,
 }
 
 impl JobErrorCode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::HandlerUnavailable => "job_handler_unavailable",
+            Self::InvalidPayload => "job_invalid_payload",
+            Self::DatabaseUnavailable => "job_database_unavailable",
+            Self::LanguageResolutionRequired => "project_language_resolution_required",
         }
     }
 
     pub const fn redacted_message(self) -> &'static str {
         match self {
             Self::HandlerUnavailable => "job handler is not available",
+            Self::InvalidPayload => "job payload is invalid",
+            Self::DatabaseUnavailable => "job database operation failed",
+            Self::LanguageResolutionRequired => "project language resolution is required",
         }
     }
 }
+
+pub mod reindex_project;
+pub mod repair_languages;
 
 /// 任务执行失败的稳定信息。
 #[derive(Debug, Clone)]

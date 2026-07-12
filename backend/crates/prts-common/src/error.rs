@@ -37,6 +37,18 @@ pub enum Error {
     #[error("audit unavailable")]
     AuditUnavailable,
 
+    /// 语言标签不是合法 canonical BCP-47。
+    #[error("invalid language tag")]
+    InvalidLanguageTag,
+
+    /// 语言标签规范化后重复。
+    #[error("duplicate language tag")]
+    DuplicateLanguageTag,
+
+    /// 项目存在需要拥有者处理的语言歧义。
+    #[error("project language resolution required")]
+    ProjectLanguageResolutionRequired,
+
     /// 数据库错误。
     #[error("database error")]
     Database(#[source] sqlx_error::SqlxError),
@@ -56,6 +68,9 @@ impl Error {
             Error::NotFound => "not_found",
             Error::Conflict => "conflict",
             Error::AuditUnavailable => "AUDIT_UNAVAILABLE",
+            Error::InvalidLanguageTag => "INVALID_LANGUAGE_TAG",
+            Error::DuplicateLanguageTag => "DUPLICATE_LANGUAGE_TAG",
+            Error::ProjectLanguageResolutionRequired => "PROJECT_LANGUAGE_RESOLUTION_REQUIRED",
             Error::Database(_) => "internal",
             Error::Internal(_) => "internal",
         }

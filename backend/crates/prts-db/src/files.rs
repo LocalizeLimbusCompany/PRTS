@@ -130,18 +130,22 @@ pub async fn find_folder_for_update_tx(
 
 /// 列出项目的全部文件夹。
 pub async fn list_folders(pool: &PgPool, project_id: i64) -> Result<Vec<Folder>, sqlx::Error> {
-    sqlx::query_as::<_, Folder>("SELECT * FROM folders WHERE project_id = $1 ORDER BY path")
-        .bind(project_id)
-        .fetch_all(pool)
-        .await
+    sqlx::query_as::<_, Folder>(
+        "SELECT * FROM folders WHERE project_id = $1 AND deleted_at IS NULL ORDER BY path",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
 }
 
 /// 列出项目的全部文件。
 pub async fn list_files(pool: &PgPool, project_id: i64) -> Result<Vec<File>, sqlx::Error> {
-    sqlx::query_as::<_, File>("SELECT * FROM files WHERE project_id = $1 ORDER BY path")
-        .bind(project_id)
-        .fetch_all(pool)
-        .await
+    sqlx::query_as::<_, File>(
+        "SELECT * FROM files WHERE project_id = $1 AND deleted_at IS NULL ORDER BY path",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
 }
 
 /// 统计指定文件夹子树内的文件数与物化词条数，供删除审计保存无正文元数据。
@@ -226,7 +230,7 @@ pub async fn delete_folder_tx(
     Ok(res.rows_affected() > 0)
 }
 
-/// 重算并更新文件的词条计数。
+/// 低频修复文件计数；正常读取使用 `file_stats`。
 pub async fn refresh_entry_count(pool: &PgPool, file_id: i64) -> Result<(), sqlx::Error> {
     let mut connection = pool.acquire().await?;
     refresh_entry_count_tx(&mut connection, file_id).await
@@ -238,7 +242,9 @@ pub async fn refresh_entry_count_tx(
     file_id: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE files SET entry_count = (SELECT COUNT(*) FROM entries WHERE file_id = $1) WHERE id = $1",
+        "UPDATE files SET entry_count = (
+             SELECT visible_total::INTEGER FROM file_stats WHERE file_id = $1
+         ) WHERE id = $1",
     )
     .bind(file_id)
     .execute(conn)

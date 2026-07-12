@@ -63,6 +63,7 @@ dotenvy = "0.15"
 # —— 通用类型 ——
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+language-tags = "0.3.2"
 
 # —— 认证 / 加密（纯 Rust，避免 C / ring 构建）——
 argon2 = { version = "0.5", features = ["std"] }
