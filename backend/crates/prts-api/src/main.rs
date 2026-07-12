@@ -111,6 +111,10 @@ async fn main() -> anyhow::Result<()> {
             embedder.clone(),
             search_rt.clone(),
         )),
+        Arc::new(crate::jobs::cleanup_uploads::CleanupUploadsHandler::new(
+            db.clone(),
+            settings.media.upload_temp_directory.clone(),
+        )),
     ]);
     sqlx::query(
         "UPDATE workspace_foundation_state SET lexical_worker_registered = TRUE, updated_at = now()

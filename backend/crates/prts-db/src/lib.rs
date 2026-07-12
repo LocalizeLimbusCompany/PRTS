@@ -21,6 +21,7 @@ pub mod search_settings;
 pub mod settings;
 pub mod stats;
 pub mod upload_settings;
+pub mod uploads;
 pub mod users;
 
 /// 数据库错误别名，便于上层映射而无需直接依赖 sqlx。

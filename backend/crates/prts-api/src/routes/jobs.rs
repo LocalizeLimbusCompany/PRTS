@@ -294,6 +294,8 @@ mod tests {
             started_at: Some(now),
             finished_at: Some(now),
             updated_at: now,
+            upload_batch_file_id: None,
+            target_file_id: None,
         };
         let json = serde_json::to_value(JobDto::from_job(job, true)).unwrap();
         assert_eq!(json["last_error_code"], "provider_unavailable");

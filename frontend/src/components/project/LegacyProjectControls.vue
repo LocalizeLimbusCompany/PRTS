@@ -4,7 +4,8 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
-import { apiErrorMessage, entriesApi, projectsApi, type MemberDto } from '@/api'
+import { apiErrorMessage, projectsApi, type MemberDto } from '@/api'
+import { useUploadBatch } from '@/composables/useUploadBatch'
 import { hasProjectCapability } from '@/lib/capabilities'
 import { ROLE_LABELS, roleLabel } from '@/lib/states'
 import { useAuthStore } from '@/stores/auth'
@@ -18,7 +19,12 @@ const { t } = useI18n()
 
 const members = ref<MemberDto[]>([])
 const pickedFiles = ref<File[]>([])
-const uploading = ref(false)
+const upload = useUploadBatch(() => projectId.value)
+const {
+  running: uploadRunning,
+  totalLoaded: uploadTotalLoaded,
+  totalBytes: uploadTotalBytes,
+} = upload
 const showAddMember = ref(false)
 const newMember = ref({ username: '', role: 'translator' })
 const roleOptions = ['manager', 'reviewer', 'translator']
@@ -28,30 +34,27 @@ async function loadMembers() {
   members.value = await projectsApi.members(projectId.value)
 }
 
-/** Upload selected JSON files through the legacy endpoint until batch upload replaces it. */
+/** Keep folder selection focused on raw JSON files without reading their contents. */
+function jsonFileFilter(files: readonly File[] | FileList) {
+  return Array.from(files).filter((file) => file.name.toLocaleLowerCase().endsWith('.json'))
+}
+
+/** Stream selected files as a durable batch without parsing their contents in the browser. */
 async function uploadFiles() {
   if (pickedFiles.value.length === 0) return
-  uploading.value = true
   try {
-    let created = 0
-    let updated = 0
-    for (const file of pickedFiles.value) {
-      const parsed: unknown = JSON.parse(await file.text())
-      if (!Array.isArray(parsed)) throw new Error(`${file.name}: JSON root must be an array`)
-      const result = await entriesApi.upload(projectId.value, {
-        path: file.webkitRelativePath || file.name,
-        entries: parsed as Array<Record<string, unknown>>,
-      })
-      created += result.created
-      updated += result.updated
-    }
-    $q.notify({ type: 'positive', message: `${t('project.legacy.uploaded')} · +${created} / ~${updated}` })
+    await upload.start(pickedFiles.value)
+    const failed = upload.queue.value.filter((file) => file.state === 'failed').length
+    $q.notify({
+      type: failed ? 'warning' : 'positive',
+      message: failed
+        ? t('project.legacy.uploadPartial', { failed })
+        : t('project.legacy.uploaded'),
+    })
     pickedFiles.value = []
     await reload()
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error) })
-  } finally {
-    uploading.value = false
   }
 }
 
@@ -113,16 +116,29 @@ onMounted(() => {
           <div class="prts-label">{{ $t('project.legacy.upload') }}</div>
           <div class="prts-dim q-mt-xs">{{ $t('project.legacy.uploadHint') }}</div>
         </div>
-        <q-file
-          v-model="pickedFiles"
-          dense
-          outlined
-          multiple
-          accept=".json,application/json"
-          :disable="uploading"
-          :label="$t('project.legacy.chooseFiles')"
-          style="min-width: 280px"
-        />
+        <div class="legacy-controls__pickers">
+          <q-file
+            v-model="pickedFiles"
+            dense
+            outlined
+            multiple
+            accept=".json,application/json"
+            :filter="jsonFileFilter"
+            :disable="uploadRunning"
+            :label="$t('project.legacy.chooseFiles')"
+          />
+          <q-file
+            v-model="pickedFiles"
+            dense
+            outlined
+            multiple
+            webkitdirectory
+            accept=".json,application/json"
+            :filter="jsonFileFilter"
+            :disable="uploadRunning"
+            :label="$t('project.legacy.chooseFolder')"
+          />
+        </div>
         <q-btn
           unelevated
           no-caps
@@ -130,9 +146,15 @@ onMounted(() => {
           text-color="dark"
           icon="mdi-upload"
           :label="$t('project.legacy.uploadAction')"
-          :loading="uploading"
+          :loading="uploadRunning"
           :disable="pickedFiles.length === 0"
           @click="uploadFiles"
+        />
+        <q-linear-progress
+          v-if="uploadRunning && uploadTotalBytes > 0"
+          :value="uploadTotalLoaded / uploadTotalBytes"
+          color="primary"
+          size="4px"
         />
       </q-card-section>
     </q-card>
@@ -258,9 +280,21 @@ onMounted(() => {
   border-color: color-mix(in srgb, var(--prts-danger) 48%, var(--prts-border));
 }
 
+.legacy-controls__pickers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(190px, 1fr));
+  gap: 8px;
+  min-width: min(460px, 48vw);
+}
+
 @media (max-width: 760px) {
   .legacy-controls__section {
     grid-template-columns: 1fr;
+  }
+
+  .legacy-controls__pickers {
+    grid-template-columns: 1fr;
+    min-width: 0;
   }
 }
 </style>

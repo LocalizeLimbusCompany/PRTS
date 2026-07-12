@@ -55,6 +55,8 @@ mod project_media_routes;
 mod projects_routes;
 #[path = "../src/routes/users.rs"]
 mod users_routes;
+#[path = "../src/routes/uploads.rs"]
+mod uploads_routes;
 
 /// 将数据库错误映射为真实 handler 使用的统一 API 错误。
 fn db_err(error: prts_db::DbError) -> error::ApiError {
@@ -82,6 +84,7 @@ use prts_db::{
 static MIGRATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 static SEARCH_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static UPLOAD_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static UPLOAD_LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -356,6 +359,51 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         allowed_payload_keys: &["file_id", "path", "created", "updated", "unchanged"],
     },
     AuditedEntrypoint {
+        entrypoint: "routes::uploads::create_batch",
+        action: "upload.batch_created",
+        allowed_payload_keys: &["file_count", "total_bytes"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::uploads::receive_attempt.started",
+        action: "upload.attempt_started",
+        allowed_payload_keys: &["batch_id", "batch_file_id"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::uploads::receive_attempt.received",
+        action: "upload.attempt_received",
+        allowed_payload_keys: &["batch_id", "batch_file_id", "bytes_received"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::uploads::receive_attempt.failed",
+        action: "upload.attempt_failed",
+        allowed_payload_keys: &["batch_id", "batch_file_id", "bytes_received", "error_code"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::uploads::complete_batch",
+        action: "upload.batch_queued",
+        allowed_payload_keys: &["file_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::uploads::retry_file",
+        action: "upload.file_retried",
+        allowed_payload_keys: &["batch_id", "batch_file_id", "attempt_number"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::uploads::cancel_batch",
+        action: "upload.batch_cancelled",
+        allowed_payload_keys: &["file_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "jobs::cleanup_uploads::expire_due",
+        action: "upload.batch_expired",
+        allowed_payload_keys: &["file_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "jobs::cleanup_uploads::mark_attempt_cleaned",
+        action: "upload.attempt_cleaned",
+        allowed_payload_keys: &["batch_id", "batch_file_id"],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::files::delete_file",
         action: "file.deleted",
         allowed_payload_keys: &["path", "entry_count"],
@@ -622,6 +670,69 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "upload.batch_created",
+        target_type: "upload_batch",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.attempt_started",
+        target_type: "upload_attempt",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.attempt_received",
+        target_type: "upload_attempt",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.attempt_failed",
+        target_type: "upload_attempt",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.batch_queued",
+        target_type: "upload_batch",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.file_retried",
+        target_type: "upload_attempt",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.batch_cancelled",
+        target_type: "upload_batch",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.batch_expired",
+        target_type: "upload_batch",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "upload.attempt_cleaned",
+        target_type: "upload_attempt",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "file.deleted",
         target_type: "file",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -733,6 +844,15 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "language_resolution::complete_owner_resolution_tx",
     "language_resolution::update_entry_original_tx",
     "language_resolution::retry_failed_project_repair_tx",
+    "uploads::create_batch_tx",
+    "uploads::claim_attempt_for_receive_tx",
+    "uploads::mark_attempt_received_tx",
+    "uploads::fail_attempt_tx",
+    "uploads::queue_batch_tx",
+    "uploads::retry_file_tx",
+    "uploads::cancel_batch_tx",
+    "uploads::expire_due",
+    "uploads::mark_attempt_cleaned",
 ];
 
 /// DB-authoritative session 与 durable intent/outbox 的全部现有写边界。
@@ -780,6 +900,8 @@ const UNAUDITED_READS: &[&str] = &[
     "messages::unread_count",
     "language_resolution::get_project_language_resolution",
     "language_resolution::list_admin_language_resolutions",
+    "uploads::get_batch",
+    "uploads::list_cleanup_candidates",
 ];
 
 #[test]
@@ -788,7 +910,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        37,
+        46,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -796,11 +918,11 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         16,
         "auth/session writer inventory 发生漂移"
     );
-    assert_eq!(UNAUDITED_READS.len(), 23, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 42, "审计入口 inventory 发生漂移");
+    assert_eq!(UNAUDITED_READS.len(), 25, "普通读取 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 51, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        39,
+        48,
         "action 合同 inventory 发生漂移"
     );
 
@@ -5164,6 +5286,394 @@ async fn audit_jobs_project(pool: &prts_db::Db, prefix: &str) -> (i64, i64, Stri
     .await
     .unwrap();
     (user_id, project_id, slug)
+}
+
+async fn upload_test_cleanup(pool: &prts_db::Db, user_id: i64, project_id: i64) {
+    sqlx::query("DELETE FROM jobs WHERE project_id = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM upload_batches WHERE project_id_snapshot = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// 0010 一次冻结上传/history schema、显式 FK delete action、状态与 writer readiness gate。
+#[tokio::test]
+async fn upload_history_schema_contract_is_complete_and_gated() {
+    let pool = pool().await;
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = ANY($1::TEXT[])
+         ORDER BY table_name",
+    )
+    .bind(&[
+        "file_change_items",
+        "file_change_sets",
+        "upload_batch_files",
+        "upload_batches",
+        "upload_file_attempts",
+    ][..])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tables.len(), 5);
+
+    let readiness: (i32, bool, bool) = sqlx::query_as(
+        "SELECT schema_revision, upload_history_schema_ready, file_history_writer_ready
+         FROM workspace_foundation_state WHERE singleton",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(readiness, (10, true, false));
+
+    let constraints: Vec<(String, String)> = sqlx::query_as(
+        "SELECT info.constraint_name, pg_get_constraintdef(constraint.oid)
+         FROM information_schema.table_constraints AS info
+         JOIN pg_namespace AS namespace ON namespace.nspname = info.constraint_schema
+         JOIN pg_class AS table_class ON table_class.relnamespace = namespace.oid
+              AND table_class.relname = info.table_name
+         JOIN pg_constraint AS constraint ON constraint.conname = info.constraint_name
+              AND constraint.conrelid = table_class.oid
+         WHERE info.table_schema = 'public'
+           AND info.constraint_name = ANY($1::TEXT[])
+         ORDER BY constraint_name",
+    )
+    .bind(&[
+        "files_deletion_change_set_fk",
+        "file_change_sets_project_id_fkey",
+        "folders_deletion_change_set_fk",
+        "upload_batch_files_processing_job_id_fkey",
+        "upload_batch_files_target_file_id_fkey",
+        "upload_file_attempts_target_file_id_fkey",
+    ][..])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(constraints.len(), 6);
+    for (name, definition) in constraints {
+        if name.ends_with("deletion_change_set_fk") || name == "file_change_sets_project_id_fkey" {
+            assert!(!definition.contains("ON DELETE CASCADE"));
+            assert!(!definition.contains("ON DELETE SET NULL"));
+        } else {
+            assert!(definition.contains("ON DELETE SET NULL"), "{name}: {definition}");
+        }
+    }
+
+    let attempt_state_constraint: String = sqlx::query_scalar(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint
+         WHERE conname = 'upload_file_attempts_state_chk'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(attempt_state_constraint.contains("receiving"));
+    let cleanup_index: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes
+         WHERE schemaname = 'public' AND indexname = 'upload_file_attempts_cleanup_idx'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(cleanup_index.contains("cleaned_at IS NULL"));
+}
+
+/// byte-zero retry 保留旧 attempt，并在同一 logical file 上复用 processing job id。
+#[tokio::test]
+async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history() {
+    let pool = pool().await;
+    let (user_id, project_id, _) = audit_jobs_project(&pool, "upload-retry").await;
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(24);
+    let first_key = format!("projects/{project_id}/uploads/test/first.json");
+    let mut tx = pool.begin().await.unwrap();
+    let batch = prts_db::uploads::create_batch_tx(
+        &mut tx,
+        project_id,
+        user_id,
+        &[prts_db::uploads::UploadDeclaration {
+            path: "folder/file.json".to_string(),
+            declared_bytes: 4,
+            temp_key: first_key,
+        }],
+        expires_at,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let file = &batch.files[0];
+    let first_attempt = &batch.attempts[0];
+
+    let mut tx = pool.begin().await.unwrap();
+    let claimed = prts_db::uploads::claim_attempt_for_receive_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        file.id,
+        first_attempt.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(claimed.2.state, "receiving");
+    assert!(prts_db::uploads::claim_attempt_for_receive_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        file.id,
+        first_attempt.id,
+    )
+    .await
+    .unwrap()
+    .is_none());
+    assert!(prts_db::uploads::mark_attempt_received_tx(
+        &mut tx,
+        file.id,
+        first_attempt.id,
+        4,
+    )
+    .await
+    .unwrap());
+    let jobs = prts_db::uploads::queue_batch_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        user_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let processing_job_id = jobs[0].id;
+    tx.commit().await.unwrap();
+
+    sqlx::query("UPDATE jobs SET state = 'failed' WHERE id = $1")
+        .bind(processing_job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE upload_batch_files SET state = 'failed' WHERE id = $1")
+        .bind(file.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE upload_file_attempts SET state = 'failed', error_code = 'processing_failed'
+         WHERE id = $1",
+    )
+    .bind(first_attempt.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    assert!(prts_db::uploads::retry_file_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        file.id,
+        user_id + 1,
+        "projects/other/retry.json",
+        expires_at,
+    )
+    .await
+    .unwrap()
+    .is_none());
+    let retry = prts_db::uploads::retry_file_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        file.id,
+        user_id,
+        &format!("projects/{project_id}/uploads/test/retry.json"),
+        expires_at,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(retry.attempt_number, 2);
+    assert_eq!(retry.bytes_received, 0);
+    assert!(retry.error_code.is_none());
+    tx.commit().await.unwrap();
+
+    let snapshot = prts_db::uploads::find_batch(&pool, project_id, batch.batch.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.attempts.len(), 2);
+    assert_eq!(snapshot.attempts[0].error_code.as_deref(), Some("processing_failed"));
+    assert_eq!(snapshot.files[0].processing_job_id, Some(processing_job_id));
+
+    let mut tx = pool.begin().await.unwrap();
+    prts_db::uploads::claim_attempt_for_receive_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        file.id,
+        retry.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    prts_db::uploads::mark_attempt_received_tx(&mut tx, file.id, retry.id, 4)
+        .await
+        .unwrap();
+    let jobs = prts_db::uploads::queue_batch_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        user_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(jobs[0].id, processing_job_id);
+    assert_eq!(jobs[0].payload["attempt_id"], retry.id);
+    assert_eq!(jobs[0].attempts, 0);
+    tx.commit().await.unwrap();
+
+    upload_test_cleanup(&pool, user_id, project_id).await;
+}
+
+/// complete 拒绝不完整字节数；cancel/expiry 保留 durable cleanup 候选并收敛状态。
+#[tokio::test]
+async fn upload_batch_incomplete_cancel_expiry_and_cleanup_are_durable() {
+    let _upload_lifecycle_guard = UPLOAD_LIFECYCLE_TEST_LOCK.lock().await;
+    let pool = pool().await;
+    let (user_id, project_id, _) = audit_jobs_project(&pool, "upload-cleanup").await;
+    let past = chrono::Utc::now() - chrono::Duration::minutes(1);
+    let mut tx = pool.begin().await.unwrap();
+    let batch = prts_db::uploads::create_batch_tx(
+        &mut tx,
+        project_id,
+        user_id,
+        &[prts_db::uploads::UploadDeclaration {
+            path: "cancel/file.json".to_string(),
+            declared_bytes: 9,
+            temp_key: format!("projects/{project_id}/uploads/test/cancel.json"),
+        }],
+        past,
+    )
+    .await
+    .unwrap();
+    assert!(prts_db::uploads::queue_batch_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        user_id,
+    )
+    .await
+    .is_err());
+    tx.rollback().await.unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    let batch = prts_db::uploads::create_batch_tx(
+        &mut tx,
+        project_id,
+        user_id,
+        &[prts_db::uploads::UploadDeclaration {
+            path: "cancel/file.json".to_string(),
+            declared_bytes: 9,
+            temp_key: format!("projects/{project_id}/uploads/test/cancel-2.json"),
+        }],
+        chrono::Utc::now() + chrono::Duration::hours(24),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    prts_db::uploads::claim_attempt_for_receive_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        batch.files[0].id,
+        batch.attempts[0].id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let keys = prts_db::uploads::cancel_batch_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        user_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(keys.len(), 1);
+    tx.commit().await.unwrap();
+    let cancelled = prts_db::uploads::find_batch(&pool, project_id, batch.batch.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cancelled.batch.state, "cancelled");
+    assert_eq!(cancelled.attempts[0].state, "cancelled");
+    assert!(prts_db::uploads::list_cleanup_candidates(&pool, 100)
+        .await
+        .unwrap()
+        .iter()
+        .any(|(id, _)| *id == batch.attempts[0].id));
+    prts_db::uploads::mark_attempt_cleaned(&pool, batch.attempts[0].id)
+        .await
+        .unwrap();
+    let cleaned_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT cleaned_at FROM upload_file_attempts WHERE id = $1",
+    )
+    .bind(batch.attempts[0].id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(cleaned_at.is_some());
+
+    let mut tx = pool.begin().await.unwrap();
+    let expired_batch = prts_db::uploads::create_batch_tx(
+        &mut tx,
+        project_id,
+        user_id,
+        &[prts_db::uploads::UploadDeclaration {
+            path: "expired/file.json".to_string(),
+            declared_bytes: 1,
+            temp_key: format!("projects/{project_id}/uploads/test/expired.json"),
+        }],
+        past,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    prts_db::uploads::expire_due(&pool, 500).await.unwrap();
+    let expired = prts_db::uploads::find_batch(&pool, project_id, expired_batch.batch.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(expired.batch.state, "expired");
+    assert_eq!(expired.attempts[0].state, "expired");
+    let expiry_audit: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log
+         WHERE action = 'upload.batch_expired' AND target_id = $1",
+    )
+    .bind(expired_batch.batch.id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(expiry_audit, 1);
+
+    upload_test_cleanup(&pool, user_id, project_id).await;
 }
 
 /// 审计记录只能追加，数据库层必须拒绝篡改与删除。

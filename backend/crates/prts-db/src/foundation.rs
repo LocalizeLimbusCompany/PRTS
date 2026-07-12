@@ -6,8 +6,8 @@ use sqlx::PgPool;
 pub async fn primary_source_release_ready(pool: &PgPool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT COALESCE((
-             SELECT schema_revision = 8
-                AND primary_search_revision = 9
+             SELECT schema_revision >= 8
+                AND primary_search_revision >= 9
                 AND reconciled_at IS NOT NULL
                 AND lexical_worker_registered
              FROM workspace_foundation_state

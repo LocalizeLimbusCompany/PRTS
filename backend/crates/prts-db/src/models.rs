@@ -254,6 +254,8 @@ pub struct Job {
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
+    pub upload_batch_file_id: Option<i64>,
+    pub target_file_id: Option<i64>,
 }
 
 /// 项目 effective-visible 物化统计。
@@ -281,6 +283,57 @@ pub struct FileStats {
     pub checked_count: i64,
     pub reviewed_count: i64,
     pub updated_at: DateTime<Utc>,
+}
+
+/// 原始文件上传批次；项目删除后以 snapshot id 保留传输历史。
+#[derive(Debug, Clone, FromRow)]
+pub struct UploadBatch {
+    pub id: i64,
+    pub project_id: Option<i64>,
+    pub project_id_snapshot: i64,
+    pub actor_id: Option<i64>,
+    pub state: String,
+    pub declared_file_count: i32,
+    pub declared_total_bytes: i64,
+    pub expires_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub cancelled_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 批次中的逻辑文件；重试不会创建新的逻辑文件或处理 job。
+#[derive(Debug, Clone, FromRow)]
+pub struct UploadBatchFile {
+    pub id: i64,
+    pub batch_id: i64,
+    pub ordinal: i32,
+    pub path: String,
+    pub declared_bytes: i64,
+    pub state: String,
+    pub current_attempt_id: Option<i64>,
+    pub processing_job_id: Option<i64>,
+    pub target_file_id: Option<i64>,
+    pub last_error_code: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 一次从 byte zero 开始的原始文件传输尝试。
+#[derive(Debug, Clone, FromRow)]
+pub struct UploadFileAttempt {
+    pub id: i64,
+    pub batch_file_id: i64,
+    pub attempt_number: i32,
+    pub state: String,
+    pub temp_key: String,
+    pub bytes_received: i64,
+    pub target_file_id: Option<i64>,
+    pub error_code: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub cleanup_after: DateTime<Utc>,
+    pub cleaned_at: Option<DateTime<Utc>>,
 }
 
 /// 语言歧义诊断；metadata 禁止保存正文或秘密。

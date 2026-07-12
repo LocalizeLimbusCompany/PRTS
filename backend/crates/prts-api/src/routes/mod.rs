@@ -16,6 +16,7 @@ pub mod projects;
 pub mod search;
 pub mod suggestions;
 pub mod users;
+pub mod uploads;
 pub mod ws;
 
 use axum::routing::get;
@@ -117,6 +118,12 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(files::delete_folder))
         // 上传 / 词条 / 导出
         .routes(routes!(entries::upload))
+        .routes(routes!(uploads::create_batch))
+        .routes(routes!(uploads::receive_attempt))
+        .routes(routes!(uploads::complete_batch))
+        .routes(routes!(uploads::get_batch))
+        .routes(routes!(uploads::retry_file))
+        .routes(routes!(uploads::cancel_batch))
         .routes(routes!(entries::list_entries))
         .routes(routes!(entries::get_entry, entries::update_entry))
         .routes(routes!(entries::set_entry_flags))

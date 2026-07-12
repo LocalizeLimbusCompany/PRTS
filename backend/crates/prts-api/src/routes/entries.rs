@@ -67,7 +67,7 @@ pub struct UploadResult {
 }
 
 /// 上传词条到项目（按路径自动建文件夹/文件）。需项目「上传」权限。
-#[utoipa::path(post, path = "/projects/{id}/upload", tag = "entry", request_body = UploadReq,
+#[utoipa::path(post, path = "/projects/{id}/upload", tag = "entry", deprecated, request_body = UploadReq,
     responses(
         (status = 200, body = UploadResult),
         (status = 400),
