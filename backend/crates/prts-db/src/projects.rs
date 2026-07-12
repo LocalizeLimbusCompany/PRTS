@@ -227,7 +227,7 @@ pub async fn set_avatar_tx(
 pub async fn clear_avatar_tx(conn: &mut PgConnection, id: i64) -> Result<Project, sqlx::Error> {
     sqlx::query_as::<_, Project>(
         "UPDATE projects
-         SET avatar_key = NULL, avatar_content_type = NULL, avatar_updated_at = now()
+         SET avatar_key = NULL, avatar_content_type = NULL, avatar_updated_at = NULL
          WHERE id = $1
          RETURNING *",
     )
