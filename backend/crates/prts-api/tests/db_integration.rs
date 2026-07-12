@@ -49,10 +49,10 @@ mod messages_routes;
 mod meta_routes;
 #[path = "../src/routes/notifications.rs"]
 mod notifications_routes;
-#[path = "../src/routes/projects.rs"]
-mod projects_routes;
 #[path = "../src/routes/project_media.rs"]
 mod project_media_routes;
+#[path = "../src/routes/projects.rs"]
+mod projects_routes;
 #[path = "../src/routes/users.rs"]
 mod users_routes;
 

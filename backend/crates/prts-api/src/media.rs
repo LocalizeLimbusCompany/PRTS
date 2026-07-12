@@ -66,7 +66,9 @@ pub fn validate_project_avatar(bytes: &[u8]) -> Result<(), AvatarValidationError
 }
 
 /// 校验请求声明的媒体类型，防止只凭文件扩展名接受内容。
-pub fn validate_avatar_content_type(content_type: Option<&str>) -> Result<(), AvatarValidationError> {
+pub fn validate_avatar_content_type(
+    content_type: Option<&str>,
+) -> Result<(), AvatarValidationError> {
     if content_type.is_some_and(|value| value.eq_ignore_ascii_case(AVATAR_CONTENT_TYPE)) {
         Ok(())
     } else {

@@ -224,10 +224,7 @@ pub async fn set_avatar_tx(
 }
 
 /// 在调用方事务内清除项目头像元数据。
-pub async fn clear_avatar_tx(
-    conn: &mut PgConnection,
-    id: i64,
-) -> Result<Project, sqlx::Error> {
+pub async fn clear_avatar_tx(conn: &mut PgConnection, id: i64) -> Result<Project, sqlx::Error> {
     sqlx::query_as::<_, Project>(
         "UPDATE projects
          SET avatar_key = NULL, avatar_content_type = NULL, avatar_updated_at = now()

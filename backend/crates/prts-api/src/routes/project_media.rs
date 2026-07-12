@@ -25,11 +25,7 @@ fn media_error(error: std::io::Error) -> ApiError {
     Error::internal("project media storage unavailable").into()
 }
 
-async fn restore_after_failed_commit(
-    state: &AppState,
-    key: &str,
-    previous: Option<&[u8]>,
-) {
+async fn restore_after_failed_commit(state: &AppState, key: &str, previous: Option<&[u8]>) {
     let result = match previous {
         Some(bytes) => state.media.write_atomic(key, bytes).await,
         None => state.media.delete(key).await,
@@ -115,7 +111,11 @@ pub async fn upload_project_avatar(
     )
     .await
     .map_err(|_| Error::AuditUnavailable)?;
-    state.media.write_atomic(&key, &body).await.map_err(media_error)?;
+    state
+        .media
+        .write_atomic(&key, &body)
+        .await
+        .map_err(media_error)?;
     if let Err(error) = tx.commit().await {
         restore_after_failed_commit(&state, &key, previous.as_deref()).await;
         return Err(db_err(error));
