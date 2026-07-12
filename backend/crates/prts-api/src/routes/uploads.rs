@@ -218,18 +218,24 @@ async fn remove_temp(root: &str, key: &str) {
     }
 }
 
-async fn record_attempt_failure(
-    state: &AppState,
-    user: &CurrentUser,
+/// 一次接收失败所需的稳定资源标识，用于重新鉴权并写入审计。
+#[derive(Clone, Copy)]
+struct UploadAttemptIdentity {
     project_id: i64,
     batch_id: i64,
     batch_file_id: i64,
     attempt_id: i64,
+}
+
+async fn record_attempt_failure(
+    state: &AppState,
+    user: &CurrentUser,
+    identity: UploadAttemptIdentity,
     error_code: &'static str,
     bytes_received: i64,
 ) -> Result<(), ApiError> {
     let mut tx = state.db.begin().await.map_err(db_err)?;
-    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, project_id)
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, identity.project_id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
@@ -238,8 +244,8 @@ async fn record_attempt_failure(
     locked.require_language_ready()?;
     if !prts_db::uploads::fail_attempt_tx(
         &mut tx,
-        batch_file_id,
-        attempt_id,
+        identity.batch_file_id,
+        identity.attempt_id,
         error_code,
         bytes_received,
     )
@@ -256,10 +262,10 @@ async fn record_attempt_failure(
             ip: None,
         },
         AuditEvent::UploadAttemptFailed {
-            project_id,
-            batch_id,
-            batch_file_id,
-            attempt_id,
+            project_id: identity.project_id,
+            batch_id: identity.batch_id,
+            batch_file_id: identity.batch_file_id,
+            attempt_id: identity.attempt_id,
             bytes_received,
             error_code,
         },
@@ -391,6 +397,12 @@ pub async fn receive_attempt(
     if file.declared_bytes > config.max_bytes_per_file {
         return Err(Error::bad_request("upload_file_size_exceeded").into());
     }
+    let identity = UploadAttemptIdentity {
+        project_id,
+        batch_id,
+        batch_file_id: file_id,
+        attempt_id,
+    };
     prts_db::audit::append_event_tx(
         &mut tx,
         AuditActor {
@@ -420,10 +432,7 @@ pub async fn receive_attempt(
         record_attempt_failure(
             &state,
             &user,
-            project_id,
-            batch_id,
-            file_id,
-            attempt_id,
+            identity,
             "upload_temp_storage_unavailable",
             0,
         )
@@ -437,10 +446,7 @@ pub async fn receive_attempt(
             record_attempt_failure(
                 &state,
                 &user,
-                project_id,
-                batch_id,
-                file_id,
-                attempt_id,
+                identity,
                 "upload_temp_storage_unavailable",
                 0,
             )
@@ -459,10 +465,7 @@ pub async fn receive_attempt(
                 record_attempt_failure(
                     &state,
                     &user,
-                    project_id,
-                    batch_id,
-                    file_id,
-                    attempt_id,
+                    identity,
                     "upload_stream_interrupted",
                     received,
                 )
@@ -476,10 +479,7 @@ pub async fn receive_attempt(
             record_attempt_failure(
                 &state,
                 &user,
-                project_id,
-                batch_id,
-                file_id,
-                attempt_id,
+                identity,
                 "upload_file_size_exceeded",
                 received,
             )
@@ -493,10 +493,7 @@ pub async fn receive_attempt(
             record_attempt_failure(
                 &state,
                 &user,
-                project_id,
-                batch_id,
-                file_id,
-                attempt_id,
+                identity,
                 "upload_file_size_mismatch",
                 received,
             )
@@ -509,10 +506,7 @@ pub async fn receive_attempt(
             record_attempt_failure(
                 &state,
                 &user,
-                project_id,
-                batch_id,
-                file_id,
-                attempt_id,
+                identity,
                 "upload_temp_storage_unavailable",
                 received,
             )
@@ -526,10 +520,7 @@ pub async fn receive_attempt(
         record_attempt_failure(
             &state,
             &user,
-            project_id,
-            batch_id,
-            file_id,
-            attempt_id,
+            identity,
             "upload_temp_storage_unavailable",
             received,
         )
@@ -542,10 +533,7 @@ pub async fn receive_attempt(
         record_attempt_failure(
             &state,
             &user,
-            project_id,
-            batch_id,
-            file_id,
-            attempt_id,
+            identity,
             "upload_file_size_mismatch",
             received,
         )
@@ -557,10 +545,7 @@ pub async fn receive_attempt(
         record_attempt_failure(
             &state,
             &user,
-            project_id,
-            batch_id,
-            file_id,
-            attempt_id,
+            identity,
             "upload_temp_storage_unavailable",
             received,
         )
