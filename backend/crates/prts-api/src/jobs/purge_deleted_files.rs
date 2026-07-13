@@ -48,6 +48,7 @@ impl JobHandler for PurgeDeletedFilesHandler {
                 for operation in &operations {
                     after = Some((operation.purge_after, operation.change_set_id));
                     let mut tx = self.db.begin().await.map_err(database_error)?;
+                    // 仓储事务先置空 task file/entry live refs 并重算 task_stats，之后才删业务树。
                     let purged = prts_db::file_history::purge_due_operation_tx(
                         &mut tx,
                         operation,

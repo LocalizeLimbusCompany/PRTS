@@ -270,6 +270,27 @@ pub enum AuditEvent<'a> {
         member_id: i64,
         previous_role: &'a str,
     },
+    TaskCreated {
+        project_id: i64,
+        task_id: i64,
+        file_count: usize,
+        baseline_entry_count: i64,
+    },
+    TaskUpdated {
+        project_id: i64,
+        task_id: i64,
+        changed_fields: &'a [&'a str],
+        retained_files: usize,
+        added_files: usize,
+        removed_files: usize,
+        baseline_entries_added: i64,
+    },
+    TaskDeleted {
+        project_id: i64,
+        task_id: i64,
+        file_count: i64,
+        baseline_entry_count: i64,
+    },
     EntriesUploaded {
         project_id: i64,
         file_id: i64,
@@ -725,6 +746,57 @@ pub async fn append_event_tx(
             serde_json::json!({
                 "member_id": member_id,
                 "previous_role": previous_role,
+            }),
+        ),
+        AuditEvent::TaskCreated {
+            project_id,
+            task_id,
+            file_count,
+            baseline_entry_count,
+        } => (
+            "task.created",
+            "task",
+            task_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "file_count": file_count,
+                "baseline_entry_count": baseline_entry_count,
+            }),
+        ),
+        AuditEvent::TaskUpdated {
+            project_id,
+            task_id,
+            changed_fields,
+            retained_files,
+            added_files,
+            removed_files,
+            baseline_entries_added,
+        } => (
+            "task.updated",
+            "task",
+            task_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "changed_fields": changed_fields,
+                "retained_files": retained_files,
+                "added_files": added_files,
+                "removed_files": removed_files,
+                "baseline_entries_added": baseline_entries_added,
+            }),
+        ),
+        AuditEvent::TaskDeleted {
+            project_id,
+            task_id,
+            file_count,
+            baseline_entry_count,
+        } => (
+            "task.deleted",
+            "task",
+            task_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "file_count": file_count,
+                "baseline_entry_count": baseline_entry_count,
             }),
         ),
         AuditEvent::EntriesUploaded {

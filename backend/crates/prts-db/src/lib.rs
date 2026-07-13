@@ -21,6 +21,7 @@ pub mod search;
 pub mod search_settings;
 pub mod settings;
 pub mod stats;
+pub mod tasks;
 pub mod upload_settings;
 pub mod uploads;
 pub mod users;

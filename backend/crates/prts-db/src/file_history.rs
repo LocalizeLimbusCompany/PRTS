@@ -629,6 +629,8 @@ pub async fn purge_due_operation_tx(
         .execute(&mut *conn)
         .await?;
     }
+    // task live refs 必须在删除 entries/files 之前显式置 NULL；immutable snapshot IDs 保留。
+    super::tasks::detach_live_refs_for_purge_tx(conn, &file_ids, &entry_ids).await?;
     if !entry_ids.is_empty() {
         sqlx::query(
             "UPDATE language_resolution_issues SET entry_id = NULL
@@ -1107,7 +1109,9 @@ pub async fn apply_plan_tx(
         .await?;
         require_affected("restore rollback file", restored.rows_affected(), 1)?;
     }
-    verify_stats_nonnegative_tx(conn, project_id, plan.file_stats_delta.map(|value| value.0)).await
+    verify_stats_nonnegative_tx(conn, project_id, plan.file_stats_delta.map(|value| value.0))
+        .await?;
+    super::tasks::recompute_project_tx(conn, project_id).await
 }
 
 async fn apply_mutation_tx(

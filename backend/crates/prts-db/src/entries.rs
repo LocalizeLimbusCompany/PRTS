@@ -826,7 +826,7 @@ pub async fn apply_staged_replacement_tx(
          FROM file_stats WHERE file_id = $1",
     )
     .bind(file_id)
-    .fetch_one(conn)
+    .fetch_one(&mut *conn)
     .await?;
     let expected = (
         before_stats.0 + stats_delta.visible_total,
@@ -841,6 +841,7 @@ pub async fn apply_staged_replacement_tx(
             "replacement stats postcondition failed: expected {expected:?}, got {after_stats:?}"
         )));
     }
+    super::tasks::recompute_for_file_ids_tx(conn, &[file_id]).await?;
     Ok(ReplacementApplyResult {
         change_set_id,
         summary,
@@ -990,6 +991,8 @@ pub async fn bulk_upsert_tx(
         }
     }
 
+    super::tasks::recompute_for_file_ids_tx(conn, &[file_id]).await?;
+
     Ok(stats)
 }
 
@@ -1109,6 +1112,14 @@ pub async fn update_translation_tx(
     kind: &str,
     editor_id: Option<i64>,
 ) -> Result<Option<Entry>, sqlx::Error> {
+    let before: Option<(String, bool)> = sqlx::query_as(
+        "SELECT state, prts_entry_is_effectively_visible(entry)
+         FROM entries AS entry WHERE id = $1 AND version = $2 FOR UPDATE",
+    )
+    .bind(entry_id)
+    .bind(expected_version)
+    .fetch_optional(&mut *conn)
+    .await?;
     let updated: Option<Entry> = sqlx::query_as::<_, Entry>(
         "UPDATE entries SET translation = $3, state = $4, version = version + 1, updated_by = $5
          WHERE id = $1 AND version = $2 RETURNING *",
@@ -1134,6 +1145,12 @@ pub async fn update_translation_tx(
         .bind(editor_id)
         .execute(&mut *conn)
         .await?;
+        let (before_state, before_visible) = before.ok_or_else(|| {
+            sqlx::Error::Protocol("entry transition snapshot is missing".to_string())
+        })?;
+        let before = super::tasks::entry_snapshot(&before_state, before_visible)?;
+        let after = super::tasks::entry_snapshot(&e.state, before_visible)?;
+        super::tasks::apply_entry_transition_tx(conn, e.id, before, after).await?;
     }
     Ok(updated)
 }
@@ -1158,7 +1175,15 @@ pub async fn set_flags_tx(
     locked: Option<bool>,
     hidden: Option<bool>,
 ) -> Result<Option<Entry>, sqlx::Error> {
-    sqlx::query_as::<_, Entry>(
+    let before: Option<(String, bool)> = sqlx::query_as(
+        "SELECT state, prts_entry_is_effectively_visible(entry)
+         FROM entries AS entry WHERE id = $1 AND project_id = $2 FOR UPDATE",
+    )
+    .bind(entry_id)
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let updated = sqlx::query_as::<_, Entry>(
         "UPDATE entries SET locked = COALESCE($3, locked), hidden = COALESCE($4, hidden)
          WHERE id = $1 AND project_id = $2 RETURNING *",
     )
@@ -1166,8 +1191,24 @@ pub async fn set_flags_tx(
     .bind(project_id)
     .bind(locked)
     .bind(hidden)
-    .fetch_optional(conn)
-    .await
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(entry) = &updated {
+        let (before_state, before_visible) = before.ok_or_else(|| {
+            sqlx::Error::Protocol("entry flag transition snapshot is missing".to_string())
+        })?;
+        let after_visible: bool = sqlx::query_scalar(
+            "SELECT prts_entry_is_effectively_visible(entry)
+             FROM entries AS entry WHERE id = $1",
+        )
+        .bind(entry.id)
+        .fetch_one(&mut *conn)
+        .await?;
+        let before = super::tasks::entry_snapshot(&before_state, before_visible)?;
+        let after = super::tasks::entry_snapshot(&entry.state, after_visible)?;
+        super::tasks::apply_entry_transition_tx(conn, entry.id, before, after).await?;
+    }
+    Ok(updated)
 }
 
 /// 列出词条历史。

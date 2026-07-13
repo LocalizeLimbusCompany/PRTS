@@ -38,6 +38,8 @@ pub mod nodes {
     pub const PROJECT_HISTORY_VIEW: &str = "project.history.view";
     /// 回滚/恢复文件历史（仅拥有者与管理）。
     pub const PROJECT_HISTORY_ROLLBACK: &str = "project.history.rollback";
+    /// 管理项目任务及其期望文件集合（仅拥有者与管理）。
+    pub const PROJECT_TASK_MANAGE: &str = "project.task.manage";
     /// 编辑词条（翻译）。
     pub const PROJECT_ENTRY_EDIT: &str = "project.entry.edit";
     /// 校对 / 审核词条。
@@ -160,6 +162,7 @@ impl ProjectRole {
                 PROJECT_DOWNLOAD,
                 PROJECT_HISTORY_VIEW,
                 PROJECT_HISTORY_ROLLBACK,
+                PROJECT_TASK_MANAGE,
                 PROJECT_ENTRY_EDIT,
                 PROJECT_ENTRY_REVIEW,
                 PROJECT_ENTRY_LOCK,
@@ -173,6 +176,7 @@ impl ProjectRole {
                 PROJECT_DOWNLOAD,
                 PROJECT_HISTORY_VIEW,
                 PROJECT_HISTORY_ROLLBACK,
+                PROJECT_TASK_MANAGE,
                 PROJECT_ENTRY_EDIT,
                 PROJECT_ENTRY_REVIEW,
                 PROJECT_ENTRY_LOCK,
@@ -268,6 +272,9 @@ mod tests {
         assert!(ProjectRole::Reviewer.has(PROJECT_HISTORY_VIEW));
         assert!(!ProjectRole::Translator.has(PROJECT_HISTORY_ROLLBACK));
         assert!(!ProjectRole::Reviewer.has(PROJECT_HISTORY_ROLLBACK));
+        assert!(!ProjectRole::Translator.has(PROJECT_TASK_MANAGE));
+        assert!(!ProjectRole::Reviewer.has(PROJECT_TASK_MANAGE));
+        assert!(ProjectRole::Manager.has(PROJECT_TASK_MANAGE));
     }
 
     #[test]

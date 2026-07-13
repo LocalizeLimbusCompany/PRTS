@@ -287,6 +287,47 @@ pub struct FileStats {
     pub updated_at: DateTime<Utc>,
 }
 
+/// 项目任务；Markdown 描述只在授权后的任务 API 返回。
+#[derive(Debug, Clone, FromRow)]
+pub struct Task {
+    pub id: i64,
+    pub project_id: i64,
+    pub title: String,
+    pub description: String,
+    pub created_by: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 任务当前文件关系；snapshot id 在业务文件永久清除后仍保留。
+#[derive(Debug, Clone, FromRow)]
+pub struct TaskFile {
+    pub id: i64,
+    pub task_id: i64,
+    pub file_id_snapshot: i64,
+    pub live_file_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 加入 task file 当时的 immutable entry baseline。
+#[derive(Debug, Clone, FromRow)]
+pub struct TaskBaselineEntry {
+    pub id: i64,
+    pub task_file_id: i64,
+    pub entry_id_snapshot: i64,
+    pub live_entry_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// 任务 effective-visible 分母与完成数的物化统计。
+#[derive(Debug, Clone, FromRow)]
+pub struct TaskStats {
+    pub task_id: i64,
+    pub denominator: i64,
+    pub completed: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// 原始文件上传批次；项目删除后以 snapshot id 保留传输历史。
 #[derive(Debug, Clone, FromRow)]
 pub struct UploadBatch {

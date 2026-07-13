@@ -16,6 +16,7 @@ pub mod project_media;
 pub mod projects;
 pub mod search;
 pub mod suggestions;
+pub mod tasks;
 pub mod uploads;
 pub mod users;
 pub mod ws;
@@ -98,6 +99,12 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
         .routes(routes!(projects::change_primary_source))
+        .routes(routes!(tasks::list_tasks, tasks::create_task))
+        .routes(routes!(
+            tasks::get_task,
+            tasks::update_task,
+            tasks::delete_task
+        ))
         .routes(routes!(project_media::get_project_avatar))
         .routes(routes!(project_media::upload_project_avatar))
         .routes(routes!(project_media::delete_project_avatar))
@@ -281,6 +288,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tasks_openapi_documents_keyset_reads_and_fail_closed_mutations() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        for (path, method) in [
+            ("/projects/{id}/tasks", "get"),
+            ("/projects/{id}/tasks", "post"),
+            ("/projects/{id}/tasks/{task_id}", "get"),
+            ("/projects/{id}/tasks/{task_id}", "put"),
+            ("/projects/{id}/tasks/{task_id}", "delete"),
+        ] {
+            assert!(
+                document["paths"][path][method].is_object(),
+                "{method} {path} 必须进入 OpenAPI"
+            );
+        }
+        assert_eq!(
+            document["paths"]["/projects/{id}/tasks"]["get"]["parameters"][1]["name"],
+            "after"
+        );
+        for (path, method) in [
+            ("/projects/{id}/tasks", "post"),
+            ("/projects/{id}/tasks/{task_id}", "put"),
+            ("/projects/{id}/tasks/{task_id}", "delete"),
+        ] {
+            assert_eq!(
+                document["paths"][path][method]["responses"]["503"]["content"]["application/json"]
+                    ["schema"]["$ref"],
+                "#/components/schemas/ErrorResponse"
+            );
+        }
+    }
+
     /// Task 1.2 的认证与受审计 mutation 都公开稳定的 fail-closed 503 schema。
     #[test]
     fn audited_mutations_document_audit_unavailable() {
@@ -306,6 +346,9 @@ mod tests {
             ("/projects/{id}/avatar", "delete"),
             ("/projects/{id}/members", "post"),
             ("/projects/{id}/members/{user_id}", "delete"),
+            ("/projects/{id}/tasks", "post"),
+            ("/projects/{id}/tasks/{task_id}", "put"),
+            ("/projects/{id}/tasks/{task_id}", "delete"),
             ("/projects/{id}/folders", "post"),
             ("/projects/{id}/files/{file_id}", "patch"),
             ("/projects/{id}/files/{file_id}", "delete"),

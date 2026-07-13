@@ -14,6 +14,7 @@ pub struct ProjectCapabilities {
     pub upload_files: bool,
     pub view_file_history: bool,
     pub rollback_file_history: bool,
+    pub manage_tasks: bool,
     pub download: bool,
     pub edit_entry: bool,
     pub review_entry: bool,
@@ -41,6 +42,7 @@ impl ProjectCapabilities {
             upload_files: has(nodes::PROJECT_FILE_UPLOAD),
             view_file_history: has(nodes::PROJECT_HISTORY_VIEW),
             rollback_file_history: has(nodes::PROJECT_HISTORY_ROLLBACK),
+            manage_tasks: has(nodes::PROJECT_TASK_MANAGE),
             download: has(nodes::PROJECT_DOWNLOAD),
             edit_entry: has(nodes::PROJECT_ENTRY_EDIT),
             review_entry: has(nodes::PROJECT_ENTRY_REVIEW),
@@ -65,6 +67,7 @@ mod tests {
         assert!(manager.force_save_presence);
         assert!(manager.view_file_history);
         assert!(manager.rollback_file_history);
+        assert!(manager.manage_tasks);
         assert!(!manager.resolve_languages);
         assert!(!manager.change_primary_source);
         assert!(!manager.delete_project);

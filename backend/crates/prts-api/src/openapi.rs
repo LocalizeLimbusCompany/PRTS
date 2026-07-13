@@ -23,6 +23,7 @@ use utoipa::OpenApi;
         (name = "job", description = "持久化任务进度与受控重试"),
         (name = "file", description = "文件夹 / 文件树"),
         (name = "file-history", description = "文件变更集、恢复与回滚"),
+        (name = "task", description = "项目任务、snapshot baseline 与物化进度"),
         (name = "upload", description = "流式上传批次、传输尝试与清理"),
         (name = "entry", description = "上传 / 词条 / 历史 / 导出"),
         (name = "search", description = "混合搜索（FTS + pg_trgm + RRF 融合）"),

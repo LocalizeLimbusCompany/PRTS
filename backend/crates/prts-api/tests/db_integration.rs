@@ -53,6 +53,8 @@ mod notifications_routes;
 mod project_media_routes;
 #[path = "../src/routes/projects.rs"]
 mod projects_routes;
+#[path = "../src/routes/tasks.rs"]
+mod tasks_routes;
 #[path = "../src/routes/uploads.rs"]
 mod uploads_routes;
 #[path = "../src/routes/users.rs"]
@@ -78,7 +80,7 @@ fn parse_states(value: Option<&str>) -> Vec<String> {
 
 use prts_db::{
     api_keys, auth_sessions, entries, files, jobs as db_jobs, memberships, messages, notifications,
-    projects, settings, users,
+    projects, settings, tasks, users,
 };
 
 static MIGRATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
@@ -86,6 +88,7 @@ static SEARCH_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::c
 static UPLOAD_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static UPLOAD_LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static FILE_HISTORY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static TASK_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -365,6 +368,27 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         entrypoint: "routes::projects::remove_member",
         action: "membership.removed",
         allowed_payload_keys: &["member_id", "previous_role"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::tasks::create_task",
+        action: "task.created",
+        allowed_payload_keys: &["file_count", "baseline_entry_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::tasks::update_task",
+        action: "task.updated",
+        allowed_payload_keys: &[
+            "changed_fields",
+            "retained_files",
+            "added_files",
+            "removed_files",
+            "baseline_entries_added",
+        ],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::tasks::delete_task",
+        action: "task.deleted",
+        allowed_payload_keys: &["file_count", "baseline_entry_count"],
     },
     AuditedEntrypoint {
         entrypoint: "routes::entries::upload",
@@ -741,6 +765,27 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "task.created",
+        target_type: "task",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "task.updated",
+        target_type: "task",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "task.deleted",
+        target_type: "task",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "entries.uploaded",
         target_type: "file",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -980,6 +1025,10 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "file_history::create_folder_tx",
     "file_history::apply_plan_tx",
     "file_history::purge_due_operation_tx",
+    "tasks::create_tx",
+    "tasks::update_metadata_tx",
+    "tasks::apply_file_set_plan_tx",
+    "tasks::delete_tx",
     "entries::bulk_upsert",
     "entries::update_translation",
     "entries::set_flags",
@@ -1057,6 +1106,9 @@ const UNAUDITED_READS: &[&str] = &[
     "projects::list_members",
     "files::get_tree",
     "file_history::list_history",
+    "tasks::list",
+    "tasks::find",
+    "tasks::file_details",
     "entries::list_entries",
     "entries::get_entry",
     "entries::entry_history",
@@ -1077,7 +1129,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        57,
+        61,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -1085,11 +1137,11 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         16,
         "auth/session writer inventory 发生漂移"
     );
-    assert_eq!(UNAUDITED_READS.len(), 26, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 64, "审计入口 inventory 发生漂移");
+    assert_eq!(UNAUDITED_READS.len(), 29, "普通读取 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 67, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        59,
+        62,
         "action 合同 inventory 发生漂移"
     );
 
@@ -5533,7 +5585,8 @@ async fn upload_history_schema_contract_is_complete_and_gated() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(readiness, (10, true, false));
+    assert!(readiness.0 >= 10, "后续迁移可推进全局 schema revision");
+    assert_eq!((readiness.1, readiness.2), (true, false));
 
     let constraints: Vec<(String, String)> = sqlx::query_as(
         "SELECT info.constraint_name, pg_get_constraintdef(constraint_row.oid)
@@ -10191,5 +10244,989 @@ async fn file_history_retention_purge_uses_explicit_cleanup_order() {
             .await
             .unwrap();
     assert_eq!(audit_after, audit_before);
+    projects::delete(&state.db, project.id).await.unwrap();
+}
+
+/// `0011` 必须一次性声明任务、active file、immutable baseline 与物化统计的完整契约。
+#[tokio::test]
+async fn tasks_schema_contract_preserves_snapshot_ids_and_live_fk_semantics() {
+    let _guard = TASK_TEST_LOCK.lock().await;
+    let pool = pool().await;
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = ANY($1::TEXT[])
+         ORDER BY table_name",
+    )
+    .bind(vec![
+        "task_baseline_entries",
+        "task_files",
+        "task_stats",
+        "tasks",
+    ])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tables,
+        vec!["task_baseline_entries", "task_files", "task_stats", "tasks",]
+    );
+
+    let columns: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT table_name, column_name, is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND (
+               (table_name = 'task_files'
+                AND column_name IN ('file_id_snapshot', 'live_file_id'))
+               OR (table_name = 'task_baseline_entries'
+                   AND column_name IN ('entry_id_snapshot', 'live_entry_id', 'task_file_id'))
+               OR (table_name = 'task_stats'
+                   AND column_name IN ('task_id', 'denominator', 'completed'))
+           )
+         ORDER BY table_name, column_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        columns,
+        vec![
+            (
+                "task_baseline_entries".to_string(),
+                "entry_id_snapshot".to_string(),
+                "NO".to_string(),
+            ),
+            (
+                "task_baseline_entries".to_string(),
+                "live_entry_id".to_string(),
+                "YES".to_string(),
+            ),
+            (
+                "task_baseline_entries".to_string(),
+                "task_file_id".to_string(),
+                "NO".to_string(),
+            ),
+            (
+                "task_files".to_string(),
+                "file_id_snapshot".to_string(),
+                "NO".to_string(),
+            ),
+            (
+                "task_files".to_string(),
+                "live_file_id".to_string(),
+                "YES".to_string(),
+            ),
+            (
+                "task_stats".to_string(),
+                "completed".to_string(),
+                "NO".to_string(),
+            ),
+            (
+                "task_stats".to_string(),
+                "denominator".to_string(),
+                "NO".to_string(),
+            ),
+            (
+                "task_stats".to_string(),
+                "task_id".to_string(),
+                "NO".to_string(),
+            ),
+        ]
+    );
+
+    let delete_rules: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT tc.table_name, kcu.column_name, rc.delete_rule
+         FROM information_schema.table_constraints AS tc
+         JOIN information_schema.key_column_usage AS kcu
+           ON kcu.constraint_name = tc.constraint_name
+          AND kcu.constraint_schema = tc.constraint_schema
+         JOIN information_schema.referential_constraints AS rc
+           ON rc.constraint_name = tc.constraint_name
+          AND rc.constraint_schema = tc.constraint_schema
+         WHERE tc.constraint_schema = 'public'
+           AND tc.constraint_type = 'FOREIGN KEY'
+           AND (
+               (tc.table_name = 'task_files' AND kcu.column_name = 'live_file_id')
+               OR (tc.table_name = 'task_baseline_entries'
+                   AND kcu.column_name IN ('live_entry_id', 'task_file_id'))
+           )
+         ORDER BY tc.table_name, kcu.column_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        delete_rules,
+        vec![
+            (
+                "task_baseline_entries".to_string(),
+                "live_entry_id".to_string(),
+                "SET NULL".to_string(),
+            ),
+            (
+                "task_baseline_entries".to_string(),
+                "task_file_id".to_string(),
+                "CASCADE".to_string(),
+            ),
+            (
+                "task_files".to_string(),
+                "live_file_id".to_string(),
+                "SET NULL".to_string(),
+            ),
+        ]
+    );
+    let active_unique: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM pg_indexes
+             WHERE schemaname = 'public'
+               AND tablename = 'task_files'
+               AND indexdef ILIKE '%UNIQUE%'
+               AND indexdef ILIKE '%(task_id, live_file_id)%'
+               AND indexdef ILIKE '%WHERE (live_file_id IS NOT NULL)%'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(active_unique);
+}
+
+/// 任务 API 对 public/private 可见性、owner/manager 写能力、project/task 绑定与审计正文
+/// 脱敏执行端到端约束。
+#[tokio::test]
+async fn tasks_api_enforces_visibility_manage_capability_binding_and_redacted_audit() {
+    use axum::extract::{Path, Query, State};
+    use axum::Json;
+
+    let _guard = TASK_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "task-api-owner", Some("maintainer")).await;
+    let manager = audit_contract_create_user(&state.db, "task-api-manager", None).await;
+    let translator = audit_contract_create_user(&state.db, "task-api-translator", None).await;
+    let stranger =
+        audit_contract_create_user(&state.db, "task-api-stranger", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Task API {}", owner.id),
+            slug: Some(format!("task-api-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建任务 API 项目");
+    memberships::upsert(&state.db, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+    memberships::upsert(&state.db, project.id, translator.id, "translator")
+        .await
+        .unwrap();
+    let Json(file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "api/task.json",
+            &[("one", "One")],
+        )),
+    )
+    .await
+    .expect_api("创建任务 API 文件");
+
+    let secret_marker = format!("private-task-markdown-{}", owner.id);
+    let (status, Json(created)) = tasks_routes::create_task(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path(project.id),
+        Json(tasks_routes::CreateTaskRequest {
+            title: "Manager task".to_string(),
+            description: format!("# {secret_marker}"),
+            file_ids: vec![file.file_id],
+        }),
+    )
+    .await
+    .expect_api("manager 创建任务");
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    assert_eq!((created.denominator, created.completed), (1, 0));
+    assert_eq!(created.description, format!("# {secret_marker}"));
+
+    let denied = tasks_routes::create_task(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path(project.id),
+        Json(tasks_routes::CreateTaskRequest {
+            title: "Denied".to_string(),
+            description: String::new(),
+            file_ids: vec![],
+        }),
+    )
+    .await
+    .expect_err_api("translator 不可管理任务");
+    assert_eq!(
+        axum::response::IntoResponse::into_response(denied).status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+
+    let Json(listed) = tasks_routes::list_tasks(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&translator))),
+        Path(project.id),
+        Query(tasks_routes::TaskListQuery {
+            after: None,
+            limit: Some(1),
+        }),
+    )
+    .await
+    .expect_api("项目成员可读任务列表");
+    assert_eq!(listed.items.len(), 1);
+    assert_eq!(listed.items[0].id, created.id);
+
+    let stranger_denied = tasks_routes::get_task(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&stranger))),
+        Path((project.id, created.id)),
+    )
+    .await
+    .expect_err_api("私有项目非成员不可读任务");
+    assert_eq!(
+        axum::response::IntoResponse::into_response(stranger_denied).status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    let Json(other_project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&stranger),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Task binding {}", stranger.id),
+            slug: Some(format!("task-binding-{}", stranger.id)),
+            description: None,
+            visibility: Some("public".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建 cross-binding 项目");
+    let cross_binding = tasks_routes::get_task(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path((other_project.id, created.id)),
+    )
+    .await
+    .expect_err_api("task/project cross-binding fail closed");
+    assert_eq!(
+        axum::response::IntoResponse::into_response(cross_binding).status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    let Json(updated) = tasks_routes::update_task(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, created.id)),
+        Json(tasks_routes::UpdateTaskRequest {
+            title: "Owner updated".to_string(),
+            description: format!("updated {secret_marker}"),
+            file_ids: vec![file.file_id],
+        }),
+    )
+    .await
+    .expect_api("owner 更新任务");
+    assert_eq!(updated.files.len(), 1);
+
+    let audit_payloads: Vec<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT action, payload FROM audit_log
+         WHERE project_id_snapshot = $1 AND action LIKE 'task.%'
+         ORDER BY id",
+    )
+    .bind(project.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        audit_payloads
+            .iter()
+            .map(|(action, _)| action.as_str())
+            .collect::<Vec<_>>(),
+        vec!["task.created", "task.updated"]
+    );
+    assert!(!serde_json::to_string(&audit_payloads)
+        .unwrap()
+        .contains(&secret_marker));
+
+    assert_eq!(
+        tasks_routes::delete_task(
+            State(state.clone()),
+            audit_contract_current_user(&manager),
+            Path((project.id, created.id)),
+        )
+        .await
+        .expect_api("manager 删除任务"),
+        axum::http::StatusCode::NO_CONTENT
+    );
+    let deleted_payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM audit_log
+         WHERE project_id_snapshot = $1 AND action = 'task.deleted'
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(deleted_payload["file_count"], 1);
+    assert_eq!(deleted_payload["baseline_entry_count"], 1);
+
+    projects::delete(&state.db, other_project.id).await.unwrap();
+    projects::delete(&state.db, project.id).await.unwrap();
+}
+
+/// 任务 mutation 与审计同事务；audit INSERT 失败时 Markdown 与 baseline 均不得提交。
+#[tokio::test]
+async fn tasks_api_fails_closed_without_persisting_body_or_baseline_when_audit_fails() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let _guard = TASK_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner =
+        audit_contract_create_user(&state.db, "task-audit-fail-owner", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Task audit fail {}", owner.id),
+            slug: Some(format!("task-audit-fail-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建任务审计故障项目");
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let body_marker = format!("TASK_BODY_MUST_ROLL_BACK_{}", owner.id);
+    let error = tasks_routes::create_task(
+        State(failing_state),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(tasks_routes::CreateTaskRequest {
+            title: "Must roll back".to_string(),
+            description: body_marker.clone(),
+            file_ids: vec![],
+        }),
+    )
+    .await
+    .expect_err_api("任务审计失败必须返回 503");
+    audit_contract_assert_unavailable(error).await;
+    let persisted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM tasks
+         WHERE project_id = $1 AND description = $2",
+    )
+    .bind(project.id)
+    .bind(&body_marker)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(persisted, 0);
+    projects::delete(&state.db, project.id).await.unwrap();
+}
+
+/// 任务 baseline 只在新增 task_file 时建立；之后所有进度变化只消费 immutable IDs 的
+/// 当前 live/effective-visible 状态，current-task scope 则只按当前 active files。
+#[tokio::test]
+async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let _guard = TASK_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "task-owner", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Task semantics {}", owner.id),
+            slug: Some(format!("task-semantics-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建任务测试项目");
+    let Json(file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(entries_routes::UploadReq {
+            path: "tasks/main.json".to_string(),
+            entries: vec![
+                entries_routes::UploadEntryDto {
+                    key: "baseline".to_string(),
+                    original: serde_json::json!({"en":"Baseline"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "already_done".to_string(),
+                    original: serde_json::json!({"en":"Already done"}),
+                    context: None,
+                    translation: Some("已完成".to_string()),
+                    state: Some("translated".to_string()),
+                },
+                entries_routes::UploadEntryDto {
+                    key: "hidden_before_snapshot".to_string(),
+                    original: serde_json::json!({"en":"Hidden"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+            ],
+        }),
+    )
+    .await
+    .expect_api("创建任务文件");
+    let entry_rows: Vec<(i64, String, i64)> =
+        sqlx::query_as("SELECT id, key, version FROM entries WHERE file_id = $1 ORDER BY key")
+            .bind(file.file_id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    let by_key = entry_rows
+        .into_iter()
+        .map(|row| (row.1.clone(), row))
+        .collect::<std::collections::HashMap<_, _>>();
+    let baseline_id = by_key["baseline"].0;
+    let hidden_id = by_key["hidden_before_snapshot"].0;
+    let _ = entries_routes::set_entry_flags(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, hidden_id)),
+        Json(entries_routes::SetFlagsReq {
+            locked: None,
+            hidden: Some(true),
+        }),
+    )
+    .await
+    .expect_api("快照前隐藏词条");
+
+    let mut tx = state.db.begin().await.unwrap();
+    let task = tasks::create_tx(
+        &mut tx,
+        project.id,
+        owner.id,
+        "Snapshot task",
+        "**Markdown** body",
+    )
+    .await
+    .unwrap();
+    let initial_plan = prts_core::tasks::plan_file_set(&[], &[file.file_id]).unwrap();
+    tasks::apply_file_set_plan_tx(&mut tx, project.id, task.id, &initial_plan)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    assert_eq!(
+        tasks::baseline_entry_ids(&state.db, project.id, task.id)
+            .await
+            .unwrap(),
+        Some(vec![baseline_id])
+    );
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .map(|value| (value.denominator, value.completed)),
+        Some((1, 0))
+    );
+    let scope_before = tasks::current_scope_entry_ids(&state.db, project.id, task.id, None, 100)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(scope_before.contains(&baseline_id));
+    assert!(scope_before.contains(&by_key["already_done"].0));
+    assert!(!scope_before.contains(&hidden_id));
+
+    let _ = entries_routes::set_entry_flags(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, hidden_id)),
+        Json(entries_routes::SetFlagsReq {
+            locked: None,
+            hidden: Some(false),
+        }),
+    )
+    .await
+    .expect_api("取消隐藏非基线词条");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .denominator,
+        1,
+        "取消隐藏不会把快照后不在 baseline 的 ID 注入旧 baseline"
+    );
+
+    let current = entries::get(&state.db, project.id, baseline_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let _ = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, baseline_id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "完成".to_string(),
+            state: "translated".to_string(),
+            version: current.version,
+        }),
+    )
+    .await
+    .expect_api("完成 baseline 词条");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .map(|value| (value.denominator, value.completed)),
+        Some((1, 1))
+    );
+    let current = entries::get(&state.db, project.id, baseline_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let _ = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, baseline_id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: current.translation,
+            state: "untranslated".to_string(),
+            version: current.version,
+        }),
+    )
+    .await
+    .expect_api("回退 baseline 词条");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .map(|value| (value.denominator, value.completed)),
+        Some((1, 0))
+    );
+
+    let _ = entries_routes::set_entry_flags(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, baseline_id)),
+        Json(entries_routes::SetFlagsReq {
+            locked: None,
+            hidden: Some(true),
+        }),
+    )
+    .await
+    .expect_api("隐藏 baseline 词条");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .map(|value| (value.denominator, value.completed)),
+        Some((0, 0))
+    );
+    let _ = entries_routes::set_entry_flags(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, baseline_id)),
+        Json(entries_routes::SetFlagsReq {
+            locked: None,
+            hidden: Some(false),
+        }),
+    )
+    .await
+    .expect_api("恢复 baseline 可见性");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .denominator,
+        1
+    );
+
+    let Json(_) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(entries_routes::UploadReq {
+            path: "tasks/main.json".to_string(),
+            entries: vec![
+                entries_routes::UploadEntryDto {
+                    key: "already_done".to_string(),
+                    original: serde_json::json!({"en":"Already done"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "hidden_before_snapshot".to_string(),
+                    original: serde_json::json!({"en":"Hidden"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "new_after_snapshot".to_string(),
+                    original: serde_json::json!({"en":"New"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+            ],
+        }),
+    )
+    .await
+    .expect_api("tombstone baseline 并新增词条");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .map(|value| (value.denominator, value.completed)),
+        Some((0, 0))
+    );
+    let new_entry_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM entries WHERE file_id = $1 AND key = 'new_after_snapshot'",
+    )
+    .bind(file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(!tasks::baseline_entry_ids(&state.db, project.id, task.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .contains(&new_entry_id));
+
+    let Json(_) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(entries_routes::UploadReq {
+            path: "tasks/main.json".to_string(),
+            entries: vec![
+                entries_routes::UploadEntryDto {
+                    key: "baseline".to_string(),
+                    original: serde_json::json!({"en":"Baseline"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "already_done".to_string(),
+                    original: serde_json::json!({"en":"Already done"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "hidden_before_snapshot".to_string(),
+                    original: serde_json::json!({"en":"Hidden"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "new_after_snapshot".to_string(),
+                    original: serde_json::json!({"en":"New"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+            ],
+        }),
+    )
+    .await
+    .expect_api("恢复 baseline tombstone");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .denominator,
+        1
+    );
+
+    let folder_id = files::list_folders(&state.db, project.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.path == "tasks")
+        .unwrap()
+        .id;
+    files_routes::delete_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, folder_id)),
+    )
+    .await
+    .expect_api("删除 task folder");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .denominator,
+        0
+    );
+    let folder_delete_operation: uuid::Uuid =
+        sqlx::query_scalar("SELECT deletion_change_set_id FROM folders WHERE id = $1")
+            .bind(folder_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let _ = files_routes::restore_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, folder_id)),
+        Json(files_routes::RestoreRequest {
+            deletion_change_set_id: folder_delete_operation,
+        }),
+    )
+    .await
+    .expect_api("恢复 task folder");
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .denominator,
+        1
+    );
+
+    let Json(_) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(entries_routes::UploadReq {
+            path: "tasks/main.json".to_string(),
+            entries: vec![
+                entries_routes::UploadEntryDto {
+                    key: "already_done".to_string(),
+                    original: serde_json::json!({"en":"Already done"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "hidden_before_snapshot".to_string(),
+                    original: serde_json::json!({"en":"Hidden"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+                entries_routes::UploadEntryDto {
+                    key: "new_after_snapshot".to_string(),
+                    original: serde_json::json!({"en":"New"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+            ],
+        }),
+    )
+    .await
+    .expect_api("再次 tombstone baseline");
+    files_routes::delete_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, folder_id)),
+    )
+    .await
+    .expect_api("带 tombstone 删除 folder");
+    let folder_delete_operation: uuid::Uuid =
+        sqlx::query_scalar("SELECT deletion_change_set_id FROM folders WHERE id = $1")
+            .bind(folder_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let _ = files_routes::restore_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, folder_id)),
+        Json(files_routes::RestoreRequest {
+            deletion_change_set_id: folder_delete_operation,
+        }),
+    )
+    .await
+    .expect_api("恢复 folder 不得恢复 tombstone");
+    let tombstone_kept: bool =
+        sqlx::query_scalar("SELECT deleted_at IS NOT NULL FROM entries WHERE id = $1")
+            .bind(baseline_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert!(tombstone_kept);
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .denominator,
+        0
+    );
+
+    let first_task_file_id: i64 =
+        sqlx::query_scalar("SELECT id FROM task_files WHERE task_id = $1 AND live_file_id = $2")
+            .bind(task.id)
+            .bind(file.file_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let mut tx = state.db.begin().await.unwrap();
+    let remove_plan = prts_core::tasks::plan_file_set(&[file.file_id], &[]).unwrap();
+    tasks::apply_file_set_plan_tx(&mut tx, project.id, task.id, &remove_plan)
+        .await
+        .unwrap();
+    let add_plan = prts_core::tasks::plan_file_set(&[], &[file.file_id]).unwrap();
+    tasks::apply_file_set_plan_tx(&mut tx, project.id, task.id, &add_plan)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let second_task_file_id: i64 =
+        sqlx::query_scalar("SELECT id FROM task_files WHERE task_id = $1 AND live_file_id = $2")
+            .bind(task.id)
+            .bind(file.file_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_ne!(first_task_file_id, second_task_file_id);
+    let readded_baseline = tasks::baseline_entry_ids(&state.db, project.id, task.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(readded_baseline.contains(&new_entry_id));
+    assert!(!readded_baseline.contains(&baseline_id));
+
+    let mut tx = state.db.begin().await.unwrap();
+    let zero_task = tasks::create_tx(&mut tx, project.id, owner.id, "Zero", "")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let zero_stats = tasks::stats(&state.db, project.id, zero_task.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let zero_progress = prts_core::tasks::TaskProgress {
+        denominator: zero_stats.denominator,
+        completed: zero_stats.completed,
+    };
+    assert_eq!(zero_progress.completion_ratio(), 1.0);
+    assert!(zero_progress.no_work_required());
+
+    let other_owner =
+        audit_contract_create_user(&state.db, "task-other-owner", Some("maintainer")).await;
+    let Json(other_project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&other_owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Task other {}", other_owner.id),
+            slug: Some(format!("task-other-{}", other_owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建 cross-binding 项目");
+    assert!(tasks::find(&state.db, other_project.id, task.id)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(
+        tasks::current_scope_entry_ids(&state.db, other_project.id, task.id, None, 100)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    files_routes::delete_file(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, file.file_id)),
+    )
+    .await
+    .expect_api("删除任务文件以测试 purge");
+    let deletion_change_set: uuid::Uuid =
+        sqlx::query_scalar("SELECT deletion_change_set_id FROM files WHERE id = $1")
+            .bind(file.file_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE files SET purge_after = now() - interval '1 minute' WHERE id = $1")
+        .bind(file.file_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let snapshot_before: (i64, Vec<i64>) = sqlx::query_as(
+        "SELECT file_id_snapshot,
+                ARRAY(SELECT entry_id_snapshot FROM task_baseline_entries
+                      WHERE task_file_id = task_file.id ORDER BY entry_id_snapshot)
+         FROM task_files AS task_file
+         WHERE task_file.task_id = $1 AND task_file.live_file_id = $2",
+    )
+    .bind(task.id)
+    .bind(file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    let due = prts_db::file_history::list_due_deletions(&state.db, None, 100)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|operation| operation.change_set_id == deletion_change_set)
+        .unwrap();
+    let mut tx = state.db.begin().await.unwrap();
+    prts_db::file_history::purge_due_operation_tx(&mut tx, &due, chrono::Utc::now())
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+    let snapshot_after: (i64, Option<i64>, Vec<i64>, Vec<Option<i64>>) = sqlx::query_as(
+        "SELECT file_id_snapshot, live_file_id,
+                ARRAY(SELECT entry_id_snapshot FROM task_baseline_entries
+                      WHERE task_file_id = task_file.id ORDER BY entry_id_snapshot),
+                ARRAY(SELECT live_entry_id FROM task_baseline_entries
+                      WHERE task_file_id = task_file.id ORDER BY entry_id_snapshot)
+         FROM task_files AS task_file WHERE task_file.task_id = $1",
+    )
+    .bind(task.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(snapshot_after.0, snapshot_before.0);
+    assert_eq!(snapshot_after.1, None);
+    assert_eq!(snapshot_after.2, snapshot_before.1);
+    assert!(snapshot_after.3.iter().all(Option::is_none));
+    assert_eq!(
+        tasks::stats(&state.db, project.id, task.id)
+            .await
+            .unwrap()
+            .map(|value| (value.denominator, value.completed)),
+        Some((0, 0))
+    );
+
+    projects::delete(&state.db, other_project.id).await.unwrap();
     projects::delete(&state.db, project.id).await.unwrap();
 }
