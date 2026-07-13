@@ -51,6 +51,12 @@ function openSection(routeName: string | null) {
   router.push({ name: routeName, params: { id: props.id } })
 }
 
+function sectionIsActive(routeName: string | null): boolean {
+  if (!routeName || typeof route.name !== 'string') return false
+  if (routeName === 'project-tasks') return route.name.startsWith('project-task')
+  return route.name === routeName
+}
+
 onMounted(load)
 watch(() => props.id, load)
 </script>
@@ -99,7 +105,7 @@ watch(() => props.id, load)
             type="button"
             class="project-shell__nav-item"
             :class="{
-              'project-shell__nav-item--active': section.route === route.name,
+              'project-shell__nav-item--active': sectionIsActive(section.route),
               'project-shell__nav-item--pending': 'pending' in section,
             }"
             :disabled="'pending' in section"

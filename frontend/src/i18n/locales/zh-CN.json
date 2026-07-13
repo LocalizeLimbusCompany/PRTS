@@ -78,6 +78,40 @@
       "deleteConfirm": "确认删除“{path}”？文件或目录可在 30 天内从历史中恢复。",
       "deleted": "已移入回收站，可在 30 天内恢复"
     },
+    "tasks": {
+      "heading": "项目任务",
+      "description": "以加入文件时的未翻译词条为基线，持续跟踪当前有效进度。",
+      "create": "新建任务",
+      "createHeading": "新建项目任务",
+      "editHeading": "管理项目任务",
+      "manage": "管理任务",
+      "manageHint": "保存完整的期望文件集合；新增文件建立新基线，保留文件沿用原基线。",
+      "title": "任务标题",
+      "titlePlaceholder": "例如：完成第一章主线文本",
+      "introduction": "任务介绍",
+      "descriptionPlaceholder": "说明任务目标、翻译要求和协作注意事项……",
+      "files": "任务文件",
+      "chooseFiles": "选择期望文件集合",
+      "folderSelectionHint": "勾选文件夹会按当前目录树展开为所有后代文件；服务器只接受文件 ID，不接受前端提供基线词条。",
+      "selectedFiles": "已选择 {count} 个文件",
+      "progressCount": "{completed} / {total} 个有效基线词条已完成",
+      "noWork": "无需处理",
+      "empty": "还没有项目任务",
+      "emptyHint": "项目管理或拥有者可以按文件建立任务基线。",
+      "loadMore": "加载更多任务",
+      "loadFailed": "任务加载失败",
+      "saveFailed": "任务保存失败",
+      "saved": "任务已保存",
+      "back": "返回任务列表",
+      "translateHere": "在此任务翻译",
+      "noDescription": "此任务暂未填写介绍。",
+      "noFiles": "此任务当前没有文件。",
+      "unavailableFile": "文件 #{id} 已永久清除，基线 ID 仍保留",
+      "delete": "删除任务",
+      "deleteConfirm": "确认删除任务“{title}”？任务文件关系与基线快照将一并删除。",
+      "deleted": "任务已删除",
+      "noManagePermission": "你没有管理项目任务的权限。"
+    },
     "upload": {
       "label": "流式上传",
       "heading": "上传 JSON 文件或文件夹",
@@ -262,7 +296,8 @@
     "btn_translated": "标记已翻译",
     "forceHint": "他人正在编辑，强制保存（仍按版本冲突校验）",
     "othersEditingHint": "他人正在编辑此词条",
-    "editingNow": "正在编辑"
+    "editingNow": "正在编辑",
+    "taskScope": "任务 #{id}"
   },
   "admin": {
     "search": {

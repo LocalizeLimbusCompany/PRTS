@@ -19,6 +19,28 @@ export const projectRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/project/ProjectFilesView.vue'),
       },
       {
+        path: 'tasks',
+        name: 'project-tasks',
+        component: () => import('@/views/project/tasks/TaskListView.vue'),
+      },
+      {
+        path: 'tasks/new',
+        name: 'project-task-new',
+        component: () => import('@/views/project/tasks/TaskManageView.vue'),
+      },
+      {
+        path: 'tasks/:taskId(\\d+)',
+        name: 'project-task-detail',
+        component: () => import('@/views/project/tasks/TaskDetailView.vue'),
+        props: (route) => ({ taskId: Number(route.params.taskId) }),
+      },
+      {
+        path: 'tasks/:taskId(\\d+)/manage',
+        name: 'project-task-manage',
+        component: () => import('@/views/project/tasks/TaskManageView.vue'),
+        props: (route) => ({ taskId: Number(route.params.taskId) }),
+      },
+      {
         path: 'leaderboard',
         name: 'project-leaderboard',
         component: () => import('@/views/project/ProjectLeaderboardView.vue'),

@@ -9,10 +9,22 @@ describe('project routes', () => {
     expect(workspace?.children?.map((route) => route.name).filter(Boolean)).toEqual([
       'project-info',
       'project-files',
+      'project-tasks',
+      'project-task-new',
+      'project-task-detail',
+      'project-task-manage',
       'project-leaderboard',
       'project-download',
       'project-manage',
     ])
+  })
+
+  it('keeps task creation ahead of the numeric detail route', () => {
+    const children = projectRoutes[0]?.children ?? []
+    expect(children.findIndex((route) => route.name === 'project-task-new')).toBeLessThan(
+      children.findIndex((route) => route.name === 'project-task-detail'),
+    )
+    expect(children.find((route) => route.name === 'project-task-detail')?.path).toContain('\\d+')
   })
 
   it('keeps the editor outside the workspace shell', () => {

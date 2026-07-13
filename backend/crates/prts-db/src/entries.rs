@@ -862,6 +862,7 @@ fn verify_replacement_rows(operation: &str, actual: u64, expected: i64) -> Resul
 #[derive(Debug, Default, Clone)]
 pub struct EntryFilter {
     pub file_id: Option<i64>,
+    pub task_id: Option<i64>,
     pub states: Vec<String>,
     /// 关键字（P2 用 ILIKE；语义/全文检索见 P4）。
     pub query: Option<String>,
@@ -1015,6 +1016,16 @@ pub async fn list(
     if let Some(fid) = filter.file_id {
         qb.push(" AND entry.file_id = ");
         qb.push_bind(fid);
+    }
+    if let Some(task_id) = filter.task_id {
+        qb.push(
+            " AND prts_entry_is_effectively_visible(entry)
+              AND EXISTS (
+                 SELECT 1 FROM task_files AS task_file
+                 WHERE task_file.task_id = ",
+        );
+        qb.push_bind(task_id);
+        qb.push(" AND task_file.live_file_id = entry.file_id)");
     }
     if !filter.states.is_empty() {
         qb.push(" AND entry.state = ANY(");

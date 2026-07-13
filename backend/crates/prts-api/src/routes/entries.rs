@@ -310,9 +310,11 @@ impl From<&prts_db::models::Entry> for EntryDto {
 }
 
 /// 词条列表查询。
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct EntryListQuery {
     pub file_id: Option<i64>,
+    /// 当前任务范围；只按 active task files 限定，不按 baseline entries 限制。
+    pub task_id: Option<i64>,
     /// 逗号分隔的状态过滤。
     pub state: Option<String>,
     pub q: Option<String>,
@@ -324,6 +326,7 @@ pub struct EntryListQuery {
 
 /// 列出词条（键集分页 + 过滤）。
 #[utoipa::path(get, path = "/projects/{id}/entries", tag = "entry",
+    params(("id" = i64, Path), EntryListQuery),
     responses((status = 200, body = [EntryDto]), (status = 404)))]
 pub async fn list_entries(
     State(state): State<AppState>,
@@ -333,6 +336,15 @@ pub async fn list_entries(
 ) -> Result<Json<Vec<EntryDto>>, ApiError> {
     let access = paccess::load(&state, user.as_ref(), id).await?;
     access.require_view()?;
+    if q.file_id.is_some() && q.task_id.is_some() {
+        return Err(Error::bad_request("entry_scope_conflict").into());
+    }
+    if let Some(task_id) = q.task_id {
+        prts_db::tasks::find(&state.db, id, task_id)
+            .await
+            .map_err(db_err)?
+            .ok_or(Error::NotFound)?;
+    }
 
     let states = super::parse_states(q.state.as_deref());
 
@@ -341,6 +353,7 @@ pub async fn list_entries(
 
     let filter = prts_db::entries::EntryFilter {
         file_id: q.file_id,
+        task_id: q.task_id,
         states,
         query: q.q,
         include_hidden,

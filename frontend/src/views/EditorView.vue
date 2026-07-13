@@ -58,6 +58,8 @@ const availableStates = computed(() =>
 
 /* —— 筛选 —— */
 const currentFileId = ref<number | null>(route.query.file ? Number(route.query.file) : null)
+const currentTaskId = ref<number | null>(route.query.task ? Number(route.query.task) : null)
+const isTaskScope = computed(() => currentTaskId.value !== null)
 const includeHidden = ref(false)
 const fileOptions = computed(() => [
   { label: '全部文件', value: null as number | null },
@@ -91,6 +93,7 @@ async function loadMore() {
     const after = entries.value.length ? entries.value[entries.value.length - 1].id : undefined
     const batch = await entriesApi.list(props.id, {
       file_id: currentFileId.value ?? undefined,
+      task_id: currentTaskId.value ?? undefined,
       after,
       limit: PAGE,
       include_hidden: includeHidden.value,
@@ -385,6 +388,7 @@ onMounted(async () => {
       </q-btn>
       <div class="prts-display ellipsis editor-title">{{ project?.name ?? '…' }}</div>
       <q-select
+        v-if="!isTaskScope"
         v-model="currentFileId"
         :options="fileOptions"
         dense
@@ -394,15 +398,26 @@ onMounted(async () => {
         map-options
         class="editor-fileselect"
       />
+      <q-chip
+        v-else
+        dense
+        square
+        color="primary"
+        text-color="dark"
+        icon="mdi-clipboard-text-outline"
+      >
+        {{ $t('editor.taskScope', { id: currentTaskId }) }}
+      </q-chip>
       <!-- 高级搜索控件：含搜索词时切搜索模式，清空时恢复浏览 -->
       <SearchFilters
+        v-if="!isTaskScope"
         ref="searchFiltersRef"
         :file-id="currentFileId"
         :include-hidden="includeHidden"
         @search="onSearch"
         @clear="onSearchClear"
       />
-      <q-toggle v-if="isMember" v-model="includeHidden" label="含隐藏" dense />
+      <q-toggle v-if="isMember && !isTaskScope" v-model="includeHidden" label="含隐藏" dense />
       <!-- 搜索模式指示徽标 -->
       <q-chip v-if="isSearchMode" dense square color="secondary" text-color="dark" icon="mdi-file-search-outline">
         搜索中

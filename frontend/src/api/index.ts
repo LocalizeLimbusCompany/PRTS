@@ -26,7 +26,9 @@ import type {
 } from './types'
 
 export * from './types'
+export * from './tasks'
 export { http, apiErrorMessage } from './http'
+export { tasksApi } from './tasks'
 
 /** 认证。 */
 export const authApi = {
@@ -228,6 +230,7 @@ export const entriesApi = {
     id: number,
     params: {
       file_id?: number
+      task_id?: number
       state?: string
       q?: string
       after?: number

@@ -18,7 +18,7 @@ describe('project workspace navigation', () => {
       PROJECT_WORKSPACE_SECTIONS.filter((section) => 'pending' in section).map(
         (section) => section.key,
       ),
-    ).toEqual(['tasks', 'terms'])
+    ).toEqual(['terms'])
   })
 
   it('does not infer management visibility from a role name', () => {

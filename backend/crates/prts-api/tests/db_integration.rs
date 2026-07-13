@@ -10643,7 +10643,7 @@ async fn tasks_api_fails_closed_without_persisting_body_or_baseline_when_audit_f
 /// 当前 live/effective-visible 状态，current-task scope 则只按当前 active files。
 #[tokio::test]
 async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
-    use axum::extract::{Path, State};
+    use axum::extract::{Path, Query, State};
     use axum::Json;
 
     let _guard = TASK_TEST_LOCK.lock().await;
@@ -11117,6 +11117,77 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
     assert!(readded_baseline.contains(&new_entry_id));
     assert!(!readded_baseline.contains(&baseline_id));
 
+    let Json(second_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "outside/not-in-task.json",
+            &[("outside", "Outside")],
+        )),
+    )
+    .await
+    .expect_api("创建非任务文件");
+    let outside_entry_id: i64 = sqlx::query_scalar("SELECT id FROM entries WHERE file_id = $1")
+        .bind(second_file.file_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let _ = entries_routes::set_entry_flags(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, hidden_id)),
+        Json(entries_routes::SetFlagsReq {
+            locked: None,
+            hidden: Some(true),
+        }),
+    )
+    .await
+    .expect_api("任务范围必须使用规范 effective-visible 谓词");
+    let Json(scope_entries) = entries_routes::list_entries(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Query(entries_routes::EntryListQuery {
+            file_id: None,
+            task_id: Some(task.id),
+            state: None,
+            q: None,
+            after: None,
+            limit: Some(100),
+            include_hidden: true,
+        }),
+    )
+    .await
+    .expect_api("任务编辑器范围使用当前 active task files");
+    let scope_ids = scope_entries
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    assert!(scope_ids.contains(&new_entry_id));
+    assert!(!scope_ids.contains(&hidden_id));
+    assert!(!scope_ids.contains(&outside_entry_id));
+    let conflicting_scope = entries_routes::list_entries(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Query(entries_routes::EntryListQuery {
+            file_id: Some(file.file_id),
+            task_id: Some(task.id),
+            state: None,
+            q: None,
+            after: None,
+            limit: Some(100),
+            include_hidden: false,
+        }),
+    )
+    .await
+    .expect_err_api("file/task 双 scope 必须拒绝");
+    assert_eq!(
+        axum::response::IntoResponse::into_response(conflicting_scope).status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+
     let mut tx = state.db.begin().await.unwrap();
     let zero_task = tasks::create_tx(&mut tx, project.id, owner.id, "Zero", "")
         .await
@@ -11159,6 +11230,26 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             .await
             .unwrap()
             .is_none()
+    );
+    let cross_bound_scope = entries_routes::list_entries(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&other_owner))),
+        Path(other_project.id),
+        Query(entries_routes::EntryListQuery {
+            file_id: None,
+            task_id: Some(task.id),
+            state: None,
+            q: None,
+            after: None,
+            limit: Some(100),
+            include_hidden: false,
+        }),
+    )
+    .await
+    .expect_err_api("任务编辑器 scope 必须校验 task/project 绑定");
+    assert_eq!(
+        axum::response::IntoResponse::into_response(cross_bound_scope).status(),
+        axum::http::StatusCode::NOT_FOUND
     );
 
     files_routes::delete_file(

@@ -78,6 +78,40 @@
       "deleteConfirm": "Delete “{path}”? The file or folder can be restored from history for 30 days.",
       "deleted": "Moved to trash and recoverable for 30 days"
     },
+    "tasks": {
+      "heading": "Project tasks",
+      "description": "Track current effective progress from the untranslated entries captured when files join a task.",
+      "create": "New task",
+      "createHeading": "Create project task",
+      "editHeading": "Manage project task",
+      "manage": "Manage task",
+      "manageHint": "Save the complete desired file set. New files get a new baseline; retained files keep their original baseline.",
+      "title": "Task title",
+      "titlePlaceholder": "For example: Complete chapter one story text",
+      "introduction": "Task introduction",
+      "descriptionPlaceholder": "Describe the goal, translation requirements, and collaboration notes…",
+      "files": "Task files",
+      "chooseFiles": "Choose the desired file set",
+      "folderSelectionHint": "Selecting a folder expands it to all current descendant files. The server accepts file IDs only; the client cannot provide baseline entries.",
+      "selectedFiles": "{count} files selected",
+      "progressCount": "{completed} / {total} effective baseline entries completed",
+      "noWork": "No work required",
+      "empty": "No project tasks yet",
+      "emptyHint": "Project owners and managers can create a file-based task baseline.",
+      "loadMore": "Load more tasks",
+      "loadFailed": "Failed to load tasks",
+      "saveFailed": "Failed to save task",
+      "saved": "Task saved",
+      "back": "Back to tasks",
+      "translateHere": "Translate this task",
+      "noDescription": "No task introduction has been added.",
+      "noFiles": "This task currently has no files.",
+      "unavailableFile": "File #{id} was permanently purged; its baseline ID is retained",
+      "delete": "Delete task",
+      "deleteConfirm": "Delete task “{title}”? Its file relations and baseline snapshots will also be deleted.",
+      "deleted": "Task deleted",
+      "noManagePermission": "You do not have permission to manage project tasks."
+    },
     "upload": {
       "label": "Streaming upload",
       "heading": "Upload JSON files or a folder",
@@ -262,7 +296,8 @@
     "btn_translated": "Mark translated",
     "forceHint": "Someone is editing; force-save (still version-checked)",
     "othersEditingHint": "Someone is editing this entry",
-    "editingNow": "editing now"
+    "editingNow": "editing now",
+    "taskScope": "Task #{id}"
   },
   "admin": {
     "search": {

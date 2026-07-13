@@ -12,6 +12,7 @@ import {
   type ProjectBrowserItem,
   type ProjectFileSort,
 } from '@/lib/projectFiles'
+import { descendantTaskFileIds, toggleTaskFileSelection } from '@/lib/projectTasks'
 import { STATE_ORDER } from '@/lib/states'
 
 const props = defineProps<{
@@ -20,6 +21,8 @@ const props = defineProps<{
   files: FileDto[]
   canManage?: boolean
   canViewHistory?: boolean
+  selectable?: boolean
+  selectedFileIds?: number[]
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +30,7 @@ const emit = defineEmits<{
   move: [item: ProjectBrowserItem]
   history: [item: ProjectBrowserItem]
   delete: [item: ProjectBrowserItem]
+  selectionChange: [fileIds: number[]]
 }>()
 
 const router = useRouter()
@@ -35,6 +39,7 @@ const query = ref('')
 const currentFolderId = ref<number | null>(null)
 const sort = ref<ProjectFileSort>('name')
 const state = ref('all')
+const selected = computed(() => new Set(props.selectedFileIds ?? []))
 
 const folderById = computed(() => new Map(props.folders.map((folder) => [folder.id, folder])))
 
@@ -97,6 +102,37 @@ function open(item: ProjectBrowserItem) {
   }
   router.push({ name: 'editor', params: { id: props.projectId }, query: { file: item.id } })
 }
+
+function affectedFileIds(item: ProjectBrowserItem): number[] {
+  return item.kind === 'file'
+    ? [item.id]
+    : descendantTaskFileIds(item.id, props.folders, props.files)
+}
+
+function selectionState(item: ProjectBrowserItem): boolean | null {
+  const affected = affectedFileIds(item)
+  if (affected.length === 0) return false
+  const selectedCount = affected.filter((fileId) => selected.value.has(fileId)).length
+  if (selectedCount === 0) return false
+  if (selectedCount === affected.length) return true
+  return null
+}
+
+function toggleSelection(item: ProjectBrowserItem, value: boolean | null) {
+  emit(
+    'selectionChange',
+    toggleTaskFileSelection(props.selectedFileIds ?? [], affectedFileIds(item), value === true),
+  )
+}
+
+function activate(item: ProjectBrowserItem) {
+  if (props.selectable && item.kind === 'file') {
+    const next = selectionState(item) !== true
+    toggleSelection(item, next)
+    return
+  }
+  open(item)
+}
 </script>
 
 <template>
@@ -156,10 +192,22 @@ function open(item: ProjectBrowserItem) {
         class="file-browser__row"
         role="button"
         tabindex="0"
-        @click="open(item)"
-        @keyup.enter.self="open(item)"
+        @click="activate(item)"
+        @keyup.enter.self="activate(item)"
       >
-        <span class="file-browser__name">
+        <span
+          class="file-browser__name"
+          :class="{ 'file-browser__name--selectable': selectable }"
+        >
+          <q-checkbox
+            v-if="selectable"
+            :model-value="selectionState(item)"
+            :indeterminate-value="null"
+            keep-color
+            color="primary"
+            @click.stop
+            @update:model-value="toggleSelection(item, $event)"
+          />
           <q-icon
             :name="item.kind === 'folder' ? 'mdi-folder-outline' : 'mdi-file-document-outline'"
             :color="item.kind === 'folder' ? 'grey' : 'primary'"
@@ -288,6 +336,10 @@ function open(item: ProjectBrowserItem) {
   grid-template-columns: 22px minmax(0, 1fr);
   align-items: center;
   gap: 9px;
+}
+
+.file-browser__name--selectable {
+  grid-template-columns: auto 22px minmax(0, 1fr);
 }
 
 .file-browser__name strong,
