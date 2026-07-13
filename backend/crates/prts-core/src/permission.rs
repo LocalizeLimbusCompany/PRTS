@@ -34,6 +34,10 @@ pub mod nodes {
     pub const PROJECT_FILE_UPLOAD: &str = "project.file.upload";
     /// 下载导出。
     pub const PROJECT_DOWNLOAD: &str = "project.download";
+    /// 查看文件历史（全部项目成员）。
+    pub const PROJECT_HISTORY_VIEW: &str = "project.history.view";
+    /// 回滚/恢复文件历史（仅拥有者与管理）。
+    pub const PROJECT_HISTORY_ROLLBACK: &str = "project.history.rollback";
     /// 编辑词条（翻译）。
     pub const PROJECT_ENTRY_EDIT: &str = "project.entry.edit";
     /// 校对 / 审核词条。
@@ -154,6 +158,8 @@ impl ProjectRole {
                 PROJECT_MEMBER_MANAGE,
                 PROJECT_FILE_UPLOAD,
                 PROJECT_DOWNLOAD,
+                PROJECT_HISTORY_VIEW,
+                PROJECT_HISTORY_ROLLBACK,
                 PROJECT_ENTRY_EDIT,
                 PROJECT_ENTRY_REVIEW,
                 PROJECT_ENTRY_LOCK,
@@ -165,15 +171,22 @@ impl ProjectRole {
                 PROJECT_MEMBER_MANAGE,
                 PROJECT_FILE_UPLOAD,
                 PROJECT_DOWNLOAD,
+                PROJECT_HISTORY_VIEW,
+                PROJECT_HISTORY_ROLLBACK,
                 PROJECT_ENTRY_EDIT,
                 PROJECT_ENTRY_REVIEW,
                 PROJECT_ENTRY_LOCK,
                 PROJECT_ENTRY_HIDE,
             ],
             // 校对：可编辑与校对 / 审核，并可下载。
-            Self::Reviewer => &[PROJECT_ENTRY_EDIT, PROJECT_ENTRY_REVIEW, PROJECT_DOWNLOAD],
+            Self::Reviewer => &[
+                PROJECT_ENTRY_EDIT,
+                PROJECT_ENTRY_REVIEW,
+                PROJECT_DOWNLOAD,
+                PROJECT_HISTORY_VIEW,
+            ],
             // 翻译：仅可编辑词条与下载。
-            Self::Translator => &[PROJECT_ENTRY_EDIT, PROJECT_DOWNLOAD],
+            Self::Translator => &[PROJECT_ENTRY_EDIT, PROJECT_DOWNLOAD, PROJECT_HISTORY_VIEW],
         }
     }
 
@@ -251,6 +264,10 @@ mod tests {
     fn translator_and_reviewer_cannot_manage_members() {
         assert!(!ProjectRole::Translator.has(PROJECT_MEMBER_MANAGE));
         assert!(!ProjectRole::Reviewer.has(PROJECT_MEMBER_MANAGE));
+        assert!(ProjectRole::Translator.has(PROJECT_HISTORY_VIEW));
+        assert!(ProjectRole::Reviewer.has(PROJECT_HISTORY_VIEW));
+        assert!(!ProjectRole::Translator.has(PROJECT_HISTORY_ROLLBACK));
+        assert!(!ProjectRole::Reviewer.has(PROJECT_HISTORY_ROLLBACK));
     }
 
     #[test]

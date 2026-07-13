@@ -4,6 +4,7 @@ pub mod admin;
 pub mod admin_settings;
 pub mod auth;
 pub mod entries;
+pub mod file_history;
 pub mod files;
 pub mod health;
 pub mod jobs;
@@ -114,8 +115,14 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(jobs::list_project_jobs))
         // 文件树
         .routes(routes!(files::get_tree))
-        .routes(routes!(files::delete_file))
-        .routes(routes!(files::delete_folder))
+        .routes(routes!(files::create_folder))
+        .routes(routes!(files::move_file, files::delete_file))
+        .routes(routes!(files::move_folder, files::delete_folder))
+        .routes(routes!(files::restore_file))
+        .routes(routes!(files::restore_folder))
+        .routes(routes!(file_history::list_history))
+        .routes(routes!(file_history::rollback_file))
+        .routes(routes!(file_history::rollback_folder))
         // 上传 / 词条 / 导出
         .routes(routes!(entries::upload))
         .routes(routes!(uploads::create_batch))
@@ -299,8 +306,21 @@ mod tests {
             ("/projects/{id}/avatar", "delete"),
             ("/projects/{id}/members", "post"),
             ("/projects/{id}/members/{user_id}", "delete"),
+            ("/projects/{id}/folders", "post"),
+            ("/projects/{id}/files/{file_id}", "patch"),
             ("/projects/{id}/files/{file_id}", "delete"),
+            ("/projects/{id}/folders/{folder_id}", "patch"),
             ("/projects/{id}/folders/{folder_id}", "delete"),
+            ("/projects/{id}/files/{file_id}/restore", "post"),
+            ("/projects/{id}/folders/{folder_id}/restore", "post"),
+            (
+                "/projects/{id}/files/{file_id}/history/{change_set_id}/rollback",
+                "post",
+            ),
+            (
+                "/projects/{id}/folders/{folder_id}/history/{change_set_id}/rollback",
+                "post",
+            ),
             ("/projects/{id}/upload", "post"),
             ("/projects/{id}/entries/{entry_id}", "put"),
             ("/projects/{id}/entries/{entry_id}/flags", "patch"),

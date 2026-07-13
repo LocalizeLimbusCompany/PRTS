@@ -12,6 +12,8 @@ pub struct ProjectCapabilities {
     pub manage_project: bool,
     pub manage_members: bool,
     pub upload_files: bool,
+    pub view_file_history: bool,
+    pub rollback_file_history: bool,
     pub download: bool,
     pub edit_entry: bool,
     pub review_entry: bool,
@@ -37,6 +39,8 @@ impl ProjectCapabilities {
             manage_project: has(nodes::PROJECT_MANAGE),
             manage_members: has(nodes::PROJECT_MEMBER_MANAGE),
             upload_files: has(nodes::PROJECT_FILE_UPLOAD),
+            view_file_history: has(nodes::PROJECT_HISTORY_VIEW),
+            rollback_file_history: has(nodes::PROJECT_HISTORY_ROLLBACK),
             download: has(nodes::PROJECT_DOWNLOAD),
             edit_entry: has(nodes::PROJECT_ENTRY_EDIT),
             review_entry: has(nodes::PROJECT_ENTRY_REVIEW),
@@ -59,6 +63,8 @@ mod tests {
             ProjectCapabilities::for_subject(true, Some(ProjectRole::Manager), false, true);
         assert!(manager.edit_locked_entry);
         assert!(manager.force_save_presence);
+        assert!(manager.view_file_history);
+        assert!(manager.rollback_file_history);
         assert!(!manager.resolve_languages);
         assert!(!manager.change_primary_source);
         assert!(!manager.delete_project);

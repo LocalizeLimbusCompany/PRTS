@@ -1604,6 +1604,7 @@ dependencies = [
  "utoipa",
  "utoipa-axum",
  "utoipa-swagger-ui",
+ "uuid",
  "zip 2.4.2",
 ]
 
@@ -1645,6 +1646,7 @@ dependencies = [
  "prts-common",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

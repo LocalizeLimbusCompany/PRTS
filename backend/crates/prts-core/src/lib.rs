@@ -9,6 +9,7 @@
 
 pub mod capabilities;
 pub mod entry;
+pub mod file_history;
 pub mod jobs;
 pub mod language;
 pub mod permission;

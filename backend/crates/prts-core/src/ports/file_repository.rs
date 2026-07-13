@@ -6,6 +6,7 @@
 
 use std::future::Future;
 
+use crate::file_history::FileHistoryPlan;
 use crate::upload_replacement::ReplacementPlan;
 
 /// typed replacement plan 的基础设施 sink。
@@ -17,5 +18,14 @@ pub trait FileRepository {
     fn stage_replacement_plan<'a>(
         &'a mut self,
         plan: &'a ReplacementPlan,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'a;
+
+    /// 在调用方事务内执行一份已经完成领域校验的文件历史计划。
+    ///
+    /// adapter 只能按 typed mutations 与 history deltas 执行，不得根据 raw rows
+    /// 重新判断 move/delete/restore/rollback 的路径、ownership 或统计规则。
+    fn apply_file_history_plan<'a>(
+        &'a mut self,
+        plan: &'a FileHistoryPlan,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'a;
 }

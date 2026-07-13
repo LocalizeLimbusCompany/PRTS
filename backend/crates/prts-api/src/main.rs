@@ -119,9 +119,15 @@ async fn main() -> anyhow::Result<()> {
             db.clone(),
             settings.media.upload_temp_directory.clone(),
         )),
+        Arc::new(crate::jobs::purge_deleted_files::PurgeDeletedFilesHandler::new(db.clone())),
     ]);
+    prts_db::jobs::ensure_file_retention_cleanup(&db, chrono::Utc::now())
+        .await
+        .map_err(|error| anyhow::anyhow!("schedule file retention cleanup failed: {error}"))?;
     sqlx::query(
-        "UPDATE workspace_foundation_state SET lexical_worker_registered = TRUE, updated_at = now()
+        "UPDATE workspace_foundation_state
+         SET lexical_worker_registered = TRUE, file_history_writer_ready = TRUE,
+             updated_at = now()
          WHERE singleton",
     )
     .execute(&db)
@@ -396,5 +402,20 @@ mod tests {
         assert!(en.contains("maintenance window"));
         assert!(en.contains("existing sessions"));
         assert!(en.contains("signing in again"));
+    }
+
+    #[test]
+    fn file_history_writer_readiness_follows_complete_worker_registration() {
+        let source = include_str!("main.rs");
+        let handler = source
+            .find("PurgeDeletedFilesHandler::new")
+            .expect("retention handler is registered");
+        let durable_schedule = source
+            .find("ensure_file_retention_cleanup")
+            .expect("retention scan is durably scheduled");
+        let readiness = source
+            .find("file_history_writer_ready = TRUE")
+            .expect("writer cutover marker is enabled");
+        assert!(handler < durable_schedule && durable_schedule < readiness);
     }
 }

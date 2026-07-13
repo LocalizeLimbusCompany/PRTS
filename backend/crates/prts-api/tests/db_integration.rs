@@ -85,6 +85,7 @@ static MIGRATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 static SEARCH_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static UPLOAD_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static UPLOAD_LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static FILE_HISTORY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -186,6 +187,18 @@ struct AuditActionContract {
     /// 有多少 route/auth entrypoint 合法地产生该 action；用于显式容纳 `auth.failed` 多入口。
     expected_count: usize,
 }
+
+const FILE_HISTORY_AUDIT_KEYS: &[&str] = &[
+    "operation",
+    "change_set_id",
+    "source_change_set_id",
+    "path",
+    "affected_folders",
+    "affected_files",
+    "affected_entries",
+    "purge_after",
+    "target",
+];
 
 const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     AuditedEntrypoint {
@@ -416,12 +429,67 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     AuditedEntrypoint {
         entrypoint: "routes::files::delete_file",
         action: "file.deleted",
-        allowed_payload_keys: &["path", "entry_count"],
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
     },
     AuditedEntrypoint {
         entrypoint: "routes::files::delete_folder",
         action: "folder.deleted",
-        allowed_payload_keys: &["path", "file_count", "entry_count"],
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::files::create_folder",
+        action: "folder.created",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::files::move_file.move",
+        action: "file.moved",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::files::move_file.rename",
+        action: "file.renamed",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::files::move_folder.move",
+        action: "folder.moved",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::files::move_folder.rename",
+        action: "folder.renamed",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::files::restore_file",
+        action: "file.restored",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::files::restore_folder",
+        action: "folder.restored",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::file_history::rollback_file",
+        action: "file.rolled_back",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::file_history::rollback_folder",
+        action: "folder.rolled_back",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "jobs::purge_deleted_files::file",
+        action: "file.purged",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
+    },
+    AuditedEntrypoint {
+        entrypoint: "jobs::purge_deleted_files::folder",
+        action: "folder.purged",
+        allowed_payload_keys: FILE_HISTORY_AUDIT_KEYS,
     },
     AuditedEntrypoint {
         entrypoint: "routes::entries::update_entry",
@@ -757,6 +825,83 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "folder.created",
+        target_type: "folder",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "file.moved",
+        target_type: "file",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "file.renamed",
+        target_type: "file",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "folder.moved",
+        target_type: "folder",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "folder.renamed",
+        target_type: "folder",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "file.restored",
+        target_type: "file",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "folder.restored",
+        target_type: "folder",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "file.rolled_back",
+        target_type: "file",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "folder.rolled_back",
+        target_type: "folder",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "file.purged",
+        target_type: "file",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "folder.purged",
+        target_type: "folder",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "entry.updated",
         target_type: "entry",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -831,9 +976,10 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "projects::delete",
     "files::ensure_file_at_path",
     "files::get_or_create_folder",
-    "files::delete_file",
-    "files::delete_folder",
     "files::refresh_entry_count",
+    "file_history::create_folder_tx",
+    "file_history::apply_plan_tx",
+    "file_history::purge_due_operation_tx",
     "entries::bulk_upsert",
     "entries::update_translation",
     "entries::set_flags",
@@ -854,6 +1000,8 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "messages::create",
     "messages::mark_read",
     "jobs::manual_retry",
+    "jobs::ensure_file_retention_cleanup",
+    "jobs::schedule_next_file_retention_cleanup_tx",
     "upload_settings::set_tx",
     "upload_settings::set_locked_tx",
     "language_resolution::complete_owner_resolution_tx",
@@ -908,6 +1056,7 @@ const UNAUDITED_READS: &[&str] = &[
     "project_media::get_project_avatar",
     "projects::list_members",
     "files::get_tree",
+    "file_history::list_history",
     "entries::list_entries",
     "entries::get_entry",
     "entries::entry_history",
@@ -928,7 +1077,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        54,
+        57,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -936,11 +1085,11 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         16,
         "auth/session writer inventory 发生漂移"
     );
-    assert_eq!(UNAUDITED_READS.len(), 25, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 53, "审计入口 inventory 发生漂移");
+    assert_eq!(UNAUDITED_READS.len(), 26, "普通读取 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 64, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        48,
+        59,
         "action 合同 inventory 发生漂移"
     );
 
@@ -1009,11 +1158,12 @@ async fn audit_contract_repositories_expose_transaction_local_locked_snapshots()
     let _ = memberships::count_role_tx(&mut tx, 0, "owner")
         .await
         .unwrap();
-    let _ = files::find_file_for_update_tx(&mut tx, 0, 0).await.unwrap();
-    let _ = files::find_folder_for_update_tx(&mut tx, 0, 0)
+    let _ = prts_db::file_history::lock_file_tx(&mut tx, 0, 0)
         .await
         .unwrap();
-    let _ = files::folder_tree_counts_tx(&mut tx, 0, "/").await.unwrap();
+    let _ = prts_db::file_history::lock_folder_tx(&mut tx, 0, 0)
+        .await
+        .unwrap();
     let _ = prts_db::search_settings::get_for_update_tx(&mut tx)
         .await
         .unwrap();
@@ -1392,22 +1542,6 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
             "entries::set_flags_tx",
         ),
         (
-            function_body(
-                files_source,
-                "pub async fn delete_file(",
-                Some("/// 删除文件夹"),
-            ),
-            "files::delete_file_tx",
-        ),
-        (
-            function_body(
-                files_source,
-                "pub async fn delete_folder(",
-                Some("#[cfg(test)]"),
-            ),
-            "files::delete_folder_tx",
-        ),
-        (
             function_body(notifications_source, "pub async fn poke(", None),
             "notifications::create_tx",
         ),
@@ -1425,6 +1559,41 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
         let business_write = body.find(writer).expect("项目 mutation 业务 writer 存在");
         assert!(project_lock < reauthorization);
         assert!(reauthorization < business_write);
+    }
+
+    let file_history_lock = function_body(
+        files_source,
+        "async fn lock_project_manage(",
+        Some("pub(super) async fn lock_project_history("),
+    );
+    let project_lock = file_history_lock
+        .find("projects::find_by_id_for_update_tx")
+        .expect("文件操作 helper 必须锁项目");
+    let reauthorization = file_history_lock
+        .find("paccess::load_locked_tx")
+        .expect("文件操作 helper 必须锁后重验权限");
+    assert!(project_lock < reauthorization);
+    for (start, end, child_lock) in [
+        (
+            "pub async fn delete_file(",
+            "pub async fn delete_folder(",
+            "file_history::lock_file_tx",
+        ),
+        (
+            "pub async fn delete_folder(",
+            "pub async fn restore_file(",
+            "file_history::lock_folder_tx",
+        ),
+    ] {
+        let body = function_body(files_source, start, Some(end));
+        let project_helper = body
+            .find("lock_project_manage")
+            .expect("文件删除必须调用锁内重验 helper");
+        let child = body.find(child_lock).expect("typed child snapshot 存在");
+        let writer = body
+            .find("apply_and_audit_plan")
+            .expect("文件删除必须执行 typed plan");
+        assert!(project_helper < child && child < writer);
     }
 }
 
@@ -1526,12 +1695,13 @@ async fn audit_contract_file_tree_routes_share_project_lock_and_count_deleted_su
         .await
         .unwrap()
         .expect_api("释放项目锁后文件删除成功");
-    assert!(
-        files::find_file(&state.db, project.id, file_to_delete.file_id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    let deleted_file = files::find_file(&state.db, project.id, file_to_delete.file_id)
+        .await
+        .unwrap()
+        .expect("soft-deleted file remains recoverable");
+    assert!(deleted_file.deleted_at.is_some());
+    assert!(deleted_file.deletion_change_set_id.is_some());
+    assert!(deleted_file.purge_after.is_some());
 
     let Json(first_subtree_file) = entries_routes::upload(
         State(state.clone()),
@@ -1612,8 +1782,8 @@ async fn audit_contract_file_tree_routes_share_project_lock_and_count_deleted_su
             .await;
     assert_eq!(folder_audit.len(), 1);
     assert_eq!(folder_audit[0].project_id, Some(project.id));
-    assert_eq!(folder_audit[0].payload["file_count"], 2);
-    assert_eq!(folder_audit[0].payload["entry_count"], 3);
+    assert_eq!(folder_audit[0].payload["affected_files"], 2);
+    assert_eq!(folder_audit[0].payload["affected_entries"], 3);
 
     projects::delete(&state.db, project.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE id = $1")
@@ -9124,4 +9294,712 @@ async fn messages_share_project_gate() {
             .await
             .unwrap();
     }
+}
+
+/// project_id=NULL 的全局 retention cleanup 必须能被已注册 worker 领取。
+#[tokio::test]
+async fn file_retention_cleanup_global_job_is_claimable() {
+    let db = pool().await;
+    let mut tx = db.begin().await.unwrap();
+    let job = db_jobs::create_tx(
+        &mut tx,
+        db_jobs::NewJob {
+            kind: db_jobs::JobKind::FileRetentionCleanup,
+            project_id: None,
+            stage: "scan".to_string(),
+            progress_total: None,
+            max_attempts: 3,
+            run_after: chrono::Utc::now(),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let claimed = db_jobs::claim_next_for_ids_and_kinds(
+        &db,
+        "file-retention-test-worker",
+        30,
+        &[],
+        &["file_retention_cleanup".to_string()],
+        &[job.id],
+    )
+    .await
+    .unwrap()
+    .expect("global retention cleanup job must be claimable");
+    assert_eq!(claimed.id, job.id);
+    db_jobs::complete(
+        &db,
+        job.id,
+        "file-retention-test-worker",
+        db_jobs::JobResult::Completed,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(job.id)
+        .execute(&db)
+        .await
+        .unwrap();
+}
+
+/// folder restore 只清本 operation，保留此前删除后代和 entry tombstone。
+#[tokio::test]
+async fn file_history_soft_delete_restore_preserves_operation_boundaries_and_stats() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let _guard = FILE_HISTORY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner =
+        audit_contract_create_user(&state.db, "file-history-owner", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("File history {}", owner.id),
+            slug: Some(format!("file-history-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建文件历史项目");
+
+    let Json(active_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "root/active.json",
+            &[("keep", "Keep"), ("tombstone", "Tombstone")],
+        )),
+    )
+    .await
+    .expect_api("创建 active 文件");
+    let _ = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "root/active.json",
+            &[("keep", "Keep")],
+        )),
+    )
+    .await
+    .expect_api("replacement 形成独立 tombstone");
+    let tombstone_before: (i64, uuid::Uuid) = sqlx::query_as(
+        "SELECT id, deletion_change_set_id FROM entries
+         WHERE file_id = $1 AND key = 'tombstone'",
+    )
+    .bind(active_file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    let Json(prior_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "root/prior/file.json",
+            &[("prior", "Prior")],
+        )),
+    )
+    .await
+    .expect_api("创建先删除的后代");
+    let folders = files::list_folders(&state.db, project.id).await.unwrap();
+    let root_id = folders
+        .iter()
+        .find(|folder| folder.path == "root")
+        .unwrap()
+        .id;
+    let prior_id = folders
+        .iter()
+        .find(|folder| folder.path == "root/prior")
+        .unwrap()
+        .id;
+
+    files_routes::delete_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, prior_id)),
+    )
+    .await
+    .expect_api("先删除后代");
+    let prior_operation: uuid::Uuid =
+        sqlx::query_scalar("SELECT deletion_change_set_id FROM folders WHERE id = $1")
+            .bind(prior_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    files_routes::delete_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, root_id)),
+    )
+    .await
+    .expect_api("删除 root active subtree");
+    let (root_operation, purge_after): (uuid::Uuid, chrono::DateTime<chrono::Utc>) =
+        sqlx::query_as("SELECT deletion_change_set_id, purge_after FROM folders WHERE id = $1")
+            .bind(root_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let remaining = purge_after - chrono::Utc::now();
+    assert!(remaining > chrono::Duration::days(29));
+    assert!(remaining <= chrono::Duration::days(30));
+    let owners: (uuid::Uuid, uuid::Uuid) = sqlx::query_as(
+        "SELECT
+             (SELECT deletion_change_set_id FROM files WHERE id = $1),
+             (SELECT deletion_change_set_id FROM files WHERE id = $2)",
+    )
+    .bind(active_file.file_id)
+    .bind(prior_file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(owners, (root_operation, prior_operation));
+    let project_visible: i64 =
+        sqlx::query_scalar("SELECT visible_total FROM project_stats WHERE project_id = $1")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(project_visible, 0);
+    let file_visible: i64 =
+        sqlx::query_scalar("SELECT visible_total FROM file_stats WHERE file_id = $1")
+            .bind(active_file.file_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(file_visible, 1, "soft delete 保留 file_stats");
+
+    let _ = files_routes::restore_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, root_id)),
+        Json(files_routes::RestoreRequest {
+            deletion_change_set_id: root_operation,
+        }),
+    )
+    .await
+    .expect_api("恢复 root operation");
+    let restored: (bool, bool, uuid::Uuid, i64) = sqlx::query_as(
+        "SELECT
+             (SELECT deleted_at IS NULL FROM folders WHERE id = $1),
+             (SELECT deleted_at IS NULL FROM files WHERE id = $2),
+             (SELECT deletion_change_set_id FROM folders WHERE id = $3),
+             (SELECT visible_total FROM project_stats WHERE project_id = $4)",
+    )
+    .bind(root_id)
+    .bind(active_file.file_id)
+    .bind(prior_id)
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(restored, (true, true, prior_operation, 1));
+    let tombstone_after: (bool, uuid::Uuid) = sqlx::query_as(
+        "SELECT deleted_at IS NOT NULL, deletion_change_set_id FROM entries WHERE id = $1",
+    )
+    .bind(tombstone_before.0)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(tombstone_after, (true, tombstone_before.1));
+    projects::delete(&state.db, project.id).await.unwrap();
+}
+
+/// rollback 逆放 target 之后的 file deltas，追加新 change set/entry versions，旧历史不改。
+#[tokio::test]
+async fn file_history_rollback_materializes_target_and_appends_versions() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let _guard = FILE_HISTORY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner =
+        audit_contract_create_user(&state.db, "file-rollback-owner", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("File rollback {}", owner.id),
+            slug: Some(format!("file-rollback-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建 rollback 项目");
+    let Json(file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(entries_routes::UploadReq {
+            path: "rollback/file.json".to_string(),
+            entries: vec![
+                entries_routes::UploadEntryDto {
+                    key: "one".to_string(),
+                    original: serde_json::json!({"en":"One v1"}),
+                    context: None,
+                    translation: Some("译文一".to_string()),
+                    state: Some("translated".to_string()),
+                },
+                entries_routes::UploadEntryDto {
+                    key: "two".to_string(),
+                    original: serde_json::json!({"en":"Two"}),
+                    context: None,
+                    translation: None,
+                    state: None,
+                },
+            ],
+        }),
+    )
+    .await
+    .expect_api("创建目标版本");
+    let target_change_set: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM file_change_sets
+         WHERE project_id = $1 AND file_id = $2 AND operation = 'upload_replace'
+         ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(project.id)
+    .bind(file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    let target_item_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM file_change_items WHERE change_set_id = $1")
+            .bind(target_change_set)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let _ = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(entries_routes::UploadReq {
+            path: "rollback/file.json".to_string(),
+            entries: vec![
+                entries_routes::UploadEntryDto {
+                    key: "one".to_string(),
+                    original: serde_json::json!({"en":"One v2"}),
+                    context: None,
+                    translation: Some("不得覆盖".to_string()),
+                    state: Some("reviewed".to_string()),
+                },
+                entries_routes::UploadEntryDto {
+                    key: "three".to_string(),
+                    original: serde_json::json!({"en":"Three"}),
+                    context: None,
+                    translation: Some("译文三".to_string()),
+                    state: Some("translated".to_string()),
+                },
+            ],
+        }),
+    )
+    .await
+    .expect_api("创建 current 版本");
+
+    let mut tx = state.db.begin().await.unwrap();
+    projects::find_by_id_for_update_tx(&mut tx, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let (current, target) = prts_db::file_history::materialize_file_rollback_tx(
+        &mut tx,
+        project.id,
+        file.file_id,
+        target_change_set,
+    )
+    .await
+    .unwrap();
+    let active_paths = prts_db::file_history::active_paths_tx(&mut tx, project.id)
+        .await
+        .unwrap();
+    let rollback_change_set = uuid::Uuid::new_v4();
+    let plan = prts_core::file_history::plan_file_rollback(
+        rollback_change_set,
+        target_change_set,
+        current,
+        target,
+        &active_paths,
+    )
+    .unwrap();
+    assert_eq!(plan.cp_delta_tenths, 0);
+    let now = chrono::Utc::now();
+    prts_db::file_history::apply_plan_tx(&mut tx, project.id, owner.id, now, now, &plan)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let rows = sqlx::query_as::<_, (String, serde_json::Value, String, String, bool)>(
+        "SELECT key, original, translation, state, deleted_at IS NOT NULL
+         FROM entries WHERE file_id = $1 ORDER BY key",
+    )
+    .bind(file.file_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    let by_key = rows
+        .into_iter()
+        .map(|row| (row.0.clone(), row))
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(by_key["one"].1["en"], "One v1");
+    assert_eq!(by_key["one"].2, "译文一");
+    assert_eq!(by_key["one"].3, "translated");
+    assert!(!by_key["one"].4);
+    assert!(!by_key["two"].4);
+    assert!(by_key["three"].4);
+    let rollback_versions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM entry_versions
+         WHERE entry_id IN (SELECT id FROM entries WHERE file_id = $1) AND kind = 'rollback'",
+    )
+    .bind(file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(rollback_versions, 3);
+    let unchanged_old_items: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM file_change_items WHERE change_set_id = $1")
+            .bind(target_change_set)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(unchanged_old_items, target_item_count);
+    let rollback_metadata: serde_json::Value = sqlx::query_scalar(
+        "SELECT metadata FROM file_change_sets WHERE id = $1 AND operation = 'rollback'",
+    )
+    .bind(rollback_change_set)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(rollback_metadata["cp_delta_tenths"], 0);
+    assert_eq!(
+        rollback_metadata["source_change_set_id"],
+        target_change_set.to_string()
+    );
+    projects::delete(&state.db, project.id).await.unwrap();
+}
+
+/// folder move/rename 与 rollback 使用递归树 ID，而不是可被复用的字符串 path；目标版本
+/// 之后新增的后代也随 current→target 新 plan 一起改写。
+#[tokio::test]
+async fn file_history_folder_move_and_rollback_rewrite_current_tree_paths() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let _guard = FILE_HISTORY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner =
+        audit_contract_create_user(&state.db, "folder-rollback-owner", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Folder rollback {}", owner.id),
+            slug: Some(format!("folder-rollback-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建 folder rollback 项目");
+    let _ = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "from/root/child/file.json",
+            &[("one", "One")],
+        )),
+    )
+    .await
+    .expect_api("创建移动树");
+    let _ = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "archive/seed.json",
+            &[("seed", "Seed")],
+        )),
+    )
+    .await
+    .expect_api("创建目标父文件夹");
+    let folders = files::list_folders(&state.db, project.id).await.unwrap();
+    let root_id = folders
+        .iter()
+        .find(|folder| folder.path == "from/root")
+        .unwrap()
+        .id;
+    let archive_id = folders
+        .iter()
+        .find(|folder| folder.path == "archive")
+        .unwrap()
+        .id;
+    let Json(first_move) = files_routes::move_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, root_id)),
+        Json(files_routes::MoveFolderRequest {
+            parent_id: Some(archive_id),
+            name: "moved".to_string(),
+        }),
+    )
+    .await
+    .expect_api("第一次移动形成目标版本");
+    let _ = files_routes::move_folder(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, root_id)),
+        Json(files_routes::MoveFolderRequest {
+            parent_id: Some(archive_id),
+            name: "latest".to_string(),
+        }),
+    )
+    .await
+    .expect_api("第二次重命名形成 current");
+    let Json(new_descendant) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "archive/latest/new.json",
+            &[("new", "New")],
+        )),
+    )
+    .await
+    .expect_api("目标版本后新增后代");
+
+    let mut tx = state.db.begin().await.unwrap();
+    projects::find_by_id_for_update_tx(&mut tx, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let (current_root, descendants, current_files, target_root) =
+        prts_db::file_history::materialize_folder_rollback_tx(
+            &mut tx,
+            project.id,
+            root_id,
+            first_move.change_set_id,
+        )
+        .await
+        .unwrap();
+    let destination = prts_db::file_history::lock_folder_tx(&mut tx, project.id, archive_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let active_paths = prts_db::file_history::active_paths_tx(&mut tx, project.id)
+        .await
+        .unwrap();
+    let rollback_id = uuid::Uuid::new_v4();
+    let plan = prts_core::file_history::plan_folder_rollback(
+        rollback_id,
+        first_move.change_set_id,
+        current_root,
+        descendants,
+        current_files,
+        target_root,
+        Some(&destination),
+        &active_paths,
+    )
+    .unwrap();
+    let now = chrono::Utc::now();
+    prts_db::file_history::apply_plan_tx(&mut tx, project.id, owner.id, now, now, &plan)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let paths: (String, String) = sqlx::query_as(
+        "SELECT
+             (SELECT path FROM folders WHERE id = $1),
+             (SELECT path FROM files WHERE id = $2)",
+    )
+    .bind(root_id)
+    .bind(new_descendant.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(paths.0, "archive/moved");
+    assert_eq!(paths.1, "archive/moved/new.json");
+    let rollback_operation: String =
+        sqlx::query_scalar("SELECT operation FROM file_change_sets WHERE id = $1")
+            .bind(rollback_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(rollback_operation, "rollback");
+    projects::delete(&state.db, project.id).await.unwrap();
+}
+
+/// 到期 purge 显式 detach live refs、清 versions/业务树/history payload，并保留 audit。
+#[tokio::test]
+async fn file_history_retention_purge_uses_explicit_cleanup_order() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let _guard = FILE_HISTORY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "file-purge-owner", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("File purge {}", owner.id),
+            slug: Some(format!("file-purge-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建 purge 项目");
+    let Json(file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "purge/file.json",
+            &[("purge", "Purge source")],
+        )),
+    )
+    .await
+    .expect_api("创建待 purge 文件");
+    let entry_id: i64 = sqlx::query_scalar("SELECT id FROM entries WHERE file_id = $1")
+        .bind(file.file_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO language_resolution_issues (
+             project_id, entry_id, entity_type, entity_id_snapshot, issue_kind, raw_tag
+         ) VALUES ($1, $2, 'entry', $3, 'invalid_tag', 'bad_tag')",
+    )
+    .bind(project.id)
+    .bind(entry_id)
+    .bind(entry_id.to_string())
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let linked_job: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, project_id, state, stage, payload, target_file_id)
+         VALUES ('file_purge', $1, 'queued', 'test', '{}', $2) RETURNING id",
+    )
+    .bind(project.id)
+    .bind(file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    files_routes::delete_file(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, file.file_id)),
+    )
+    .await
+    .expect_api("软删除文件");
+    let deletion_change_set: uuid::Uuid =
+        sqlx::query_scalar("SELECT deletion_change_set_id FROM files WHERE id = $1")
+            .bind(file.file_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let Json(replacement_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "purge/file.json",
+            &[("replacement", "Replacement source")],
+        )),
+    )
+    .await
+    .expect_api("deleted path 可由新 active 文件复用");
+    assert_ne!(replacement_file.file_id, file.file_id);
+    sqlx::query("UPDATE files SET purge_after = now() - interval '1 minute' WHERE id = $1")
+        .bind(file.file_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let audit_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE project_id_snapshot = $1")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let due = prts_db::file_history::list_due_deletions(&state.db, None, 10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|operation| operation.change_set_id == deletion_change_set)
+        .expect("到期 operation 可被键集扫描");
+    let mut tx = state.db.begin().await.unwrap();
+    let purged = prts_db::file_history::purge_due_operation_tx(&mut tx, &due, chrono::Utc::now())
+        .await
+        .unwrap()
+        .expect("未恢复 operation 被清除");
+    assert_eq!((purged.file_count, purged.entry_count), (1, 1));
+    tx.commit().await.unwrap();
+
+    let exists: (bool, bool, bool) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM files WHERE id = $1),
+                EXISTS(SELECT 1 FROM entries WHERE id = $2),
+                EXISTS(SELECT 1 FROM files WHERE id = $3 AND deleted_at IS NULL)",
+    )
+    .bind(file.file_id)
+    .bind(entry_id)
+    .bind(replacement_file.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(exists, (false, false, true));
+    let version_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM entry_versions WHERE entry_id = $1")
+            .bind(entry_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(version_count, 0);
+    let issue_ref: (Option<i64>, String) = sqlx::query_as(
+        "SELECT entry_id, entity_id_snapshot FROM language_resolution_issues
+         WHERE entity_type = 'entry' AND entity_id_snapshot = $1",
+    )
+    .bind(entry_id.to_string())
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(issue_ref, (None, entry_id.to_string()));
+    let job_state: (Option<i64>, String) =
+        sqlx::query_as("SELECT target_file_id, state FROM jobs WHERE id = $1")
+            .bind(linked_job)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(job_state, (None, "cancelled".to_string()));
+    let restoration_payload_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM file_change_sets WHERE id = $1)")
+            .bind(deletion_change_set)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert!(!restoration_payload_exists);
+    let audit_after: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE project_id_snapshot = $1")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(audit_after, audit_before);
+    projects::delete(&state.db, project.id).await.unwrap();
 }

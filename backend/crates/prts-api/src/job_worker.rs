@@ -241,5 +241,16 @@ mod tests {
         assert!(message.len() <= 128);
         assert!(!message.contains("raw-access-token"));
         assert!(!message.contains("Authorization"));
+
+        let (code, message) = normalize_execution_error(JobExecutionError {
+            code: JobErrorCode::FilePurgeFailed,
+            message: "database row contains source and translation text".to_string(),
+            retryable: true,
+            details: None,
+        });
+        assert_eq!(code, "file_purge_failed");
+        assert_eq!(message, "expired file cleanup failed");
+        assert!(!message.contains("source"));
+        assert!(!message.contains("translation"));
     }
 }

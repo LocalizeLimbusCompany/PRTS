@@ -110,6 +110,7 @@ pub struct Folder {
     pub deleted_at: Option<DateTime<Utc>>,
     pub deleted_by: Option<i64>,
     pub deletion_change_set_id: Option<uuid::Uuid>,
+    pub purge_after: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -125,6 +126,7 @@ pub struct File {
     pub deleted_at: Option<DateTime<Utc>>,
     pub deleted_by: Option<i64>,
     pub deletion_change_set_id: Option<uuid::Uuid>,
+    pub purge_after: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

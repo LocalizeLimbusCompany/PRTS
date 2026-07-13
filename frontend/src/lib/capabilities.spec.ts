@@ -12,6 +12,8 @@ describe('hasProjectCapability', () => {
           manage_project: false,
           manage_members: false,
           upload_files: false,
+          view_file_history: true,
+          rollback_file_history: false,
           download: false,
           edit_entry: false,
           review_entry: false,

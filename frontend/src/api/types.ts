@@ -49,6 +49,8 @@ export interface ProjectCapabilities {
   manage_project: boolean
   manage_members: boolean
   upload_files: boolean
+  view_file_history: boolean
+  rollback_file_history: boolean
   download: boolean
   edit_entry: boolean
   review_entry: boolean

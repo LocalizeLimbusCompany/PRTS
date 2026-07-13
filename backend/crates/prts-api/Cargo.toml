@@ -36,6 +36,7 @@ futures-util.workspace = true
 # 数据 / 会话
 redis.workspace = true
 chrono.workspace = true
+uuid.workspace = true
 
 # 序列化 / 导出
 serde.workspace = true

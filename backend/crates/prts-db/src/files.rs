@@ -89,19 +89,6 @@ pub async fn find_file(
         .await
 }
 
-/// 在调用方事务内锁定文件并取得删除审计快照。
-pub async fn find_file_for_update_tx(
-    conn: &mut PgConnection,
-    project_id: i64,
-    file_id: i64,
-) -> Result<Option<File>, sqlx::Error> {
-    sqlx::query_as::<_, File>("SELECT * FROM files WHERE id = $1 AND project_id = $2 FOR UPDATE")
-        .bind(file_id)
-        .bind(project_id)
-        .fetch_optional(conn)
-        .await
-}
-
 /// 按 id 查文件夹（限定项目）。
 pub async fn find_folder(
     pool: &PgPool,
@@ -113,21 +100,6 @@ pub async fn find_folder(
         .bind(project_id)
         .fetch_optional(pool)
         .await
-}
-
-/// 在调用方事务内锁定文件夹并取得删除审计快照。
-pub async fn find_folder_for_update_tx(
-    conn: &mut PgConnection,
-    project_id: i64,
-    folder_id: i64,
-) -> Result<Option<Folder>, sqlx::Error> {
-    sqlx::query_as::<_, Folder>(
-        "SELECT * FROM folders WHERE id = $1 AND project_id = $2 FOR UPDATE",
-    )
-    .bind(folder_id)
-    .bind(project_id)
-    .fetch_optional(conn)
-    .await
 }
 
 /// 列出项目的全部文件夹。
@@ -148,88 +120,6 @@ pub async fn list_files(pool: &PgPool, project_id: i64) -> Result<Vec<File>, sql
     .bind(project_id)
     .fetch_all(pool)
     .await
-}
-
-/// 统计指定文件夹子树内的文件数与物化词条数，供删除审计保存无正文元数据。
-pub async fn folder_tree_counts(
-    pool: &PgPool,
-    project_id: i64,
-    folder_path: &str,
-) -> Result<(i64, i64), sqlx::Error> {
-    sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(entry_count), 0)::BIGINT
-         FROM files
-         WHERE project_id = $1 AND path LIKE $2 || '/%'",
-    )
-    .bind(project_id)
-    .bind(folder_path)
-    .fetch_one(pool)
-    .await
-}
-
-/// 在调用方事务内统计已锁定文件夹子树，确保计数与随后删除属于同一快照。
-pub async fn folder_tree_counts_tx(
-    conn: &mut PgConnection,
-    project_id: i64,
-    folder_path: &str,
-) -> Result<(i64, i64), sqlx::Error> {
-    sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(entry_count), 0)::BIGINT
-         FROM files
-         WHERE project_id = $1 AND path LIKE $2 || '/%'",
-    )
-    .bind(project_id)
-    .bind(folder_path)
-    .fetch_one(conn)
-    .await
-}
-
-/// 删除文件（级联词条）。
-pub async fn delete_file(
-    pool: &PgPool,
-    project_id: i64,
-    file_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let mut connection = pool.acquire().await?;
-    delete_file_tx(&mut connection, project_id, file_id).await
-}
-
-/// 在调用方事务内删除文件及其级联词条。
-pub async fn delete_file_tx(
-    conn: &mut PgConnection,
-    project_id: i64,
-    file_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let res = sqlx::query("DELETE FROM files WHERE id = $1 AND project_id = $2")
-        .bind(file_id)
-        .bind(project_id)
-        .execute(conn)
-        .await?;
-    Ok(res.rows_affected() > 0)
-}
-
-/// 删除文件夹（级联子文件夹/文件/词条）。
-pub async fn delete_folder(
-    pool: &PgPool,
-    project_id: i64,
-    folder_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let mut connection = pool.acquire().await?;
-    delete_folder_tx(&mut connection, project_id, folder_id).await
-}
-
-/// 在调用方事务内删除文件夹及其级联子项。
-pub async fn delete_folder_tx(
-    conn: &mut PgConnection,
-    project_id: i64,
-    folder_id: i64,
-) -> Result<bool, sqlx::Error> {
-    let res = sqlx::query("DELETE FROM folders WHERE id = $1 AND project_id = $2")
-        .bind(folder_id)
-        .bind(project_id)
-        .execute(conn)
-        .await?;
-    Ok(res.rows_affected() > 0)
 }
 
 /// 低频修复文件计数；正常读取使用 `file_stats`。

@@ -82,6 +82,34 @@ pub enum AuthFailureReason {
     InvalidRefresh,
 }
 
+/// 文件历史审计的封闭目标类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileHistoryAuditTarget {
+    /// 文件。
+    File,
+    /// 文件夹。
+    Folder,
+}
+
+/// 文件历史审计的封闭操作类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileHistoryAuditOperation {
+    /// 新建文件夹。
+    Create,
+    /// 移动。
+    Move,
+    /// 重命名。
+    Rename,
+    /// 可恢复删除。
+    Delete,
+    /// 恢复。
+    Restore,
+    /// 回滚为历史目标版本。
+    Rollback,
+    /// 到期永久清除。
+    Purge,
+}
+
 impl AuthFailureReason {
     /// 稳定审计 reason code。
     pub const fn as_str(self) -> &'static str {
@@ -305,18 +333,18 @@ pub enum AuditEvent<'a> {
         attempt_id: i64,
         attempt_number: i32,
     },
-    FileDeleted {
+    FileHistoryChanged {
         project_id: i64,
-        file_id: i64,
+        target: FileHistoryAuditTarget,
+        target_id: i64,
+        operation: FileHistoryAuditOperation,
+        change_set_id: Option<uuid::Uuid>,
+        source_change_set_id: Option<uuid::Uuid>,
         path: &'a str,
-        entry_count: i32,
-    },
-    FolderDeleted {
-        project_id: i64,
-        folder_id: i64,
-        path: &'a str,
-        file_count: i64,
-        entry_count: i64,
+        affected_folders: usize,
+        affected_files: usize,
+        affected_entries: usize,
+        purge_after: Option<chrono::DateTime<chrono::Utc>>,
     },
     EntryUpdated {
         project_id: i64,
@@ -841,35 +869,91 @@ pub async fn append_event_tx(
                 "attempt_number": attempt_number,
             }),
         ),
-        AuditEvent::FileDeleted {
+        AuditEvent::FileHistoryChanged {
             project_id,
-            file_id,
+            target,
+            target_id,
+            operation,
+            change_set_id,
+            source_change_set_id,
             path,
-            entry_count,
-        } => (
-            "file.deleted",
-            "file",
-            file_id.to_string(),
-            Some(project_id),
-            serde_json::json!({"path": path, "entry_count": entry_count}),
-        ),
-        AuditEvent::FolderDeleted {
-            project_id,
-            folder_id,
-            path,
-            file_count,
-            entry_count,
-        } => (
-            "folder.deleted",
-            "folder",
-            folder_id.to_string(),
-            Some(project_id),
-            serde_json::json!({
-                "path": path,
-                "file_count": file_count,
-                "entry_count": entry_count,
-            }),
-        ),
+            affected_folders,
+            affected_files,
+            affected_entries,
+            purge_after,
+        } => {
+            let (target_type, prefix) = match target {
+                FileHistoryAuditTarget::File => ("file", "file"),
+                FileHistoryAuditTarget::Folder => ("folder", "folder"),
+            };
+            let suffix = match operation {
+                FileHistoryAuditOperation::Create => "created",
+                FileHistoryAuditOperation::Move => "moved",
+                FileHistoryAuditOperation::Rename => "renamed",
+                FileHistoryAuditOperation::Delete => "deleted",
+                FileHistoryAuditOperation::Restore => "restored",
+                FileHistoryAuditOperation::Rollback => "rolled_back",
+                FileHistoryAuditOperation::Purge => "purged",
+            };
+            (
+                match (target, operation) {
+                    (FileHistoryAuditTarget::File, FileHistoryAuditOperation::Create) => {
+                        "file.created"
+                    }
+                    (FileHistoryAuditTarget::File, FileHistoryAuditOperation::Move) => "file.moved",
+                    (FileHistoryAuditTarget::File, FileHistoryAuditOperation::Rename) => {
+                        "file.renamed"
+                    }
+                    (FileHistoryAuditTarget::File, FileHistoryAuditOperation::Delete) => {
+                        "file.deleted"
+                    }
+                    (FileHistoryAuditTarget::File, FileHistoryAuditOperation::Restore) => {
+                        "file.restored"
+                    }
+                    (FileHistoryAuditTarget::File, FileHistoryAuditOperation::Rollback) => {
+                        "file.rolled_back"
+                    }
+                    (FileHistoryAuditTarget::File, FileHistoryAuditOperation::Purge) => {
+                        "file.purged"
+                    }
+                    (FileHistoryAuditTarget::Folder, FileHistoryAuditOperation::Create) => {
+                        "folder.created"
+                    }
+                    (FileHistoryAuditTarget::Folder, FileHistoryAuditOperation::Move) => {
+                        "folder.moved"
+                    }
+                    (FileHistoryAuditTarget::Folder, FileHistoryAuditOperation::Rename) => {
+                        "folder.renamed"
+                    }
+                    (FileHistoryAuditTarget::Folder, FileHistoryAuditOperation::Delete) => {
+                        "folder.deleted"
+                    }
+                    (FileHistoryAuditTarget::Folder, FileHistoryAuditOperation::Restore) => {
+                        "folder.restored"
+                    }
+                    (FileHistoryAuditTarget::Folder, FileHistoryAuditOperation::Rollback) => {
+                        "folder.rolled_back"
+                    }
+                    (FileHistoryAuditTarget::Folder, FileHistoryAuditOperation::Purge) => {
+                        "folder.purged"
+                    }
+                },
+                target_type,
+                target_id.to_string(),
+                Some(project_id),
+                serde_json::json!({
+                    "operation": suffix,
+                    "change_set_id": change_set_id,
+                    "source_change_set_id": source_change_set_id,
+                    "path": path,
+                    "affected_folders": affected_folders,
+                    "affected_files": affected_files,
+                    "affected_entries": affected_entries,
+                    "purge_after": purge_after,
+                    "target": prefix,
+                }),
+            )
+        }
         AuditEvent::EntryUpdated {
             project_id,
             entry_id,

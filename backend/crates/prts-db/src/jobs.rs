@@ -103,7 +103,12 @@ pub struct NewJob {
 
 /// 在现有事务连接内创建任务，供业务写与审计原子提交。
 pub async fn create_tx(conn: &mut PgConnection, input: NewJob) -> Result<Job, sqlx::Error> {
-    if input.project_id.is_none() && !matches!(&input.kind, JobKind::LanguageRepair) {
+    if input.project_id.is_none()
+        && !matches!(
+            &input.kind,
+            JobKind::LanguageRepair | JobKind::FileRetentionCleanup
+        )
+    {
         return Err(sqlx::Error::Protocol(
             "new project-scoped job requires project_id".to_string(),
         ));
@@ -123,6 +128,53 @@ pub async fn create_tx(conn: &mut PgConnection, input: NewJob) -> Result<Job, sq
     .bind(input.max_attempts)
     .bind(input.run_after)
     .fetch_one(conn)
+    .await
+}
+
+/// 确保全局文件保留期扫描至少有一个 active durable job。
+pub async fn ensure_file_retention_cleanup(
+    pool: &PgPool,
+    run_after: DateTime<Utc>,
+) -> Result<Option<Job>, sqlx::Error> {
+    sqlx::query_as(
+        "INSERT INTO jobs (
+             kind, project_id, state, stage, payload, max_attempts, run_after
+         )
+         SELECT 'file_retention_cleanup', NULL, 'queued', 'scan', '{}', 5, $1
+         WHERE NOT EXISTS (
+             SELECT 1 FROM jobs
+             WHERE kind = 'file_retention_cleanup'
+               AND state IN ('queued', 'running', 'paused')
+         )
+         RETURNING *",
+    )
+    .bind(run_after)
+    .fetch_optional(pool)
+    .await
+}
+
+/// 当前 cleanup job 完成前排入下一次扫描；排除自身并避免并发重复。
+pub async fn schedule_next_file_retention_cleanup_tx(
+    conn: &mut PgConnection,
+    current_job_id: i64,
+    run_after: DateTime<Utc>,
+) -> Result<Option<Job>, sqlx::Error> {
+    sqlx::query_as(
+        "INSERT INTO jobs (
+             kind, project_id, state, stage, payload, max_attempts, run_after
+         )
+         SELECT 'file_retention_cleanup', NULL, 'queued', 'scan', '{}', 5, $2
+         WHERE NOT EXISTS (
+             SELECT 1 FROM jobs
+             WHERE kind = 'file_retention_cleanup'
+               AND id <> $1
+               AND state IN ('queued', 'running', 'paused')
+         )
+         RETURNING *",
+    )
+    .bind(current_job_id)
+    .bind(run_after)
+    .fetch_optional(conn)
     .await
 }
 
@@ -265,7 +317,7 @@ async fn claim_next_inner(
                     OR (state = 'running' AND lease_until <= now())
                )
                AND (
-                    kind IN ('project_purge', 'language_repair')
+                    kind IN ('project_purge', 'language_repair', 'file_retention_cleanup')
                     OR (
                         project_id IS NOT NULL
                         AND NOT (project_id = ANY($3::BIGINT[]))

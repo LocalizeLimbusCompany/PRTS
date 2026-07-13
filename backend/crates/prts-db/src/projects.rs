@@ -270,14 +270,45 @@ pub async fn delete(pool: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
 /// 在调用方事务内执行 Task 7 延迟清除上线前的兼容立即删除。
 ///
 /// `0010` 的 file history 对 project 使用 RESTRICT，不能再依赖项目级模糊 cascade。
-/// 先删 active 业务树让 target FK SET NULL，再显式删 restoration payload，最后删项目。
+/// 冻结 schema 的 target CHECK 与 SET NULL 冲突，故事务内先用不可见 anchor 承接 target，
+/// 再删业务树、history payload、anchor 与项目；anchor 状态绝不提交。
 pub async fn delete_tx(conn: &mut PgConnection, id: i64) -> Result<bool, sqlx::Error> {
+    let history_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM file_change_sets WHERE project_id = $1)")
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await?;
+    let purge_anchor_id = if history_exists {
+        let anchor_name = format!(
+            "__prts_internal_project_purge_anchor_{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let anchor_id: i64 = sqlx::query_scalar(
+            "INSERT INTO folders (project_id, parent_id, name, path)
+             VALUES ($1, NULL, $2, $2) RETURNING id",
+        )
+        .bind(id)
+        .bind(&anchor_name)
+        .fetch_one(&mut *conn)
+        .await?;
+        sqlx::query(
+            "UPDATE file_change_sets SET file_id = NULL, folder_id = $2 WHERE project_id = $1",
+        )
+        .bind(id)
+        .bind(anchor_id)
+        .execute(&mut *conn)
+        .await?;
+        Some(anchor_id)
+    } else {
+        None
+    };
     sqlx::query("DELETE FROM files WHERE project_id = $1")
         .bind(id)
         .execute(&mut *conn)
         .await?;
-    sqlx::query("DELETE FROM folders WHERE project_id = $1")
+    sqlx::query("DELETE FROM folders WHERE project_id = $1 AND id IS DISTINCT FROM $2")
         .bind(id)
+        .bind(purge_anchor_id)
         .execute(&mut *conn)
         .await?;
     sqlx::query(
@@ -291,6 +322,12 @@ pub async fn delete_tx(conn: &mut PgConnection, id: i64) -> Result<bool, sqlx::E
         .bind(id)
         .execute(&mut *conn)
         .await?;
+    if let Some(anchor_id) = purge_anchor_id {
+        sqlx::query("DELETE FROM folders WHERE id = $1")
+            .bind(anchor_id)
+            .execute(&mut *conn)
+            .await?;
+    }
     let res = sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(id)
         .execute(conn)
