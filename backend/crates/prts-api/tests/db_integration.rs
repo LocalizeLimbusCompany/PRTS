@@ -359,6 +359,11 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         allowed_payload_keys: &["file_id", "path", "created", "updated", "unchanged"],
     },
     AuditedEntrypoint {
+        entrypoint: "jobs::process_upload::replacement_succeeded",
+        action: "entries.uploaded",
+        allowed_payload_keys: &["file_id", "path", "created", "updated", "unchanged"],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::uploads::create_batch",
         action: "upload.batch_created",
         allowed_payload_keys: &["file_count", "total_bytes"],
@@ -375,6 +380,11 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     },
     AuditedEntrypoint {
         entrypoint: "routes::uploads::receive_attempt.failed",
+        action: "upload.attempt_failed",
+        allowed_payload_keys: &["batch_id", "batch_file_id", "bytes_received", "error_code"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "jobs::process_upload::replacement_failed",
         action: "upload.attempt_failed",
         allowed_payload_keys: &["batch_id", "batch_file_id", "bytes_received", "error_code"],
     },
@@ -667,7 +677,7 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         target_type: "file",
         target_id_policy: TargetIdPolicy::Numeric,
         project_snapshot_policy: ProjectSnapshotPolicy::Required,
-        expected_count: 1,
+        expected_count: 2,
     },
     AuditActionContract {
         action: "upload.batch_created",
@@ -695,7 +705,7 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         target_type: "upload_attempt",
         target_id_policy: TargetIdPolicy::Numeric,
         project_snapshot_policy: ProjectSnapshotPolicy::Required,
-        expected_count: 1,
+        expected_count: 2,
     },
     AuditActionContract {
         action: "upload.batch_queued",
@@ -827,6 +837,11 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "entries::bulk_upsert",
     "entries::update_translation",
     "entries::set_flags",
+    "entries::create_replacement_temp_tables_tx",
+    "entries::stage_replacement_entries_tx",
+    "entries::finalize_replacement_staging_tx",
+    "entries::plan_and_stage_replacement_page_tx",
+    "entries::apply_staged_replacement_tx",
     "memberships::upsert",
     "memberships::remove",
     "settings::set",
@@ -853,6 +868,9 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "uploads::cancel_batch_tx",
     "uploads::expire_due",
     "uploads::mark_attempt_cleaned",
+    "uploads::begin_processing_tx",
+    "uploads::mark_processing_succeeded_tx",
+    "uploads::mark_processing_failed_tx",
 ];
 
 /// DB-authoritative session 与 durable intent/outbox 的全部现有写边界。
@@ -910,7 +928,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        46,
+        54,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -919,7 +937,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         "auth/session writer inventory 发生漂移"
     );
     assert_eq!(UNAUDITED_READS.len(), 25, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 51, "审计入口 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 53, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
         48,
@@ -1303,7 +1321,7 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
                 "pub async fn upload(",
                 Some("// ============================= 词条"),
             ),
-            "entries::bulk_upsert_tx",
+            "entries::apply_staged_replacement_tx",
         ),
         (
             function_body(
@@ -3284,8 +3302,11 @@ async fn audit_contract_token_issuance_survives_redis_populate_failure_via_durab
 async fn audit_contract_transient_auth_outbox_requeues_same_intent_until_redis_returns() {
     let state = audit_contract_state().await;
     let user = audit_contract_create_user(&state.db, "audit-outbox-recovery", None).await;
-    let raw_refresh = "OUTBOX_RAW_REFRESH_MUST_NOT_ENTER_PAYLOAD";
-    let refresh_hash = prts_auth::token::sha256_hex(raw_refresh);
+    let raw_refresh = format!(
+        "OUTBOX_RAW_REFRESH_MUST_NOT_ENTER_PAYLOAD-{}",
+        audit_jobs_unique("outbox-refresh")
+    );
+    let refresh_hash = prts_auth::token::sha256_hex(&raw_refresh);
     let session_handle = format!("outbox-session-{}", audit_jobs_unique("recover"));
     let mut tx = state.db.begin().await.unwrap();
     let pending = auth_sessions::create_pending_tx(
@@ -3358,7 +3379,7 @@ async fn audit_contract_transient_auth_outbox_requeues_same_intent_until_redis_r
     );
     assert_eq!(queued.4.as_deref(), Some("redis_unavailable"));
     let serialized_payload = queued.5.to_string();
-    assert!(!serialized_payload.contains(raw_refresh));
+    assert!(!serialized_payload.contains(&raw_refresh));
     assert!(!serialized_payload.contains(&refresh_hash));
 
     assert!(
@@ -5459,11 +5480,15 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
     let processing_job_id = jobs[0].id;
     tx.commit().await.unwrap();
 
-    sqlx::query("UPDATE jobs SET state = 'failed' WHERE id = $1")
-        .bind(processing_job_id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE jobs
+         SET state = 'failed', result = '{\"old_failure\":true}'::jsonb, started_at = now()
+         WHERE id = $1",
+    )
+    .bind(processing_job_id)
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("UPDATE upload_batch_files SET state = 'failed' WHERE id = $1")
         .bind(file.id)
         .execute(&pool)
@@ -5540,6 +5565,9 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
     assert_eq!(jobs[0].id, processing_job_id);
     assert_eq!(jobs[0].payload["attempt_id"], retry.id);
     assert_eq!(jobs[0].attempts, 0);
+    assert_eq!(jobs[0].project_id, Some(project_id));
+    assert!(jobs[0].result.is_none());
+    assert!(jobs[0].started_at.is_none());
     tx.commit().await.unwrap();
 
     upload_test_cleanup(&pool, user_id, project_id).await;
@@ -5662,6 +5690,425 @@ async fn upload_batch_incomplete_cancel_expiry_and_cleanup_are_durable() {
     assert_eq!(expiry_audit, 1);
 
     upload_test_cleanup(&pool, user_id, project_id).await;
+}
+
+/// 构造并领取一个真实 upload_process job，同时把 raw JSON 写入隔离临时目录。
+async fn replacement_upload_job(
+    pool: &prts_db::Db,
+    user_id: i64,
+    project_id: i64,
+    path: &str,
+    body: &[u8],
+) -> (
+    prts_db::models::Job,
+    prts_db::uploads::UploadBatchSnapshot,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let root = std::env::temp_dir().join(audit_jobs_unique("prts-replacement"));
+    let temp_key = format!("batch/{project_id}/source.json");
+    let raw_path = root.join(&temp_key);
+    std::fs::create_dir_all(raw_path.parent().unwrap()).unwrap();
+    std::fs::write(&raw_path, body).unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    let batch = prts_db::uploads::create_batch_tx(
+        &mut tx,
+        project_id,
+        user_id,
+        &[prts_db::uploads::UploadDeclaration {
+            path: path.to_string(),
+            declared_bytes: body.len() as i64,
+            temp_key,
+        }],
+        chrono::Utc::now() + chrono::Duration::hours(24),
+    )
+    .await
+    .unwrap();
+    let file = &batch.files[0];
+    let attempt = &batch.attempts[0];
+    prts_db::uploads::claim_attempt_for_receive_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        file.id,
+        attempt.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    prts_db::uploads::mark_attempt_received_tx(&mut tx, file.id, attempt.id, body.len() as i64)
+        .await
+        .unwrap();
+    let jobs = prts_db::uploads::queue_batch_tx(&mut tx, project_id, batch.batch.id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    tx.commit().await.unwrap();
+    let job_ids = [jobs[0].id];
+    let kinds = ["upload_process".to_string()];
+    let claimed = db_jobs::claim_next_for_ids_and_kinds(
+        pool,
+        "replacement-test-worker",
+        300,
+        &[],
+        &kinds,
+        &job_ids,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    (claimed, batch, root, raw_path)
+}
+
+async fn replacement_test_cleanup(
+    pool: &prts_db::Db,
+    user_id: i64,
+    project_id: i64,
+    temp_root: &std::path::Path,
+) {
+    sqlx::query(
+        "UPDATE entries SET deleted_at = NULL, deleted_by = NULL,
+             deletion_change_set_id = NULL WHERE project_id = $1",
+    )
+    .bind(project_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM jobs WHERE project_id = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM upload_batches WHERE project_id_snapshot = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM entries WHERE project_id = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM files WHERE project_id = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "DELETE FROM file_change_items WHERE change_set_id IN (
+             SELECT id FROM file_change_sets WHERE project_id = $1
+         )",
+    )
+    .bind(project_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM file_change_sets WHERE project_id = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(temp_root);
+}
+
+/// typed plan 驱动同一文件内 insert/restore/source-change/tombstone/unchanged 的原子集合应用。
+#[tokio::test]
+async fn upload_replacement_handler_applies_typed_plan_history_stats_and_states() {
+    let pool = pool().await;
+    let (user_id, project_id, _) = audit_jobs_project(&pool, "replacement-green").await;
+    let file = prts_db::files::ensure_file_at_path(&pool, project_id, "story/main.json")
+        .await
+        .unwrap();
+    let old_change_set = sqlx::types::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO file_change_sets (
+             id, project_id, file_id, actor_id, operation, path_snapshot
+         ) VALUES ($1, $2, $3, $4, 'upload_replace', $5)",
+    )
+    .bind(old_change_set)
+    .bind(project_id)
+    .bind(file.id)
+    .bind(user_id)
+    .bind(&file.path)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO entries (
+             file_id, project_id, key, original, translation, state, locked, hidden
+         ) VALUES
+             ($1, $2, 'same', '{\"en\":\"Same\"}', '平台相同', 'checked', TRUE, TRUE),
+             ($1, $2, 'changed', '{\"en\":\"Old\"}', '平台保留', 'reviewed', TRUE, FALSE),
+             ($1, $2, 'missing', '{\"en\":\"Missing\"}', '缺失译文', 'translated', FALSE, FALSE)",
+    )
+    .bind(file.id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let restored_id: i64 = sqlx::query_scalar(
+        "INSERT INTO entries (
+             file_id, project_id, key, original, translation, state, locked, hidden,
+             deleted_at, deleted_by, deletion_change_set_id
+         ) VALUES (
+             $1, $2, 'restored', '{\"en\":\"Restore old\"}', '恢复译文', 'checked',
+             TRUE, FALSE, now(), $3, $4
+         ) RETURNING id",
+    )
+    .bind(file.id)
+    .bind(project_id)
+    .bind(user_id)
+    .bind(old_change_set)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let body = r#"[
+        {"key":"same","original":{"EN":"Same"},"translation":"不得覆盖","state":"reviewed"},
+        {"key":"changed","original":{"en":"New"},"translation":"不得覆盖","state":"translated"},
+        {"key":"restored","original":{"en":"Restore new"},"translation":"不得覆盖","state":"reviewed"},
+        {"key":"created","original":{"en":"Created"},"translation":"新译文","state":"translated"}
+    ]"#
+        .as_bytes();
+    let (job, batch, temp_root, raw_path) =
+        replacement_upload_job(&pool, user_id, project_id, "story/main.json", body).await;
+    let handler = jobs::process_upload::ProcessUploadHandler::new(pool.clone(), &temp_root);
+    let result = jobs::JobHandler::execute(&handler, &job).await;
+    assert_eq!(result.unwrap(), prts_db::jobs::JobResult::Completed);
+    assert!(!raw_path.exists(), "成功 replacement 应立即删除 raw temp");
+
+    type ReplacementEntryRow = (
+        i64,
+        String,
+        serde_json::Value,
+        String,
+        String,
+        bool,
+        bool,
+        Option<chrono::DateTime<chrono::Utc>>,
+    );
+    let rows: Vec<ReplacementEntryRow> = sqlx::query_as(
+        "SELECT id, key, original, translation, state, locked, hidden, deleted_at
+         FROM entries WHERE file_id = $1 ORDER BY key",
+    )
+    .bind(file.id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let by_key = rows
+        .into_iter()
+        .map(|row| (row.1.clone(), row))
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(by_key["same"].3, "平台相同");
+    assert_eq!(by_key["same"].4, "checked");
+    assert!(by_key["same"].5 && by_key["same"].6);
+    assert_eq!(by_key["changed"].2["en"], "New");
+    assert_eq!(by_key["changed"].3, "平台保留");
+    assert_eq!(by_key["changed"].4, "untranslated");
+    assert!(by_key["changed"].5);
+    assert!(by_key["missing"].7.is_some());
+    assert_eq!(by_key["restored"].0, restored_id);
+    assert_eq!(by_key["restored"].2["en"], "Restore new");
+    assert_eq!(by_key["restored"].3, "恢复译文");
+    assert_eq!(by_key["restored"].4, "untranslated");
+    assert!(by_key["restored"].7.is_none());
+    assert_eq!(by_key["created"].3, "新译文");
+    assert_eq!(by_key["created"].4, "translated");
+
+    let stats: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT visible_total, untranslated_count, translated_count,
+                questioned_count, checked_count, reviewed_count
+         FROM file_stats WHERE file_id = $1",
+    )
+    .bind(file.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stats, (3, 2, 1, 0, 0, 0));
+    let latest_set: (sqlx::types::Uuid, serde_json::Value) = sqlx::query_as(
+        "SELECT id, metadata FROM file_change_sets
+         WHERE file_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(file.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(latest_set.1["inserted"], 1);
+    assert_eq!(latest_set.1["restored"], 1);
+    assert_eq!(latest_set.1["source_changed"], 2);
+    assert_eq!(latest_set.1["tombstoned"], 1);
+    assert_eq!(latest_set.1["unchanged"], 1);
+    let operations: Vec<String> = sqlx::query_scalar(
+        "SELECT operation FROM file_change_items
+         WHERE change_set_id = $1 ORDER BY ordinal",
+    )
+    .bind(latest_set.0)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(operations, ["update", "restore", "create", "tombstone"]);
+    let snapshot = prts_db::uploads::find_batch(&pool, project_id, batch.batch.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.batch.state, "succeeded");
+    assert_eq!(snapshot.files[0].state, "succeeded");
+    assert_eq!(snapshot.attempts[0].state, "succeeded");
+    assert_eq!(snapshot.files[0].target_file_id, Some(file.id));
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log
+         WHERE action = 'entries.uploaded' AND target_id = $1",
+    )
+    .bind(file.id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 1);
+
+    replacement_test_cleanup(&pool, user_id, project_id, &temp_root).await;
+}
+
+/// parser/validation 失败必须回滚同文件事务，不能创建目标文件或 change set。
+#[tokio::test]
+async fn upload_replacement_duplicate_key_rolls_back_file_transaction() {
+    let pool = pool().await;
+    let (user_id, project_id, _) = audit_jobs_project(&pool, "replacement-red").await;
+    let body = br#"[
+        {"key":"duplicate","original":{"en":"One"}},
+        {"key":"duplicate","original":{"en":"Two"}}
+    ]"#;
+    let (job, batch, temp_root, _raw_path) =
+        replacement_upload_job(&pool, user_id, project_id, "invalid/file.json", body).await;
+    let handler = jobs::process_upload::ProcessUploadHandler::new(pool.clone(), &temp_root);
+    let error = jobs::JobHandler::execute(&handler, &job).await.unwrap_err();
+    assert_eq!(error.code, jobs::JobErrorCode::UploadDuplicateKey);
+    assert_eq!(error.details.as_ref().unwrap()["first_ordinal"], 0);
+    assert_eq!(error.details.as_ref().unwrap()["duplicate_ordinal"], 1);
+    let mut failure_tx = pool.begin().await.unwrap();
+    let failed = db_jobs::fail_attempt_tx(
+        &mut failure_tx,
+        job.id,
+        "replacement-test-worker",
+        error.code.as_str(),
+        error.code.redacted_message(),
+        error.retryable,
+        0,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(failed.state, "failed");
+    prts_db::uploads::mark_processing_failed_tx(
+        &mut failure_tx,
+        job.id,
+        error.code.as_str(),
+        error.details.as_ref(),
+    )
+    .await
+    .unwrap();
+    failure_tx.commit().await.unwrap();
+    let snapshot = prts_db::uploads::find_batch(&pool, project_id, batch.batch.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.batch.state, "failed");
+    assert_eq!(snapshot.files[0].state, "failed");
+    assert_eq!(snapshot.attempts[0].state, "failed");
+    assert_eq!(
+        snapshot.attempts[0].error_code.as_deref(),
+        Some("upload_duplicate_key")
+    );
+    assert_eq!(
+        snapshot.processing_error_details[&snapshot.files[0].id]["first_ordinal"],
+        0
+    );
+    assert_eq!(
+        snapshot.processing_error_details[&snapshot.files[0].id]["duplicate_ordinal"],
+        1
+    );
+    let persisted_details: serde_json::Value =
+        sqlx::query_scalar("SELECT result FROM jobs WHERE id = $1")
+            .bind(job.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted_details["first_ordinal"], 0);
+    assert_eq!(persisted_details["duplicate_ordinal"], 1);
+    let file_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM files WHERE project_id = $1 AND path = 'invalid/file.json'",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(file_count, 0);
+    let change_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM file_change_sets WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(change_count, 0);
+
+    replacement_test_cleanup(&pool, user_id, project_id, &temp_root).await;
+}
+
+/// job.project_id 与绑定 upload batch 不一致时必须 fail closed，不能跨项目执行文件写入。
+#[tokio::test]
+async fn upload_replacement_rejects_cross_project_job_binding() {
+    let pool = pool().await;
+    let (user_id, project_id, _) = audit_jobs_project(&pool, "replacement-binding").await;
+    let other_project = projects::create(
+        &pool,
+        &audit_jobs_unique("replacement-other"),
+        "Replacement other project",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        user_id,
+    )
+    .await
+    .unwrap();
+    let body = br#"[{"key":"entry","original":{"en":"Source"}}]"#;
+    let (mut job, _batch, temp_root, _raw_path) =
+        replacement_upload_job(&pool, user_id, project_id, "binding/file.json", body).await;
+    sqlx::query("UPDATE jobs SET project_id = $2 WHERE id = $1")
+        .bind(job.id)
+        .bind(other_project.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    job.project_id = Some(other_project.id);
+
+    let handler = jobs::process_upload::ProcessUploadHandler::new(pool.clone(), &temp_root);
+    let error = jobs::JobHandler::execute(&handler, &job).await.unwrap_err();
+    assert_eq!(error.code, jobs::JobErrorCode::InvalidPayload);
+    let file_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM files WHERE project_id = $1 AND path = 'binding/file.json'",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(file_count, 0);
+
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(job.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    projects::delete(&pool, other_project.id).await.unwrap();
+    replacement_test_cleanup(&pool, user_id, project_id, &temp_root).await;
 }
 
 /// 审计记录只能追加，数据库层必须拒绝篡改与删除。

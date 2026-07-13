@@ -111,6 +111,7 @@ async fn run_once(
                 code: JobErrorCode::HandlerUnavailable,
                 message: "registered job handler disappeared".to_string(),
                 retryable: false,
+                details: None,
             },
         )
         .await?;
@@ -153,6 +154,7 @@ async fn persist_failure(
 ) -> Result<(), sqlx::Error> {
     let retry_after = prts_core::jobs::retry_backoff_seconds(job.attempts);
     let retryable = error.retryable;
+    let details = error.details.clone();
     let (error_code, error_message) = normalize_execution_error(error);
     let mut tx = db.begin().await?;
     let failed_job = prts_db::jobs::fail_attempt_tx(
@@ -167,6 +169,15 @@ async fn persist_failure(
     .await?;
     if let Some(failed_job) = failed_job.filter(|updated| updated.state == "failed") {
         match failed_job.kind.as_str() {
+            "upload_process" => {
+                prts_db::uploads::mark_processing_failed_tx(
+                    &mut tx,
+                    failed_job.id,
+                    error_code,
+                    details.as_ref(),
+                )
+                .await?;
+            }
             "primary_source_lexical_reindex" => {
                 sqlx::query(
                     "UPDATE projects SET lexical_state = 'failed'
@@ -200,6 +211,7 @@ fn normalize_execution_error(error: JobExecutionError) -> (&'static str, String)
         code,
         message,
         retryable: _,
+        details: _,
     } = error;
     drop(message);
     (code.as_str(), code.redacted_message().to_string())
@@ -223,6 +235,7 @@ mod tests {
             code: JobErrorCode::HandlerUnavailable,
             message: "stack trace Authorization: Bearer raw-access-token".to_string(),
             retryable: true,
+            details: None,
         });
         assert_eq!(code, "job_handler_unavailable");
         assert!(message.len() <= 128);

@@ -17,6 +17,12 @@ pub enum JobErrorCode {
     InvalidPayload,
     DatabaseUnavailable,
     LanguageResolutionRequired,
+    UploadTempUnavailable,
+    UploadInvalidJson,
+    UploadInvalidEntry,
+    UploadDuplicateKey,
+    UploadInvalidLanguage,
+    UploadSourceLanguageMismatch,
 }
 
 impl JobErrorCode {
@@ -26,6 +32,12 @@ impl JobErrorCode {
             Self::InvalidPayload => "job_invalid_payload",
             Self::DatabaseUnavailable => "job_database_unavailable",
             Self::LanguageResolutionRequired => "project_language_resolution_required",
+            Self::UploadTempUnavailable => "upload_temp_unavailable",
+            Self::UploadInvalidJson => "upload_invalid_json",
+            Self::UploadInvalidEntry => "upload_invalid_entry",
+            Self::UploadDuplicateKey => "upload_duplicate_key",
+            Self::UploadInvalidLanguage => "upload_invalid_language",
+            Self::UploadSourceLanguageMismatch => "upload_source_language_mismatch",
         }
     }
 
@@ -35,6 +47,14 @@ impl JobErrorCode {
             Self::InvalidPayload => "job payload is invalid",
             Self::DatabaseUnavailable => "job database operation failed",
             Self::LanguageResolutionRequired => "project language resolution is required",
+            Self::UploadTempUnavailable => "upload temp file is unavailable",
+            Self::UploadInvalidJson => "upload JSON is invalid",
+            Self::UploadInvalidEntry => "upload entry is invalid",
+            Self::UploadDuplicateKey => "upload contains a duplicate entry key",
+            Self::UploadInvalidLanguage => "upload contains an invalid language tag",
+            Self::UploadSourceLanguageMismatch => {
+                "upload language is not configured for the project"
+            }
         }
     }
 }
@@ -51,6 +71,8 @@ pub struct JobExecutionError {
     /// handler 原始错误只用于进程内诊断，不得持久化或进入 API。
     pub message: String,
     pub retryable: bool,
+    /// 可持久化的 allowlisted 位置元数据；不得包含源文、译文或原始 parser 文本。
+    pub details: Option<serde_json::Value>,
 }
 
 /// 单一任务 kind 的执行器。

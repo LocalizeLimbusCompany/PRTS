@@ -22,6 +22,7 @@ impl RepairLanguagesHandler {
             code: JobErrorCode::DatabaseUnavailable,
             message: "language repair database operation failed".to_string(),
             retryable: true,
+            details: None,
         }
     }
 }
@@ -111,6 +112,7 @@ impl RepairLanguagesHandler {
                 code: JobErrorCode::InvalidPayload,
                 message: "language repair project disappeared".to_string(),
                 retryable: false,
+                details: None,
             })?;
         if project.language_repair_state == "ready"
             && project.language_repair_job_id == Some(job_id)
@@ -136,6 +138,7 @@ impl RepairLanguagesHandler {
                         message: "project language configuration requires owner resolution"
                             .to_string(),
                         retryable: false,
+                        details: None,
                     });
                 }
             };
@@ -203,6 +206,7 @@ impl RepairLanguagesHandler {
                 code: JobErrorCode::LanguageResolutionRequired,
                 message: "entry language keys require owner resolution".to_string(),
                 retryable: false,
+                details: None,
             });
         }
 

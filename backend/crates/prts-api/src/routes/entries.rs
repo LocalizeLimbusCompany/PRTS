@@ -1,6 +1,6 @@
 //! 上传、词条 CRUD、历史、项目导出。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Cursor, Write};
 
 use axum::extract::{Path, Query, State};
@@ -36,18 +36,6 @@ pub struct UploadEntryDto {
     pub translation: Option<String>,
     #[serde(default)]
     pub state: Option<String>,
-}
-
-impl From<UploadEntryDto> for prts_db::entries::UploadEntry {
-    fn from(d: UploadEntryDto) -> Self {
-        Self {
-            key: d.key,
-            original: d.original,
-            context: d.context,
-            translation: d.translation,
-            state: d.state,
-        }
-    }
 }
 
 /// 上传请求：`path` 为文件全路径（如 `a/b/c.json`）。
@@ -97,14 +85,6 @@ pub async fn upload(
         return Err(Error::bad_request("entries 不能为空").into());
     }
 
-    let upload_entries: Vec<prts_db::entries::UploadEntry> =
-        req.entries.into_iter().map(Into::into).collect();
-    for e in &upload_entries {
-        if e.key.trim().is_empty() {
-            return Err(Error::bad_request("每个词条都需非空 key").into());
-        }
-    }
-
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
         .await
@@ -113,16 +93,79 @@ pub async fn upload(
     let locked_access = paccess::load_locked_tx(&mut tx, &user, project).await?;
     locked_access.require_node(nodes::PROJECT_FILE_UPLOAD)?;
     locked_access.require_language_ready()?;
+    let staged_entries =
+        legacy_replacement_entries(req.entries, &locked_access.project.source_langs)?;
     let file = prts_db::files::ensure_file_at_path_tx(&mut tx, id, path)
         .await
         .map_err(db_err)?;
-    let stats =
-        prts_db::entries::bulk_upsert_tx(&mut tx, file.id, id, &upload_entries, Some(user.id))
-            .await
-            .map_err(db_err)?;
-    prts_db::files::refresh_entry_count_tx(&mut tx, file.id)
+    prts_db::entries::create_replacement_temp_tables_tx(&mut tx)
         .await
         .map_err(db_err)?;
+    for chunk in staged_entries.chunks(250) {
+        prts_db::entries::stage_replacement_entries_tx(&mut tx, chunk)
+            .await
+            .map_err(db_err)?;
+    }
+    if prts_db::entries::finalize_replacement_staging_tx(&mut tx)
+        .await
+        .map_err(db_err)?
+        .is_some()
+    {
+        return Err(Error::bad_request("upload_duplicate_key").into());
+    }
+    prts_db::entries::lock_replacement_entries_tx(&mut tx, file.id)
+        .await
+        .map_err(db_err)?;
+    prts_db::entries::declare_replacement_input_cursor_tx(&mut tx, file.id)
+        .await
+        .map_err(db_err)?;
+    let effective_at: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT transaction_timestamp()")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+    let mut missing_ordinal = staged_entries.len() as i64;
+    let mut summary = prts_core::upload_replacement::ReplacementSummary::default();
+    let mut stats_delta = prts_core::upload_replacement::EntryStatsDelta::default();
+    loop {
+        let page = prts_db::entries::plan_and_stage_replacement_page_tx(
+            &mut tx,
+            &mut missing_ordinal,
+            effective_at,
+            500,
+        )
+        .await
+        .map_err(db_err)?;
+        if !page.has_rows {
+            break;
+        }
+        summary.inserted += page.plan.summary.inserted;
+        summary.restored += page.plan.summary.restored;
+        summary.source_changed += page.plan.summary.source_changed;
+        summary.tombstoned += page.plan.summary.tombstoned;
+        summary.unchanged += page.plan.summary.unchanged;
+        stats_delta += page.plan.stats_delta;
+    }
+    let applied = prts_db::entries::apply_staged_replacement_tx(
+        &mut tx,
+        id,
+        file.id,
+        &file.path,
+        user.id,
+        summary,
+        stats_delta,
+        effective_at,
+    )
+    .await
+    .map_err(db_err)?;
+    let changed_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM prts_upload_replacement_plan")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+    let updated = usize::try_from(changed_count)
+        .unwrap_or(usize::MAX)
+        .saturating_sub(applied.summary.inserted);
     prts_db::audit::append_event_tx(
         &mut tx,
         AuditActor {
@@ -134,9 +177,9 @@ pub async fn upload(
             project_id: id,
             file_id: file.id,
             path: &file.path,
-            created: stats.created,
-            updated: stats.updated,
-            unchanged: stats.unchanged,
+            created: applied.summary.inserted,
+            updated,
+            unchanged: applied.summary.unchanged,
         },
     )
     .await
@@ -145,10 +188,70 @@ pub async fn upload(
 
     Ok(Json(UploadResult {
         file_id: file.id,
-        created: stats.created,
-        updated: stats.updated,
-        unchanged: stats.unchanged,
+        created: applied.summary.inserted,
+        updated,
+        unchanged: applied.summary.unchanged,
     }))
+}
+
+/// 旧内联端点也必须进入同一 typed replacement 真值；这里只做协议层 canonicalization。
+fn legacy_replacement_entries(
+    entries: Vec<UploadEntryDto>,
+    project_source_langs: &[String],
+) -> Result<Vec<prts_db::entries::ReplacementStagedEntry>, ApiError> {
+    let source_langs = project_source_langs
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut seen_keys = HashMap::new();
+    let mut staged = Vec::with_capacity(entries.len());
+    for (ordinal, entry) in entries.into_iter().enumerate() {
+        let UploadEntryDto {
+            key,
+            original: raw_original,
+            context: _legacy_context,
+            translation,
+            state: raw_state,
+        } = entry;
+        if key.trim().is_empty() {
+            return Err(Error::bad_request("每个词条都需非空 key").into());
+        }
+        if seen_keys.insert(key.clone(), ordinal).is_some() {
+            return Err(Error::bad_request("upload_duplicate_key").into());
+        }
+        let object = raw_original
+            .as_object()
+            .ok_or_else(|| Error::bad_request("upload_invalid_entry"))?;
+        let mut original = BTreeMap::new();
+        for (raw_tag, value) in object {
+            let canonical = prts_core::canonicalize_language_tag(raw_tag)
+                .map_err(|_| Error::bad_request("upload_invalid_language"))?;
+            if !source_langs.contains(canonical.as_str()) {
+                return Err(Error::bad_request("upload_source_language_mismatch").into());
+            }
+            let text = value
+                .as_str()
+                .ok_or_else(|| Error::bad_request("upload_invalid_entry"))?;
+            if original.insert(canonical, text.to_string()).is_some() {
+                return Err(Error::bad_request("upload_invalid_language").into());
+            }
+        }
+        let state = match raw_state {
+            Some(state) => Some(
+                EntryState::parse(&state)
+                    .ok_or_else(|| Error::bad_request("upload_invalid_entry"))?,
+            ),
+            None => None,
+        };
+        staged.push(prts_db::entries::ReplacementStagedEntry {
+            ordinal: ordinal as i64,
+            key,
+            original,
+            translation,
+            state,
+        });
+    }
+    Ok(staged)
 }
 
 #[cfg(test)]

@@ -30,6 +30,7 @@ impl CleanupUploadsHandler {
                 code: JobErrorCode::InvalidPayload,
                 message: "upload cleanup temp key is invalid".to_string(),
                 retryable: false,
+                details: None,
             });
         }
         Ok(self.temp_root.join(relative))
@@ -63,6 +64,7 @@ impl JobHandler for CleanupUploadsHandler {
                                 code: JobErrorCode::DatabaseUnavailable,
                                 message: format!("upload temp cleanup failed: {error}"),
                                 retryable: true,
+                                details: None,
                             });
                         }
                     }
@@ -81,6 +83,7 @@ fn database_error(error: sqlx::Error) -> JobExecutionError {
         code: JobErrorCode::DatabaseUnavailable,
         message: format!("upload cleanup database operation failed: {error}"),
         retryable: true,
+        details: None,
     }
 }
 

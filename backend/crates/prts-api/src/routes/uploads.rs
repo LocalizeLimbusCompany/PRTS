@@ -52,6 +52,8 @@ pub struct UploadBatchFileDto {
     pub processing_job_id: Option<i64>,
     pub target_file_id: Option<i64>,
     pub last_error_code: Option<String>,
+    /// 解析失败的 allowlisted 位置元数据，不含源文、译文或 parser 原始消息。
+    pub error_details: Option<serde_json::Value>,
     pub attempts: Vec<UploadAttemptDto>,
 }
 
@@ -86,6 +88,7 @@ fn snapshot_dto(snapshot: prts_db::uploads::UploadBatchSnapshot) -> UploadBatchD
                 processing_job_id: file.processing_job_id,
                 target_file_id: file.target_file_id,
                 last_error_code: file.last_error_code,
+                error_details: snapshot.processing_error_details.get(&file.id).cloned(),
                 attempts: snapshot
                     .attempts
                     .iter()

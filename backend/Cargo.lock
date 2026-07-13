@@ -1654,6 +1654,7 @@ dependencies = [
  "chrono",
  "pgvector",
  "prts-common",
+ "prts-core",
  "redis",
  "serde",
  "serde_json",

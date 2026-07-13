@@ -1,7 +1,9 @@
 //! 原始文件上传批次、逻辑文件与 byte-zero attempt 状态机。
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
-use sqlx::{PgConnection, PgPool};
+use sqlx::{FromRow, PgConnection, PgPool};
 
 use crate::audit::{self, AuditActor, AuditActorKind, AuditEvent};
 use crate::models::{Job, UploadBatch, UploadBatchFile, UploadFileAttempt};
@@ -24,6 +26,35 @@ pub struct UploadBatchSnapshot {
     pub batch: UploadBatch,
     pub files: Vec<UploadBatchFile>,
     pub attempts: Vec<UploadFileAttempt>,
+    /// upload_process 失败时的 allowlisted ordinal/line/column 元数据。
+    pub processing_error_details: HashMap<i64, serde_json::Value>,
+}
+
+/// 已锁定 upload_process job 对应的单文件事务上下文。
+#[derive(Debug, Clone)]
+pub struct UploadProcessingContext {
+    pub project_id: i64,
+    pub actor_id: i64,
+    pub batch_id: i64,
+    pub batch_file_id: i64,
+    pub attempt_id: i64,
+    pub path: String,
+    pub temp_key: String,
+    pub source_langs: Vec<String>,
+    pub language_repair_state: String,
+}
+
+#[derive(Debug, FromRow)]
+struct UploadProcessingRow {
+    project_id_snapshot: i64,
+    actor_id: Option<i64>,
+    batch_state: String,
+    batch_file_id: i64,
+    attempt_id: i64,
+    path: String,
+    temp_key: String,
+    source_langs: Vec<String>,
+    language_repair_state: String,
 }
 
 /// 在已锁定、重新授权的项目事务内声明整个批次及首轮 attempts。
@@ -106,6 +137,7 @@ pub async fn create_batch_tx(
         batch,
         files,
         attempts,
+        processing_error_details: HashMap::new(),
     })
 }
 
@@ -139,10 +171,24 @@ pub async fn find_batch(
     .bind(batch_id)
     .fetch_all(pool)
     .await?;
+    let processing_error_details = sqlx::query_as::<_, (i64, serde_json::Value)>(
+        "SELECT file.id, job.result
+         FROM upload_batch_files AS file
+         JOIN jobs AS job ON job.id = file.processing_job_id
+         WHERE file.batch_id = $1
+           AND file.last_error_code IS NOT NULL
+           AND job.result IS NOT NULL",
+    )
+    .bind(batch_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
     Ok(Some(UploadBatchSnapshot {
         batch,
         files,
         attempts,
+        processing_error_details,
     }))
 }
 
@@ -313,8 +359,10 @@ pub async fn queue_batch_tx(
         let job: Job = match file.processing_job_id {
             Some(job_id) => {
                 sqlx::query_as(
-                    "UPDATE jobs SET state = 'queued', stage = 'queued', run_after = now(),
+                    "UPDATE jobs SET project_id = $6, state = 'queued', stage = 'queued',
+                     run_after = now(), result = NULL, target_file_id = NULL,
                      worker_id = NULL, lease_until = NULL, finished_at = NULL,
+                     started_at = NULL,
                      last_error_code = NULL, last_error_message = NULL,
                      attempts = 0, progress_current = 0, progress_total = $5,
                      payload = jsonb_build_object(
@@ -329,6 +377,7 @@ pub async fn queue_batch_tx(
                 .bind(file.id)
                 .bind(attempt_id)
                 .bind(file.declared_bytes)
+                .bind(project_id)
                 .fetch_one(&mut *conn)
                 .await?
             }
@@ -650,4 +699,276 @@ pub async fn mark_attempt_cleaned(pool: &PgPool, attempt_id: i64) -> Result<(), 
         .await?;
     }
     tx.commit().await
+}
+
+/// 在文件事务内锁定并重新校验 upload_process 的项目、actor、逻辑文件与 attempt。
+///
+/// 只有 owner/manager 或具备平台全项目管理能力的主体可继续；撤权、语言 repair gate、
+/// stale attempt 或取消竞态均 fail closed。成功后把 attempt/file 标为 processing。
+pub async fn begin_processing_tx(
+    conn: &mut PgConnection,
+    job_id: i64,
+    project_id: i64,
+    batch_id: i64,
+    batch_file_id: i64,
+    attempt_id: i64,
+) -> Result<Option<UploadProcessingContext>, sqlx::Error> {
+    let row: Option<UploadProcessingRow> = sqlx::query_as(
+        "SELECT batch.project_id_snapshot,
+                batch.actor_id,
+                batch.state AS batch_state,
+                file.id AS batch_file_id,
+                attempt.id AS attempt_id,
+                file.path,
+                attempt.temp_key,
+                project.source_langs,
+                project.language_repair_state
+         FROM jobs AS job
+         JOIN upload_batch_files AS file
+           ON file.id = job.upload_batch_file_id
+         JOIN upload_batches AS batch ON batch.id = file.batch_id
+         JOIN upload_file_attempts AS attempt
+           ON attempt.id = file.current_attempt_id
+         JOIN projects AS project ON project.id = batch.project_id
+         WHERE job.id = $1
+           AND job.kind = 'upload_process'
+           AND job.state = 'running'
+           AND job.project_id = $2
+           AND batch.project_id = $2
+           AND batch.project_id_snapshot = $2
+           AND batch.id = $3
+           AND file.id = $4
+           AND attempt.id = $5
+           AND file.processing_job_id = job.id
+           AND file.state = 'queued'
+           AND attempt.state = 'queued'
+           AND batch.state IN ('queued', 'processing', 'cancelling')
+         FOR UPDATE OF project, batch, file, attempt",
+    )
+    .bind(job_id)
+    .bind(project_id)
+    .bind(batch_id)
+    .bind(batch_file_id)
+    .bind(attempt_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let actor_id = row.actor_id.ok_or_else(|| {
+        sqlx::Error::Protocol("upload processing actor no longer exists".to_string())
+    })?;
+    let authorized: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1
+             FROM users AS actor
+             JOIN projects AS project ON project.id = $1
+             LEFT JOIN memberships AS membership
+               ON membership.project_id = project.id AND membership.user_id = actor.id
+             WHERE actor.id = $2
+               AND (
+                    project.owner_id = actor.id
+                    OR membership.role IN ('owner', 'manager')
+                    OR actor.platform_role IN ('super_admin', 'admin')
+               )
+         )",
+    )
+    .bind(row.project_id_snapshot)
+    .bind(actor_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if !authorized {
+        return Err(sqlx::Error::Protocol(
+            "upload processing permission was revoked".to_string(),
+        ));
+    }
+    sqlx::query(
+        "UPDATE upload_file_attempts
+         SET state = 'processing'
+         WHERE id = $1 AND state = 'queued'",
+    )
+    .bind(row.attempt_id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE upload_batch_files
+         SET state = 'processing'
+         WHERE id = $1 AND state = 'queued'",
+    )
+    .bind(row.batch_file_id)
+    .execute(&mut *conn)
+    .await?;
+    if row.batch_state != "cancelling" {
+        sqlx::query("UPDATE upload_batches SET state = 'processing' WHERE id = $1")
+            .bind(batch_id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(Some(UploadProcessingContext {
+        project_id: row.project_id_snapshot,
+        actor_id,
+        batch_id,
+        batch_file_id: row.batch_file_id,
+        attempt_id: row.attempt_id,
+        path: row.path,
+        temp_key: row.temp_key,
+        source_langs: row.source_langs,
+        language_repair_state: row.language_repair_state,
+    }))
+}
+
+/// replacement 业务写、history 与 audit 成功后，在同一事务收敛 attempt/file/batch。
+pub async fn mark_processing_succeeded_tx(
+    conn: &mut PgConnection,
+    job_id: i64,
+    context: &UploadProcessingContext,
+    target_file_id: i64,
+) -> Result<(), sqlx::Error> {
+    let attempt_updated = sqlx::query(
+        "UPDATE upload_file_attempts
+         SET state = 'succeeded', target_file_id = $2,
+             error_code = NULL, finished_at = now(), cleanup_after = now()
+         WHERE id = $1 AND batch_file_id = $3 AND state = 'processing'",
+    )
+    .bind(context.attempt_id)
+    .bind(target_file_id)
+    .bind(context.batch_file_id)
+    .execute(&mut *conn)
+    .await?;
+    if attempt_updated.rows_affected() != 1 {
+        return Err(sqlx::Error::Protocol(
+            "upload processing attempt lost its state".to_string(),
+        ));
+    }
+    let file_updated = sqlx::query(
+        "UPDATE upload_batch_files
+         SET state = 'succeeded', target_file_id = $2, last_error_code = NULL
+         WHERE id = $1 AND processing_job_id = $3 AND state = 'processing'",
+    )
+    .bind(context.batch_file_id)
+    .bind(target_file_id)
+    .bind(job_id)
+    .execute(&mut *conn)
+    .await?;
+    if file_updated.rows_affected() != 1 {
+        return Err(sqlx::Error::Protocol(
+            "upload logical file lost its processing state".to_string(),
+        ));
+    }
+    let job_updated = sqlx::query("UPDATE jobs SET target_file_id = $2 WHERE id = $1")
+        .bind(job_id)
+        .bind(target_file_id)
+        .execute(&mut *conn)
+        .await?;
+    if job_updated.rows_affected() != 1 {
+        return Err(sqlx::Error::Protocol(
+            "upload processing job disappeared".to_string(),
+        ));
+    }
+    reconcile_batch_state_tx(&mut *conn, context.batch_id).await
+}
+
+/// job 失败事务内把 queued/processing attempt 与 logical file 标为 failed，并保存
+/// allowlisted 位置元数据到 job result；原始上传正文和 parser 文本不会持久化。
+pub async fn mark_processing_failed_tx(
+    conn: &mut PgConnection,
+    job_id: i64,
+    error_code: &str,
+    error_details: Option<&serde_json::Value>,
+) -> Result<(), sqlx::Error> {
+    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT batch.project_id_snapshot, file.batch_id, file.id,
+                attempt.id, attempt.bytes_received
+         FROM jobs AS job
+         JOIN upload_batch_files AS file ON file.id = job.upload_batch_file_id
+         JOIN upload_batches AS batch ON batch.id = file.batch_id
+         JOIN upload_file_attempts AS attempt ON attempt.id = file.current_attempt_id
+         WHERE job.id = $1 AND job.kind = 'upload_process'
+         FOR UPDATE OF file, attempt",
+    )
+    .bind(job_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((project_id, batch_id, batch_file_id, attempt_id, bytes_received)) = row else {
+        return Ok(());
+    };
+    sqlx::query(
+        "UPDATE upload_file_attempts
+         SET state = 'failed', error_code = $2, finished_at = now(), cleanup_after = now()
+         WHERE id = $1 AND state IN ('queued', 'processing')",
+    )
+    .bind(attempt_id)
+    .bind(error_code)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE upload_batch_files
+         SET state = 'failed', last_error_code = $2
+         WHERE id = $1 AND state IN ('queued', 'processing')",
+    )
+    .bind(batch_file_id)
+    .bind(error_code)
+    .execute(&mut *conn)
+    .await?;
+    if let Some(details) = error_details {
+        sqlx::query("UPDATE jobs SET result = $2 WHERE id = $1")
+            .bind(job_id)
+            .bind(details)
+            .execute(&mut *conn)
+            .await?;
+    }
+    audit::append_event_tx(
+        &mut *conn,
+        AuditActor {
+            id: None,
+            kind: AuditActorKind::System,
+            ip: None,
+        },
+        AuditEvent::UploadAttemptFailed {
+            project_id,
+            batch_id,
+            batch_file_id,
+            attempt_id,
+            bytes_received,
+            error_code,
+        },
+    )
+    .await?;
+    reconcile_batch_state_tx(&mut *conn, batch_id).await
+}
+
+async fn reconcile_batch_state_tx(
+    conn: &mut PgConnection,
+    batch_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "WITH counts AS (
+             SELECT count(*)::BIGINT AS total,
+                    count(*) FILTER (WHERE state = 'succeeded')::BIGINT AS succeeded,
+                    count(*) FILTER (
+                        WHERE state IN ('uploading', 'queued', 'processing')
+                    )::BIGINT AS active
+             FROM upload_batch_files WHERE batch_id = $1
+         )
+         UPDATE upload_batches AS batch
+         SET state = CASE
+                 WHEN batch.state = 'cancelling' AND counts.active = 0 THEN 'cancelled'
+                 WHEN counts.active > 0 THEN
+                     CASE WHEN batch.state = 'cancelling' THEN 'cancelling' ELSE 'processing' END
+                 WHEN counts.succeeded = counts.total THEN 'succeeded'
+                 WHEN counts.succeeded > 0 THEN 'partially_succeeded'
+                 ELSE 'failed'
+             END,
+             completed_at = CASE WHEN counts.active = 0 THEN now() ELSE batch.completed_at END,
+             cancelled_at = CASE
+                 WHEN batch.state = 'cancelling' AND counts.active = 0 THEN now()
+                 ELSE batch.cancelled_at
+             END
+         FROM counts
+         WHERE batch.id = $1",
+    )
+    .bind(batch_id)
+    .execute(conn)
+    .await?;
+    Ok(())
 }

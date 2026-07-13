@@ -317,6 +317,10 @@ mod db_tests {
 
     static MIGRATED: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
 
+    fn runtime_role() -> String {
+        std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
+    }
+
     fn unique(prefix: &str) -> String {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -332,7 +336,7 @@ mod db_tests {
                     std::env::var("MIGRATION_DATABASE_URL").expect("MIGRATION_DATABASE_URL 未设置");
                 let migration_pool = prts_db::connect_postgres(&migration_url, 1).await.unwrap();
                 let mut connection = migration_pool.acquire().await.unwrap();
-                prts_db::run_migrations(&mut connection, "prts_runtime")
+                prts_db::run_migrations(&mut connection, &runtime_role())
                     .await
                     .unwrap();
                 drop(connection);
@@ -342,7 +346,7 @@ mod db_tests {
         let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL 未设置");
         let redis_url = std::env::var("PRTS__REDIS__URL").expect("PRTS__REDIS__URL 未设置");
         let db = prts_db::connect_postgres(&database_url, 10).await.unwrap();
-        prts_db::verify_runtime_role(&db, "prts_runtime")
+        prts_db::verify_runtime_role(&db, &runtime_role())
             .await
             .unwrap();
         let cache = prts_db::connect_redis(&redis_url).await.unwrap();

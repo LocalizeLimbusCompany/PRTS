@@ -217,12 +217,14 @@ impl JobHandler for EmbeddingBackfillHandler {
                             code: JobErrorCode::DatabaseUnavailable,
                             message: "embedding provider request failed".to_string(),
                             retryable: true,
+                            details: None,
                         })?;
                     if vectors.len() != chunk.len() {
                         return Err(JobExecutionError {
                             code: JobErrorCode::InvalidPayload,
                             message: "embedding provider returned mismatched batch".to_string(),
                             retryable: true,
+                            details: None,
                         });
                     }
                     let mut tx = self.db.begin().await.map_err(|_| database_error())?;
@@ -275,6 +277,7 @@ fn invalid_payload() -> JobExecutionError {
         code: JobErrorCode::InvalidPayload,
         message: "project-scoped job lacks project id".to_string(),
         retryable: false,
+        details: None,
     }
 }
 
@@ -283,5 +286,6 @@ fn database_error() -> JobExecutionError {
         code: JobErrorCode::DatabaseUnavailable,
         message: "project reindex database operation failed".to_string(),
         retryable: true,
+        details: None,
     }
 }

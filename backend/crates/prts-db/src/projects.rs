@@ -267,8 +267,30 @@ pub async fn delete(pool: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
     delete_tx(&mut connection, id).await
 }
 
-/// 在调用方事务内删除项目。
+/// 在调用方事务内执行 Task 7 延迟清除上线前的兼容立即删除。
+///
+/// `0010` 的 file history 对 project 使用 RESTRICT，不能再依赖项目级模糊 cascade。
+/// 先删 active 业务树让 target FK SET NULL，再显式删 restoration payload，最后删项目。
 pub async fn delete_tx(conn: &mut PgConnection, id: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query("DELETE FROM files WHERE project_id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM folders WHERE project_id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query(
+        "DELETE FROM file_change_items
+         WHERE change_set_id IN (SELECT id FROM file_change_sets WHERE project_id = $1)",
+    )
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM file_change_sets WHERE project_id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
     let res = sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(id)
         .execute(conn)

@@ -12,7 +12,9 @@ pub mod entry;
 pub mod jobs;
 pub mod language;
 pub mod permission;
+pub mod ports;
 pub mod project_language;
+pub mod upload_replacement;
 
 pub use entry::{EntryFlags, EntryState};
 pub use jobs::JobState;

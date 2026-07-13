@@ -115,6 +115,10 @@ async fn main() -> anyhow::Result<()> {
             db.clone(),
             settings.media.upload_temp_directory.clone(),
         )),
+        Arc::new(crate::jobs::process_upload::ProcessUploadHandler::new(
+            db.clone(),
+            settings.media.upload_temp_directory.clone(),
+        )),
     ]);
     sqlx::query(
         "UPDATE workspace_foundation_state SET lexical_worker_registered = TRUE, updated_at = now()
