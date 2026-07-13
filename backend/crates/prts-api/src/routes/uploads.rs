@@ -605,7 +605,7 @@ pub async fn receive_attempt(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// 提交完整批次并为每个逻辑文件排队一个可复用 processing job。
+/// 提交当前已接收文件，并为它们排队可复用 processing job；失败文件可稍后单独重试。
 #[utoipa::path(
     post,
     path = "/projects/{id}/upload-batches/{batch_id}/complete",

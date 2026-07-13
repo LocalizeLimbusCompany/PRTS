@@ -303,11 +303,39 @@ pub async fn fail_attempt_tx(
         .bind(attempt_id)
         .execute(&mut *conn)
         .await?;
+        sqlx::query(
+            "WITH target AS (
+                 SELECT batch_id FROM upload_batch_files WHERE id = $1
+             ), counts AS (
+                 SELECT file.batch_id,
+                        count(*) FILTER (WHERE file.state = 'succeeded')::BIGINT AS succeeded,
+                        count(*) FILTER (
+                            WHERE file.state IN ('uploading', 'queued', 'processing')
+                        )::BIGINT AS active
+                 FROM upload_batch_files AS file
+                 JOIN target ON target.batch_id = file.batch_id
+                 GROUP BY file.batch_id
+             )
+             UPDATE upload_batches AS batch
+             SET state = CASE WHEN counts.succeeded > 0
+                              THEN 'partially_succeeded' ELSE 'failed' END,
+                 completed_at = now()
+             FROM counts
+             WHERE batch.id = counts.batch_id
+               AND batch.state IN ('draft', 'uploading')
+               AND counts.active = 0",
+        )
+        .bind(file_id)
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(file_id.is_some())
 }
 
-/// 校验所有当前 attempts 完整后，为每个逻辑文件创建一次处理 job。
+/// 校验当前已接收 attempts 完整后，为这些逻辑文件创建或复用处理 job。
+///
+/// 首次提交可跳过传输失败文件；后续 byte-zero retry 也只重新排队对应文件，已经
+/// succeeded 的同批文件保持不变。
 pub async fn queue_batch_tx(
     conn: &mut PgConnection,
     project_id: i64,
@@ -337,6 +365,23 @@ pub async fn queue_batch_tx(
     .bind(batch_id)
     .fetch_all(&mut *conn)
     .await?;
+    if files
+        .iter()
+        .any(|file| matches!(file.state.as_str(), "uploading" | "processing"))
+    {
+        return Err(sqlx::Error::Protocol(
+            "upload batch is incomplete".to_string(),
+        ));
+    }
+    let queueable = files
+        .into_iter()
+        .filter(|file| file.state == "queued")
+        .collect::<Vec<_>>();
+    if queueable.is_empty() {
+        return Err(sqlx::Error::Protocol(
+            "upload batch has no received files".to_string(),
+        ));
+    }
     let ready: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM upload_batch_files AS file
          JOIN upload_file_attempts AS attempt ON attempt.id = file.current_attempt_id
@@ -346,13 +391,13 @@ pub async fn queue_batch_tx(
     .bind(batch_id)
     .fetch_one(&mut *conn)
     .await?;
-    if ready != files.len() as i64 {
+    if ready != queueable.len() as i64 {
         return Err(sqlx::Error::Protocol(
             "upload batch is incomplete".to_string(),
         ));
     }
-    let mut jobs = Vec::with_capacity(files.len());
-    for file in files {
+    let mut jobs = Vec::with_capacity(queueable.len());
+    for file in queueable {
         let attempt_id = file.current_attempt_id.ok_or_else(|| {
             sqlx::Error::Protocol("upload file has no current attempt".to_string())
         })?;
@@ -432,11 +477,17 @@ pub async fn retry_file_tx(
              SELECT 1 FROM upload_batches
              WHERE id = $1 AND project_id_snapshot = $2 AND actor_id = $3
                AND state NOT IN ('cancelling', 'cancelled', 'expired', 'succeeded')
+               AND NOT EXISTS (
+                   SELECT 1 FROM upload_batch_files
+                   WHERE batch_id = $1 AND id <> $4
+                     AND state IN ('uploading', 'queued', 'processing')
+               )
          )",
     )
     .bind(batch_id)
     .bind(project_id)
     .bind(actor_id)
+    .bind(batch_file_id)
     .fetch_one(&mut *conn)
     .await?;
     if !batch_exists {

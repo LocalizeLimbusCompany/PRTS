@@ -5,6 +5,8 @@ import type {
   EntryDto,
   EntryVersionDto,
   ExternalAccountDto,
+  FileHistoryPage,
+  FileOperationDto,
   MemberDto,
   JobDto,
   ProjectLanguageResolutionDto,
@@ -142,11 +144,36 @@ export const projectsApi = {
   tree(id: number) {
     return http.get<ProjectTree>(`/projects/${id}/tree`).then((r) => r.data)
   },
+  createFolder(id: number, body: { parent_id: number | null; name: string }) {
+    return http.post(`/projects/${id}/folders`, body).then((r) => r.data)
+  },
+  moveFile(id: number, fileId: number, body: { folder_id: number | null; name: string }) {
+    return http.patch<FileOperationDto>(`/projects/${id}/files/${fileId}`, body).then((r) => r.data)
+  },
+  moveFolder(id: number, folderId: number, body: { parent_id: number | null; name: string }) {
+    return http
+      .patch<FileOperationDto>(`/projects/${id}/folders/${folderId}`, body)
+      .then((r) => r.data)
+  },
   deleteFile(id: number, fileId: number) {
     return http.delete(`/projects/${id}/files/${fileId}`)
   },
   deleteFolder(id: number, folderId: number) {
     return http.delete(`/projects/${id}/folders/${folderId}`)
+  },
+  restoreFile(id: number, fileId: number, deletionChangeSetId: string) {
+    return http
+      .post<FileOperationDto>(`/projects/${id}/files/${fileId}/restore`, {
+        deletion_change_set_id: deletionChangeSetId,
+      })
+      .then((r) => r.data)
+  },
+  restoreFolder(id: number, folderId: number, deletionChangeSetId: string) {
+    return http
+      .post<FileOperationDto>(`/projects/${id}/folders/${folderId}/restore`, {
+        deletion_change_set_id: deletionChangeSetId,
+      })
+      .then((r) => r.data)
   },
   async exportProject(id: number): Promise<Blob> {
     const r = await http.get(`/projects/${id}/export`, { responseType: 'blob' })
@@ -163,6 +190,32 @@ export const projectsApi = {
   },
   deleteAvatar(id: number) {
     return http.delete(`/projects/${id}/avatar`)
+  },
+}
+
+/** File change-set history and server-materialized rollback. */
+export const fileHistoryApi = {
+  list(
+    projectId: number,
+    params: { after?: string; file_id?: number; folder_id?: number; limit?: number } = {},
+  ) {
+    return http
+      .get<FileHistoryPage>(`/projects/${projectId}/file-history`, { params })
+      .then((response) => response.data)
+  },
+  rollbackFile(projectId: number, fileId: number, changeSetId: string) {
+    return http
+      .post<FileOperationDto>(
+        `/projects/${projectId}/files/${fileId}/history/${changeSetId}/rollback`,
+      )
+      .then((response) => response.data)
+  },
+  rollbackFolder(projectId: number, folderId: number, changeSetId: string) {
+    return http
+      .post<FileOperationDto>(
+        `/projects/${projectId}/folders/${folderId}/history/${changeSetId}/rollback`,
+      )
+      .then((response) => response.data)
   },
 }
 

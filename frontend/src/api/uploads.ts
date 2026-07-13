@@ -20,6 +20,7 @@ export interface UploadBatchFileDto {
   processing_job_id: number | null
   target_file_id: number | null
   last_error_code: string | null
+  error_details: Record<string, unknown> | null
   attempts: UploadAttemptDto[]
 }
 
@@ -51,6 +52,7 @@ export const uploadsApi = {
     attemptId: number,
     file: File,
     onProgress?: (loaded: number) => void,
+    signal?: AbortSignal,
   ) {
     return http.put(
       `/projects/${projectId}/upload-batches/${batchId}/files/${fileId}/attempts/${attemptId}`,
@@ -58,6 +60,7 @@ export const uploadsApi = {
       {
         headers: { 'Content-Type': 'application/json' },
         timeout: 0,
+        signal,
         onUploadProgress: (event) => onProgress?.(event.loaded),
       },
     )

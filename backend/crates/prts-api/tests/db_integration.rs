@@ -5603,11 +5603,18 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
         &mut tx,
         project_id,
         user_id,
-        &[prts_db::uploads::UploadDeclaration {
-            path: "folder/file.json".to_string(),
-            declared_bytes: 4,
-            temp_key: first_key,
-        }],
+        &[
+            prts_db::uploads::UploadDeclaration {
+                path: "folder/file.json".to_string(),
+                declared_bytes: 4,
+                temp_key: first_key,
+            },
+            prts_db::uploads::UploadDeclaration {
+                path: "folder/succeeded.json".to_string(),
+                declared_bytes: 3,
+                temp_key: format!("projects/{project_id}/uploads/test/succeeded.json"),
+            },
+        ],
         expires_at,
     )
     .await
@@ -5615,6 +5622,8 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
     tx.commit().await.unwrap();
     let file = &batch.files[0];
     let first_attempt = &batch.attempts[0];
+    let succeeded_file = &batch.files[1];
+    let succeeded_attempt = &batch.attempts[1];
 
     let mut tx = pool.begin().await.unwrap();
     let claimed = prts_db::uploads::claim_attempt_for_receive_tx(
@@ -5643,11 +5652,38 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
             .await
             .unwrap()
     );
+    prts_db::uploads::claim_attempt_for_receive_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        succeeded_file.id,
+        succeeded_attempt.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(prts_db::uploads::mark_attempt_received_tx(
+        &mut tx,
+        succeeded_file.id,
+        succeeded_attempt.id,
+        3,
+    )
+    .await
+    .unwrap());
     let jobs = prts_db::uploads::queue_batch_tx(&mut tx, project_id, batch.batch.id, user_id)
         .await
         .unwrap()
         .unwrap();
-    let processing_job_id = jobs[0].id;
+    let processing_job_id = jobs
+        .iter()
+        .find(|job| job.upload_batch_file_id == Some(file.id))
+        .unwrap()
+        .id;
+    let succeeded_job_id = jobs
+        .iter()
+        .find(|job| job.upload_batch_file_id == Some(succeeded_file.id))
+        .unwrap()
+        .id;
     tx.commit().await.unwrap();
 
     sqlx::query(
@@ -5672,6 +5708,28 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query("UPDATE jobs SET state = 'succeeded', finished_at = now() WHERE id = $1")
+        .bind(succeeded_job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE upload_batch_files SET state = 'succeeded' WHERE id = $1")
+        .bind(succeeded_file.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE upload_file_attempts SET state = 'succeeded', finished_at = now() WHERE id = $1",
+    )
+    .bind(succeeded_attempt.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE upload_batches SET state = 'partially_succeeded' WHERE id = $1")
+        .bind(batch.batch.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let mut tx = pool.begin().await.unwrap();
     assert!(prts_db::uploads::retry_file_tx(
@@ -5707,7 +5765,7 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(snapshot.attempts.len(), 2);
+    assert_eq!(snapshot.attempts.len(), 3);
     assert_eq!(
         snapshot.attempts[0].error_code.as_deref(),
         Some("processing_failed")
@@ -5732,6 +5790,7 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].id, processing_job_id);
     assert_eq!(jobs[0].payload["attempt_id"], retry.id);
     assert_eq!(jobs[0].attempts, 0);
@@ -5740,6 +5799,137 @@ async fn upload_batch_retry_reuses_processing_job_and_preserves_attempt_history(
     assert!(jobs[0].started_at.is_none());
     tx.commit().await.unwrap();
 
+    let succeeded_state: String =
+        sqlx::query_scalar("SELECT state FROM upload_batch_files WHERE id = $1")
+            .bind(succeeded_file.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(succeeded_state, "succeeded");
+
+    upload_test_cleanup(&pool, user_id, project_id).await;
+}
+
+/// 首次 complete 只排队已接收文件；传输失败的同批文件保留给 byte-zero retry。
+#[tokio::test]
+async fn upload_batch_complete_queues_received_subset() {
+    let pool = pool().await;
+    let (user_id, project_id, _) = audit_jobs_project(&pool, "upload-partial-complete").await;
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(24);
+    let mut tx = pool.begin().await.unwrap();
+    let batch = prts_db::uploads::create_batch_tx(
+        &mut tx,
+        project_id,
+        user_id,
+        &[
+            prts_db::uploads::UploadDeclaration {
+                path: "received.json".to_string(),
+                declared_bytes: 2,
+                temp_key: format!("projects/{project_id}/uploads/test/received.json"),
+            },
+            prts_db::uploads::UploadDeclaration {
+                path: "failed.json".to_string(),
+                declared_bytes: 3,
+                temp_key: format!("projects/{project_id}/uploads/test/failed.json"),
+            },
+        ],
+        expires_at,
+    )
+    .await
+    .unwrap();
+    let received_file = &batch.files[0];
+    let failed_file = &batch.files[1];
+    let received_attempt = &batch.attempts[0];
+    let failed_attempt = &batch.attempts[1];
+    prts_db::uploads::claim_attempt_for_receive_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        received_file.id,
+        received_attempt.id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(prts_db::uploads::mark_attempt_received_tx(
+        &mut tx,
+        received_file.id,
+        received_attempt.id,
+        2,
+    )
+    .await
+    .unwrap());
+    assert!(prts_db::uploads::fail_attempt_tx(
+        &mut tx,
+        failed_file.id,
+        failed_attempt.id,
+        "upload_stream_interrupted",
+        1,
+    )
+    .await
+    .unwrap());
+    let jobs = prts_db::uploads::queue_batch_tx(&mut tx, project_id, batch.batch.id, user_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0].upload_batch_file_id, Some(received_file.id));
+    tx.commit().await.unwrap();
+
+    let mut tx = pool.begin().await.unwrap();
+    assert!(prts_db::uploads::retry_file_tx(
+        &mut tx,
+        project_id,
+        batch.batch.id,
+        failed_file.id,
+        user_id,
+        &format!("projects/{project_id}/uploads/test/retry-too-early.json"),
+        expires_at,
+    )
+    .await
+    .unwrap()
+    .is_none());
+    tx.rollback().await.unwrap();
+
+    let failed_state: String =
+        sqlx::query_scalar("SELECT state FROM upload_batch_files WHERE id = $1")
+            .bind(failed_file.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(failed_state, "failed");
+
+    let mut tx = pool.begin().await.unwrap();
+    let failed_batch = prts_db::uploads::create_batch_tx(
+        &mut tx,
+        project_id,
+        user_id,
+        &[prts_db::uploads::UploadDeclaration {
+            path: "all-failed.json".to_string(),
+            declared_bytes: 4,
+            temp_key: format!("projects/{project_id}/uploads/test/all-failed.json"),
+        }],
+        expires_at,
+    )
+    .await
+    .unwrap();
+    assert!(prts_db::uploads::fail_attempt_tx(
+        &mut tx,
+        failed_batch.files[0].id,
+        failed_batch.attempts[0].id,
+        "upload_stream_interrupted",
+        0,
+    )
+    .await
+    .unwrap());
+    tx.commit().await.unwrap();
+    let failed_batch_state: String =
+        sqlx::query_scalar("SELECT state FROM upload_batches WHERE id = $1")
+            .bind(failed_batch.batch.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(failed_batch_state, "failed");
     upload_test_cleanup(&pool, user_id, project_id).await;
 }
 

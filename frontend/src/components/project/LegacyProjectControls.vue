@@ -5,26 +5,18 @@ import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
 import { apiErrorMessage, projectsApi, type MemberDto } from '@/api'
-import { useUploadBatch } from '@/composables/useUploadBatch'
 import { hasProjectCapability } from '@/lib/capabilities'
 import { ROLE_LABELS, roleLabel } from '@/lib/states'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
 
-const { detail, projectId, reload } = useProjectWorkspace()
+const { detail, projectId } = useProjectWorkspace()
 const auth = useAuthStore()
 const router = useRouter()
 const $q = useQuasar()
 const { t } = useI18n()
 
 const members = ref<MemberDto[]>([])
-const pickedFiles = ref<File[]>([])
-const upload = useUploadBatch(() => projectId.value)
-const {
-  running: uploadRunning,
-  totalLoaded: uploadTotalLoaded,
-  totalBytes: uploadTotalBytes,
-} = upload
 const showAddMember = ref(false)
 const newMember = ref({ username: '', role: 'translator' })
 const roleOptions = ['manager', 'reviewer', 'translator']
@@ -32,30 +24,6 @@ const roleOptions = ['manager', 'reviewer', 'translator']
 /** Refresh the compatibility member panel. */
 async function loadMembers() {
   members.value = await projectsApi.members(projectId.value)
-}
-
-/** Keep folder selection focused on raw JSON files without reading their contents. */
-function jsonFileFilter(files: readonly File[] | FileList) {
-  return Array.from(files).filter((file) => file.name.toLocaleLowerCase().endsWith('.json'))
-}
-
-/** Stream selected files as a durable batch without parsing their contents in the browser. */
-async function uploadFiles() {
-  if (pickedFiles.value.length === 0) return
-  try {
-    await upload.start(pickedFiles.value)
-    const failed = upload.queue.value.filter((file) => file.state === 'failed').length
-    $q.notify({
-      type: failed ? 'warning' : 'positive',
-      message: failed
-        ? t('project.legacy.uploadPartial', { failed })
-        : t('project.legacy.uploaded'),
-    })
-    pickedFiles.value = []
-    await reload()
-  } catch (error) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
-  }
 }
 
 async function addMember() {
@@ -109,55 +77,6 @@ onMounted(() => {
       <template #avatar><q-icon name="mdi-progress-wrench" color="warning" /></template>
       {{ $t('project.legacy.notice') }}
     </q-banner>
-
-    <q-card v-if="hasProjectCapability(detail?.capabilities, 'upload_files')" flat bordered>
-      <q-card-section class="legacy-controls__section">
-        <div>
-          <div class="prts-label">{{ $t('project.legacy.upload') }}</div>
-          <div class="prts-dim q-mt-xs">{{ $t('project.legacy.uploadHint') }}</div>
-        </div>
-        <div class="legacy-controls__pickers">
-          <q-file
-            v-model="pickedFiles"
-            dense
-            outlined
-            multiple
-            accept=".json,application/json"
-            :filter="jsonFileFilter"
-            :disable="uploadRunning"
-            :label="$t('project.legacy.chooseFiles')"
-          />
-          <q-file
-            v-model="pickedFiles"
-            dense
-            outlined
-            multiple
-            webkitdirectory
-            accept=".json,application/json"
-            :filter="jsonFileFilter"
-            :disable="uploadRunning"
-            :label="$t('project.legacy.chooseFolder')"
-          />
-        </div>
-        <q-btn
-          unelevated
-          no-caps
-          color="primary"
-          text-color="dark"
-          icon="mdi-upload"
-          :label="$t('project.legacy.uploadAction')"
-          :loading="uploadRunning"
-          :disable="pickedFiles.length === 0"
-          @click="uploadFiles"
-        />
-        <q-linear-progress
-          v-if="uploadRunning && uploadTotalBytes > 0"
-          :value="uploadTotalLoaded / uploadTotalBytes"
-          color="primary"
-          size="4px"
-        />
-      </q-card-section>
-    </q-card>
 
     <q-card flat bordered>
       <q-card-section class="row items-center">
@@ -238,9 +157,16 @@ onMounted(() => {
 
     <q-dialog v-model="showAddMember">
       <q-card style="width: 420px; max-width: 92vw">
-        <q-card-section><div class="prts-h2">{{ $t('project.legacy.addMember') }}</div></q-card-section>
+        <q-card-section
+          ><div class="prts-h2">{{ $t('project.legacy.addMember') }}</div></q-card-section
+        >
         <q-card-section class="column q-gutter-md">
-          <q-input v-model="newMember.username" dense outlined :label="$t('project.legacy.username')" />
+          <q-input
+            v-model="newMember.username"
+            dense
+            outlined
+            :label="$t('project.legacy.username')"
+          />
           <q-select
             v-model="newMember.role"
             dense
@@ -252,7 +178,14 @@ onMounted(() => {
         </q-card-section>
         <q-card-actions align="right">
           <q-btn v-close-popup flat no-caps :label="$t('project.cancel')" />
-          <q-btn unelevated no-caps color="primary" text-color="dark" :label="$t('project.save')" @click="addMember" />
+          <q-btn
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            :label="$t('project.save')"
+            @click="addMember"
+          />
         </q-card-actions>
       </q-card>
     </q-dialog>
@@ -280,21 +213,9 @@ onMounted(() => {
   border-color: color-mix(in srgb, var(--prts-danger) 48%, var(--prts-border));
 }
 
-.legacy-controls__pickers {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(190px, 1fr));
-  gap: 8px;
-  min-width: min(460px, 48vw);
-}
-
 @media (max-width: 760px) {
   .legacy-controls__section {
     grid-template-columns: 1fr;
-  }
-
-  .legacy-controls__pickers {
-    grid-template-columns: 1fr;
-    min-width: 0;
   }
 }
 </style>

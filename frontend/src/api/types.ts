@@ -100,6 +100,39 @@ export interface ProjectTree {
   files: FileDto[]
 }
 
+export interface FileOperationDto {
+  change_set_id: string
+  purge_after: string | null
+}
+
+export interface FileChangeItemDto {
+  id: number
+  entity_type: 'folder' | 'file' | 'entry'
+  entity_id: number | null
+  operation: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  ordinal: number
+  created_at: string
+}
+
+export interface FileChangeSetDto {
+  id: string
+  file_id: number | null
+  folder_id: number | null
+  actor_id: number | null
+  operation: string
+  path_snapshot: string
+  metadata: Record<string, unknown>
+  created_at: string
+  items: FileChangeItemDto[]
+}
+
+export interface FileHistoryPage {
+  items: FileChangeSetDto[]
+  next_after: string | null
+}
+
 export interface EntryDto {
   id: number
   file_id: number

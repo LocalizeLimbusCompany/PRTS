@@ -18,6 +18,15 @@ const props = defineProps<{
   projectId: number
   folders: FolderDto[]
   files: FileDto[]
+  canManage?: boolean
+  canViewHistory?: boolean
+}>()
+
+const emit = defineEmits<{
+  createFolder: [parentId: number | null]
+  move: [item: ProjectBrowserItem]
+  history: [item: ProjectBrowserItem]
+  delete: [item: ProjectBrowserItem]
 }>()
 
 const router = useRouter()
@@ -53,7 +62,8 @@ const items = computed(() => {
 
 const breadcrumbs = computed(() => {
   const result: FolderDto[] = []
-  let folder = currentFolderId.value === null ? undefined : folderById.value.get(currentFolderId.value)
+  let folder =
+    currentFolderId.value === null ? undefined : folderById.value.get(currentFolderId.value)
   while (folder) {
     result.unshift(folder)
     folder = folder.parent_id === null ? undefined : folderById.value.get(folder.parent_id)
@@ -113,6 +123,14 @@ function open(item: ProjectBrowserItem) {
         :options="sortOptions"
         :label="$t('project.files.sort')"
       />
+      <q-btn
+        v-if="canManage"
+        outline
+        no-caps
+        icon="mdi-folder-plus-outline"
+        :label="$t('project.files.createFolder')"
+        @click="emit('createFolder', currentFolderId)"
+      />
     </div>
 
     <div class="file-browser__breadcrumbs prts-mono">
@@ -128,15 +146,18 @@ function open(item: ProjectBrowserItem) {
       <span>{{ $t('project.progress') }}</span>
       <span>{{ $t('project.entries') }}</span>
       <span>{{ $t('project.files.updated') }}</span>
+      <span v-if="canManage || canViewHistory">{{ $t('project.files.actions') }}</span>
     </div>
     <div v-if="items.length === 0" class="prts-empty">{{ $t('project.files.empty') }}</div>
     <template v-else>
-      <button
+      <div
         v-for="item in items"
         :key="`${item.kind}-${item.id}`"
-        type="button"
         class="file-browser__row"
+        role="button"
+        tabindex="0"
         @click="open(item)"
+        @keyup.enter.self="open(item)"
       >
         <span class="file-browser__name">
           <q-icon
@@ -155,7 +176,43 @@ function open(item: ProjectBrowserItem) {
         </span>
         <span class="prts-mono">{{ item.entryCount }}</span>
         <span class="prts-dim">{{ new Date(item.updatedAt).toLocaleDateString() }}</span>
-      </button>
+        <span v-if="canManage || canViewHistory" class="file-browser__actions">
+          <q-btn
+            v-if="canViewHistory"
+            flat
+            round
+            dense
+            icon="mdi-history"
+            :aria-label="$t('project.files.history')"
+            @click.stop="emit('history', item)"
+          >
+            <q-tooltip>{{ $t('project.files.history') }}</q-tooltip>
+          </q-btn>
+          <q-btn
+            v-if="canManage"
+            flat
+            round
+            dense
+            icon="mdi-file-move-outline"
+            :aria-label="$t('project.files.move')"
+            @click.stop="emit('move', item)"
+          >
+            <q-tooltip>{{ $t('project.files.move') }}</q-tooltip>
+          </q-btn>
+          <q-btn
+            v-if="canManage"
+            flat
+            round
+            dense
+            color="negative"
+            icon="mdi-delete-clock-outline"
+            :aria-label="$t('project.files.delete')"
+            @click.stop="emit('delete', item)"
+          >
+            <q-tooltip>{{ $t('project.files.delete') }}</q-tooltip>
+          </q-btn>
+        </span>
+      </div>
     </template>
   </section>
 </template>
@@ -168,7 +225,7 @@ function open(item: ProjectBrowserItem) {
 
 .file-browser__toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 180px 180px;
+  grid-template-columns: minmax(220px, 1fr) 180px 180px auto;
   gap: 10px;
   padding: 12px;
   border-bottom: 1px solid var(--prts-border);
@@ -194,7 +251,7 @@ function open(item: ProjectBrowserItem) {
 .file-browser__head,
 .file-browser__row {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 160px 92px 120px;
+  grid-template-columns: minmax(240px, 1fr) 160px 92px 120px auto;
   align-items: center;
   gap: 18px;
   padding: 10px 14px;
@@ -249,6 +306,12 @@ function open(item: ProjectBrowserItem) {
   gap: 5px;
 }
 
+.file-browser__actions {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 104px;
+}
+
 @media (max-width: 980px) {
   .file-browser__toolbar {
     grid-template-columns: 1fr 1fr;
@@ -260,11 +323,11 @@ function open(item: ProjectBrowserItem) {
 
   .file-browser__head,
   .file-browser__row {
-    grid-template-columns: minmax(180px, 1fr) 120px 70px;
+    grid-template-columns: minmax(180px, 1fr) 120px 70px auto;
   }
 
-  .file-browser__head :last-child,
-  .file-browser__row > :last-child {
+  .file-browser__head > :nth-child(4),
+  .file-browser__row > :nth-child(4) {
     display: none;
   }
 }
