@@ -38,6 +38,7 @@ pub async fn version() -> Json<VersionInfo> {
     get,
     path = "/meta/upload-config",
     tag = "meta",
+    description = "返回新流式上传客户端的文件数、单文件字节数、批次字节数和浏览器并发限制；不返回内部清理周期、临时卷路径或任何密钥。",
     responses((status = 200, description = "上传客户端运行时限制", body = UploadConfigDto))
 )]
 pub async fn upload_config(

@@ -148,6 +148,7 @@ pub async fn put_search_settings(
     get,
     path = "/admin/settings/upload",
     tag = "admin",
+    description = "仅允许具备 platform.settings 权限节点的管理员读取上传运行时限制；响应不包含临时存储路径或清理内部状态。",
     responses(
         (status = 200, description = "当前上传限制", body = UploadConfigDto),
         (status = 401, description = "未认证"),
@@ -170,6 +171,7 @@ pub async fn get_upload_settings(
     put,
     path = "/admin/settings/upload",
     tag = "admin",
+    description = "仅允许具备 platform.settings 权限节点的管理员更新上传限制；边界校验、设置写入和 allowlisted audit 在同一事务中 fail-closed 提交。",
     request_body = UploadConfigDto,
     responses(
         (status = 200, description = "更新后的上传限制", body = UploadConfigDto),

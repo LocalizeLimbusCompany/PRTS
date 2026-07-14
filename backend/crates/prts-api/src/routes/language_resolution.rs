@@ -38,6 +38,7 @@ pub struct ProjectLanguageResolutionDto {
 }
 
 #[utoipa::path(get, path = "/projects/{id}/language-resolution", tag = "project",
+    description = "仅项目唯一 owner 可读取需要人工处理的语言问题、raw/canonical tag 和冲突候选值；普通成员与平台管理员不能借此读取私有正文。",
     responses((status = 200, body = ProjectLanguageResolutionDto), (status = 403), (status = 404)))]
 pub async fn get_project_language_resolution(
     State(state): State<AppState>,
@@ -119,6 +120,7 @@ pub struct ResolveProjectLanguagesReq {
 }
 
 #[utoipa::path(post, path = "/projects/{id}/language-resolution/resolve", tag = "project",
+    description = "仅项目唯一 owner 可一次性提交全部 issue 选择和最终 source/primary/target；所有语言先经共享 BCP-47 canonicalizer，成功后原子排 repair/reconcile job 并写脱敏审计。",
     request_body = ResolveProjectLanguagesReq,
     responses(
         (status = 202), (status = 400), (status = 403), (status = 404),
@@ -312,6 +314,7 @@ pub struct AdminResolutionSummaryDto {
 }
 
 #[utoipa::path(get, path = "/admin/language-resolutions", tag = "admin",
+    description = "平台项目管理 capability 只能读取待解决项目、issue 数量、repair 状态和 job ID 的 metadata-only 键集列表，不返回私有源文或冲突候选值。",
     params(AdminResolutionQuery), responses((status = 200, body = [AdminResolutionSummaryDto]), (status = 403)))]
 pub async fn list_admin_language_resolutions(
     State(state): State<AppState>,
@@ -340,6 +343,7 @@ pub async fn list_admin_language_resolutions(
 }
 
 #[utoipa::path(post, path = "/admin/language-resolutions/{project_id}/retry", tag = "admin",
+    description = "平台项目管理 capability 可重试已有失败的 durable language repair job，但不能替 owner 选择 canonical mapping、主源语言或冲突正文。",
     responses((status = 202), (status = 403), (status = 404), (status = 503, body = ErrorResponse)))]
 pub async fn retry_admin_language_repair(
     State(state): State<AppState>,

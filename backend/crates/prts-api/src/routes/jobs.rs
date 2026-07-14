@@ -90,6 +90,7 @@ fn validated_limit(limit: Option<i64>) -> Result<i64, Error> {
     get,
     path = "/jobs/{id}",
     tag = "job",
+    description = "按稳定任务 ID 返回脱敏进度；调用者必须登录，并通过任务所属项目可见性及该 job kind 对应的业务 capability 校验。",
     params(("id" = i64, Path, description = "稳定任务 ID")),
     responses(
         (status = 200, description = "任务进度", body = JobDto),
@@ -121,6 +122,7 @@ pub async fn get_job(
     get,
     path = "/projects/{project_id}/jobs",
     tag = "job",
+    description = "按项目和调用者 capability 过滤可见任务，使用 id DESC 键集分页；不暴露 payload、result、worker、租约或内部错误正文。",
     params(
         ("project_id" = i64, Path, description = "所属项目 ID"),
         ("after_id" = Option<i64>, Query, description = "上一页末尾任务 ID"),
@@ -204,6 +206,7 @@ pub async fn list_project_jobs(
     post,
     path = "/jobs/{id}/retry",
     tag = "job",
+    description = "仅在原任务状态和业务 capability 允许时复用同一 job ID 重新排队；重试状态变化与 allowlisted audit 在同一事务提交。",
     params(("id" = i64, Path, description = "稳定任务 ID")),
     responses(
         (status = 200, description = "已重新排队", body = JobDto),

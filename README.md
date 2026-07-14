@@ -10,20 +10,22 @@
 
 ---
 
-PRTS 是一个面向汉化组与本地化团队的**公开、可扩展、高并发**的在线翻译协作平台——可理解为开源版的 [Paratranz](https://paratranz.cn)。贡献者在线完成**翻译、校对、审核**，平台提供权限管理、完整操作历史、贡献度量（CP）与混合搜索。
+PRTS 是一个面向汉化组与本地化团队的**公开、可扩展、高并发**的在线翻译协作平台——可理解为开源版的 [Paratranz](https://paratranz.cn)。贡献者在线完成**翻译、校对、审核**，平台提供权限管理、完整操作历史与混合搜索，并为未来贡献度量（CP）保留精确存储基础。
 
-> 🚧 项目处于初始化阶段，规划见 [`plan/26-06-28-init_system.md`](./plan/26-06-28-init_system.md)，架构见 [`docs/architecture.md`](./docs/architecture.md)。
+> 🚧 项目工作区大改造的功能阶段已完成，当前处于最终验证与发布准备。权威蓝图见 [`plan/26-06-28-init_system.md`](./plan/26-06-28-init_system.md)，架构与验证边界见 [`docs/architecture.md`](./docs/architecture.md)。
 
 ## ✨ 特性
 
-- **项目 / 文件夹 / 文件 / 词条** 四级结构，单项目可承载 20w+ 词条。
+- **项目工作区**：信息、文件、任务、术语、下载与管理分区；编辑器使用独立全屏路由。
+- **项目 / 文件夹 / 文件 / 词条** 四级结构，以物化统计、键集分页和批处理面向单项目 20w+ 词条目标。
 - **多源语言 → 单目标语言**（BCP-47，区分简繁），按个人偏好显示源文。
 - **实时协作编辑器**（WebSocket）：在线状态、他人编辑提示、乐观锁防冲突。
-- **混合搜索**：PostgreSQL 全文检索 + 三元组模糊 + 向量语义（pgvector），RRF 融合，高级筛选。
+- **结构化混合搜索**：POST tagged scope + PostgreSQL 全文检索 + 三元组模糊 + 可选向量语义（pgvector），RRF 融合和签名键集游标。
+- **持久化流式上传**：500 文件 / 2GB 批次合同、100MB 单文件上限、byte-zero retry、逐文件原子 replacement、取消/过期清理与 30 天可恢复历史。
 - **权限节点 RBAC**：平台级（总管理员/管理员/维护者）+ 项目级（拥有者/管理/校对/翻译）。
-- **贡献分 CP**：按编辑距离计分。
+- **贡献分基础**：以 exact tenths `BIGINT` 为未来计分准备；本轮不累计 CP、不展示虚假排行榜。
 - **可插拔认证插件**：账号密码 + OAuth2（PKCE），内置 ZOOT 接入；支持「仅 OAuth」模式。
-- **完整历史与审计**：所有操作留痕，管理后台可按时间段 / 项目清除。
+- **历史与审计**：业务 mutation 与 allowlisted 脱敏审计同事务 fail-closed；文件变更集支持回滚/恢复，项目删除采用 owner-only challenge + 24 小时延迟清除。
 - **国际化**：前端中英双语，后端按 `Accept-Language` 返回本地化消息。
 - **全程 Docker 化**，API 全量进 Swagger 文档。
 
@@ -101,6 +103,18 @@ pnpm dev
 ```
 
 详见 [`docs/architecture.md`](./docs/architecture.md) 与各 crate / 模块内文档。
+
+### 验证
+
+安装 PowerShell 7 后可从仓库根运行：
+
+```powershell
+pwsh -File scripts/verify-project-workspace.ps1
+```
+
+默认只做静态/自动合同检查。数据库与昂贵规模验证必须显式使用脚本开关并准备 PostgreSQL/Redis；没有实际运行输出时，不应把 20 万词条或 100MB 场景写成实测结果。
+
+兼容期内后端仍保留 deprecated 的旧内联 upload 与 GET search；新前端只使用 upload-batches 和结构化 POST search。
 
 ## 📁 目录结构
 

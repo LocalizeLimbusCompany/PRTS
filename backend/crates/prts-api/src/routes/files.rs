@@ -159,6 +159,7 @@ pub async fn get_tree(
 
 /// 新建文件夹。需项目「管理」权限。
 #[utoipa::path(post, path = "/projects/{id}/folders", tag = "file",
+    description = "项目管理 capability 可在 active parent 下创建安全单段文件夹；服务端锁定项目与 parent、检查规范路径冲突，并将业务写与 allowlisted audit 原子提交。",
     request_body = CreateFolderRequest,
     responses(
         (status = 201, body = FolderDto), (status = 400), (status = 403), (status = 409),
@@ -244,6 +245,7 @@ pub async fn create_folder(
 
 /// 移动或重命名文件。需项目「管理」权限。
 #[utoipa::path(patch, path = "/projects/{id}/files/{file_id}", tag = "file",
+    description = "项目管理 capability 可移动或重命名 active file；目标 folder 必须绑定同一 URL 项目，typed plan 检查规范路径冲突并生成可审计 change set。",
     request_body = MoveFileRequest,
     responses(
         (status = 200, body = FileOperationDto), (status = 400), (status = 403),
@@ -295,6 +297,7 @@ pub async fn move_file(
 
 /// 移动或重命名文件夹及其完整后代路径。需项目「管理」权限。
 #[utoipa::path(patch, path = "/projects/{id}/folders/{folder_id}", tag = "file",
+    description = "项目管理 capability 可移动或重命名 active folder subtree；typed plan 拒绝环和路径冲突，并原子更新所有后代路径、change set、统计与审计。",
     request_body = MoveFolderRequest,
     responses(
         (status = 200, body = FileOperationDto), (status = 400), (status = 403),
@@ -355,6 +358,7 @@ pub async fn move_folder(
 
 /// 软删除文件，不改 entry tombstone。需项目「管理」权限。
 #[utoipa::path(delete, path = "/projects/{id}/files/{file_id}", tag = "file",
+    description = "项目管理 capability 软删除同一项目的 active file，创建 30 天 restoration change set 并扣除物化 exposure；独立 entry tombstone 保持不变。",
     responses(
         (status = 204),
         (status = 403),
@@ -384,6 +388,7 @@ pub async fn delete_file(
 
 /// 软删除文件夹 active subtree 与 active descendant files，不改 entry tombstone。
 #[utoipa::path(delete, path = "/projects/{id}/folders/{folder_id}", tag = "file",
+    description = "项目管理 capability 以一个 operation 软删除 active folder subtree 与 active descendant files，维护物化 exposure，但不写入或清除独立 entry tombstone。",
     responses(
         (status = 204),
         (status = 403),
@@ -417,6 +422,7 @@ pub async fn delete_folder(
 
 /// 恢复一个明确删除 operation 持有的文件。
 #[utoipa::path(post, path = "/projects/{id}/files/{file_id}/restore", tag = "file",
+    description = "项目历史回滚 capability 必须提交原 deletion change-set ID；恢复只清除该 operation 持有的 file 删除字段，拒绝路径冲突且不触碰 entry tombstone。",
     request_body = RestoreRequest,
     responses(
         (status = 200, body = FileOperationDto), (status = 403), (status = 404), (status = 409),
@@ -461,6 +467,7 @@ pub async fn restore_file(
 
 /// 恢复一个明确删除 operation 持有的文件夹树。
 #[utoipa::path(post, path = "/projects/{id}/folders/{folder_id}/restore", tag = "file",
+    description = "项目历史回滚 capability 必须提交原 deletion change-set ID；恢复只清除该 operation 持有的 folder/file subtree 标记，早先删除后代和 entry tombstone 保持删除。",
     request_body = RestoreRequest,
     responses(
         (status = 200, body = FileOperationDto), (status = 403), (status = 404), (status = 409),

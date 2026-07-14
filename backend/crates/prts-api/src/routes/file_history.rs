@@ -65,6 +65,7 @@ pub struct FileHistoryPage {
 
 /// 项目成员读取文件历史；公开游客不可读取正文 delta。
 #[utoipa::path(get, path = "/projects/{id}/file-history", tag = "file-history",
+    description = "仅项目成员的 history-view capability 可按 UUID 键集读取 allowlisted file/folder/entry deltas；公开游客不可读取正文，payload 永不包含 raw upload 或 context。",
     params(("id" = i64, Path), FileHistoryQuery),
     responses(
         (status = 200, body = FileHistoryPage),
@@ -131,6 +132,7 @@ pub async fn list_history(
 #[utoipa::path(post,
     path = "/projects/{id}/files/{file_id}/history/{change_set_id}/rollback",
     tag = "file-history",
+    description = "项目历史回滚 capability 将目标 change set 物化为期望 file 状态，再生成 current-to-target 新 change set；旧历史不改写、CP 为零且 audit fail-closed。",
     responses(
         (status = 200, body = FileOperationDto),
         (status = 403, body = ErrorResponse),
@@ -186,6 +188,7 @@ pub async fn rollback_file(
 #[utoipa::path(post,
     path = "/projects/{id}/folders/{folder_id}/history/{change_set_id}/rollback",
     tag = "file-history",
+    description = "项目历史回滚 capability 将目标 change set 物化为期望 folder 结构，再生成 current-to-target 新 change set；路径环/冲突拒绝且旧历史不改写。",
     responses(
         (status = 200, body = FileOperationDto),
         (status = 403, body = ErrorResponse),

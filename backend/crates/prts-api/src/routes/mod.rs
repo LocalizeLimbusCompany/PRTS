@@ -296,6 +296,116 @@ mod tests {
         assert!(response.is_object());
     }
 
+    /// 阶段 8 兼容交接必须在生成的 OpenAPI 中明确标记两条旧入口，避免仅靠
+    /// Rust 注释或前端约定而让第三方客户端继续误用。
+    #[test]
+    fn compatibility_endpoints_are_deprecated_in_openapi() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        assert_eq!(
+            document["paths"]["/projects/{id}/upload"]["post"]["deprecated"],
+            true
+        );
+        assert_eq!(
+            document["paths"]["/projects/{id}/search"]["get"]["deprecated"],
+            true
+        );
+    }
+
+    /// 工作区改造新增端点必须提供面向调用者的详细 Swagger 描述；tag 名或函数名
+    /// 不能替代鉴权、资源绑定、状态变化与错误语义说明。
+    #[test]
+    fn workspace_overhaul_openapi_operations_have_detailed_descriptions() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        for (path, method) in [
+            ("/meta/upload-config", "get"),
+            ("/admin/settings/upload", "get"),
+            ("/admin/settings/upload", "put"),
+            ("/jobs/{id}", "get"),
+            ("/jobs/{id}/retry", "post"),
+            ("/projects/{project_id}/jobs", "get"),
+            ("/projects/{id}/primary-source", "put"),
+            ("/projects/{id}/language-resolution", "get"),
+            ("/projects/{id}/language-resolution/resolve", "post"),
+            ("/admin/language-resolutions", "get"),
+            ("/admin/language-resolutions/{project_id}/retry", "post"),
+            ("/projects/{id}/avatar", "get"),
+            ("/projects/{id}/avatar", "post"),
+            ("/projects/{id}/avatar", "delete"),
+            ("/projects/{id}/upload-batches", "post"),
+            (
+                "/projects/{id}/upload-batches/{batch_id}/files/{file_id}/attempts/{attempt_id}",
+                "put",
+            ),
+            ("/projects/{id}/upload-batches/{batch_id}/complete", "post"),
+            ("/projects/{id}/upload-batches/{batch_id}", "get"),
+            (
+                "/projects/{id}/upload-batches/{batch_id}/files/{file_id}/retry",
+                "post",
+            ),
+            ("/projects/{id}/upload-batches/{batch_id}/cancel", "post"),
+            ("/projects/{id}/folders", "post"),
+            ("/projects/{id}/files/{file_id}", "patch"),
+            ("/projects/{id}/files/{file_id}", "delete"),
+            ("/projects/{id}/folders/{folder_id}", "patch"),
+            ("/projects/{id}/folders/{folder_id}", "delete"),
+            ("/projects/{id}/files/{file_id}/restore", "post"),
+            ("/projects/{id}/folders/{folder_id}/restore", "post"),
+            ("/projects/{id}/file-history", "get"),
+            (
+                "/projects/{id}/files/{file_id}/history/{change_set_id}/rollback",
+                "post",
+            ),
+            (
+                "/projects/{id}/folders/{folder_id}/history/{change_set_id}/rollback",
+                "post",
+            ),
+            ("/projects/{id}/tasks", "get"),
+            ("/projects/{id}/tasks", "post"),
+            ("/projects/{id}/tasks/{task_id}", "get"),
+            ("/projects/{id}/tasks/{task_id}", "put"),
+            ("/projects/{id}/tasks/{task_id}", "delete"),
+            ("/projects/{id}/search", "post"),
+            ("/projects/{id}/search", "get"),
+            ("/projects/{id}/delete-challenge", "post"),
+            ("/projects/{id}/deletion", "get"),
+            ("/projects/{id}/deletion/cancel", "post"),
+        ] {
+            let description = document["paths"][path][method]["description"].as_str();
+            assert!(
+                description.is_some_and(|value| value.chars().count() >= 24),
+                "{method} {path} 必须提供至少 24 字符的详细描述"
+            );
+        }
+    }
+
+    /// SearchScope 的 discriminator、封闭对象与 BIGINT ID 必须体现在生成文档中，
+    /// 且任何 schema 都不得重新暴露已删除的词条 context。
+    #[test]
+    fn workspace_search_openapi_keeps_strict_i64_context_free_contract() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        let components = &document["components"]["schemas"];
+        let serialized = serde_json::to_string(components).unwrap();
+        assert!(!serialized.contains("\"context\""));
+
+        let scope = &components["SearchScopeSchema"];
+        assert_eq!(scope["discriminator"]["propertyName"], "type");
+        let variants = scope["oneOf"].as_array().expect("SearchScope oneOf");
+        assert_eq!(variants.len(), 5);
+        for variant in variants {
+            assert_eq!(variant["additionalProperties"], false);
+            let properties = &variant["properties"];
+            for id_name in ["file_id", "task_id"] {
+                if properties[id_name].is_object() {
+                    assert_eq!(properties[id_name]["type"], "integer");
+                    assert_eq!(properties[id_name]["format"], "int64");
+                }
+            }
+        }
+    }
+
     #[test]
     fn jobs_openapi_errors_share_code_message_schema() {
         let (_, api) = api_router().split_for_parts();

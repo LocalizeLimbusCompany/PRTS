@@ -250,6 +250,7 @@ async fn record_attempt_failure(
     post,
     path = "/projects/{id}/upload-batches",
     tag = "upload",
+    description = "项目上传 capability 声明 logical batch、相对路径和字节合同；服务端按当前 500 文件/单文件/2GB 运行时限制校验，并为每个文件创建首次 byte-zero attempt。",
     request_body = CreateUploadBatchReq,
     responses(
         (status = 200, body = UploadBatchDto),
@@ -313,6 +314,7 @@ pub async fn create_batch(
     put,
     path = "/projects/{id}/upload-batches/{batch_id}/files/{file_id}/attempts/{attempt_id}",
     tag = "upload",
+    description = "仅 batch 创建者可从 byte zero 流式传输当前 attempt；Range/Content-Range 明确拒绝，接收过程受声明字节数和 100MB 运行时上限约束，失败保留 attempt history 并清理临时片段。",
     request_body(content = Vec<u8>, content_type = "application/json"),
     responses(
         (status = 204),
@@ -572,6 +574,7 @@ pub async fn receive_attempt(
     post,
     path = "/projects/{id}/upload-batches/{batch_id}/complete",
     tag = "upload",
+    description = "项目上传 capability 校验全部声明文件已完整接收，再为每个文件排队可恢复的原子处理 job；批次、jobs 和 allowlisted audit 在同一事务提交。",
     responses(
         (status = 200, body = UploadBatchDto),
         (status = 400, body = ErrorResponse),
@@ -632,6 +635,7 @@ pub async fn complete_batch(
     get,
     path = "/projects/{id}/upload-batches/{batch_id}",
     tag = "upload",
+    description = "仅 batch 创建者和具备项目上传 capability 的主体可读取 batch、logical files、当前状态以及全部 byte-zero attempts 历史，不返回临时路径或原始正文。",
     responses(
         (status = 200, body = UploadBatchDto),
         (status = 401, body = ErrorResponse),
@@ -660,6 +664,7 @@ pub async fn get_batch(
     post,
     path = "/projects/{id}/upload-batches/{batch_id}/files/{file_id}/retry",
     tag = "upload",
+    description = "仅 batch 创建者可为失败 logical file 创建新的 byte-zero attempt；旧 attempt/error 保留，processing job ID 复用，不提供 Range、offset 或断点续传。",
     responses(
         (status = 200, body = UploadAttemptDto),
         (status = 400, body = ErrorResponse),
@@ -739,6 +744,7 @@ pub async fn retry_file(
     post,
     path = "/projects/{id}/upload-batches/{batch_id}/cancel",
     tag = "upload",
+    description = "仅 batch 创建者可将批次置 cancelling，取消 queued jobs 和未处理 attempts；已进入单文件事务者允许原子完成或回滚，成功文件不撤销，临时文件幂等清理。",
     responses(
         (status = 204),
         (status = 401, body = ErrorResponse),

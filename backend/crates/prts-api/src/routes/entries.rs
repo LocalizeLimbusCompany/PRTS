@@ -64,6 +64,7 @@ pub struct UploadResult {
         (status = 404),
         (status = 503, description = "审计服务不可用，上传未提交", body = ErrorResponse)
     ))]
+#[deprecated(note = "use the streaming upload-batches API")]
 pub async fn upload(
     State(state): State<AppState>,
     user: CurrentUser,

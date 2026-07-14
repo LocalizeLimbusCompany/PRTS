@@ -323,6 +323,7 @@ pub struct ChangePrimarySourceReq {
     put,
     path = "/projects/{id}/primary-source",
     tag = "project",
+    description = "仅 projects.owner_id 指向的唯一拥有者可调用。请求先使用共享 BCP-47 canonicalizer，再校验 foundation readiness、冷却期和现有 lexical/embedding job，成功时原子切换主源并排队词法重建。",
     request_body = ChangePrimarySourceReq,
     responses(
         (status = 200, description = "主源未变化或已排队重建", body = ProjectDto),

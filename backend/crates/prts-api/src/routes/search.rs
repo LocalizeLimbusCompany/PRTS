@@ -20,7 +20,10 @@ use prts_core::search_query::{
 use prts_search::orchestrator::{run, OrchestratorInput};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use utoipa::ToSchema;
+use utoipa::openapi::schema::{
+    AdditionalProperties, Discriminator, ObjectBuilder, OneOfBuilder, Schema, Type,
+};
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::auth::{project as paccess, MaybeUser};
 use crate::db_err;
@@ -67,7 +70,7 @@ struct SearchConditionSchema {
 }
 
 /// OpenAPI scope shadow；精确描述五种 tagged-union JSON 形状。
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum SearchScopeSchema {
     All {},
@@ -76,6 +79,53 @@ enum SearchScopeSchema {
     CurrentFile { file_id: i64 },
     CurrentTask { task_id: i64 },
 }
+
+impl PartialSchema for SearchScopeSchema {
+    fn schema() -> utoipa::openapi::RefOr<Schema> {
+        fn tagged_object(tag: &'static str) -> ObjectBuilder {
+            ObjectBuilder::new()
+                .schema_type(Type::Object)
+                .property(
+                    "type",
+                    ObjectBuilder::new()
+                        .schema_type(Type::String)
+                        .enum_values(Some([tag])),
+                )
+                .required("type")
+                .additional_properties(Some(AdditionalProperties::FreeForm(false)))
+        }
+
+        OneOfBuilder::new()
+            .item(tagged_object("all"))
+            .item(
+                tagged_object("path")
+                    .property("path", String::schema())
+                    .required("path"),
+            )
+            .item(
+                tagged_object("file")
+                    .property("file_id", i64::schema())
+                    .required("file_id"),
+            )
+            .item(
+                tagged_object("current_file")
+                    .property("file_id", i64::schema())
+                    .required("file_id"),
+            )
+            .item(
+                tagged_object("current_task")
+                    .property("task_id", i64::schema())
+                    .required("task_id"),
+            )
+            .discriminator(Some(Discriminator::new("type")))
+            .description(Some(
+                "封闭的 type tagged union；每个 variant 拒绝未声明字段。",
+            ))
+            .into()
+    }
+}
+
+impl ToSchema for SearchScopeSchema {}
 
 /// OpenAPI 请求 shadow；运行时领域请求具有同一 JSON shape。
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

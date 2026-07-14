@@ -1,6 +1,6 @@
 # PRTS 架构文档
 
-> **状态：目标架构，不代表当前仓库已经实现全部组件。** 当前实施状态以已应用迁移、已发布 feature gate 和 [`2026-07-10 实施计划`](./superpowers/plans/2026-07-10-project-workspace-overhaul.md) 的阶段为准。精确生命周期、状态矩阵、可见性谓词与 API truth table 以 [`2026-07-10 规范总纲`](./superpowers/specs/2026-07-10-project-workspace-overhaul-design.md) 为唯一规范源；本文只描述目标组件及其组合方式。
+> **状态：项目工作区改造阶段 1–7.3 已实现，阶段 8 正在做最终验证与发布准备。** 当前实施状态以已应用迁移、已发布 feature gate 和 [`2026-07-10 实施计划`](./superpowers/plans/2026-07-10-project-workspace-overhaul.md) 为准。精确生命周期、状态矩阵、可见性谓词与 API truth table 以 [`2026-07-10 规范总纲`](./superpowers/specs/2026-07-10-project-workspace-overhaul-design.md) 为唯一规范源；本文描述当前改造后的组件及组合方式。
 >
 > 本文与权威蓝图 [`plan/26-06-28-init_system.md`](../plan/26-06-28-init_system.md) 配套。迁移/阶段未完成前，不应以本文的现在时描述推断某项能力已经上线。
 
@@ -126,6 +126,8 @@ create logical batch/files
 
 retry 在同一 logical batch file 下创建新 attempt，并保留旧 attempt/error；cancel 先进入 `cancelling`，取消 queued/temp items，已开始的单文件事务允许原子完成或回滚，最后进入 `cancelled`。未完成/abandoned batch 默认 24h 过期。精确状态见总纲 §5.1。
 
+兼容期内 `POST /projects/{id}/upload` 仍适配同一 replacement 规则，并在 OpenAPI 标为 deprecated；新前端只调用 upload-batches。兼容调用量在生产入口按 method/path 统计，达到约定退役条件前不删除旧 handler 或回归测试。
+
 同路径重传是完整 replacement：缺失 key 形成独立 entry tombstone；旧译文/locked/hidden/history 保留；源文变化重置未翻译；上传 translation/state 只 seed 全新 key。file/folder restore 不清除 entry tombstone。
 
 这些 transition 由 `prts-core` typed plans 决定；prts-db 执行计划，API/worker 仅编排。SQL 不重新定义 translation preserve、reset、tombstone、restore/rollback 真值。
@@ -150,6 +152,8 @@ query + AND conditions + tagged scope + states + include_hidden + vector(false)
 ```
 
 lexical ready 后立即恢复 FTS/trgm；embedding degraded/failed 只关闭 vector 并以 trgm 提供 TM。GET 与 POST 复用同一 service/SQL。
+
+兼容期内旧 `GET /projects/{id}/search` 只映射 `all/file`，响应 `Deprecation`、`Sunset` 与 successor `Link`；OpenAPI 同步标为 deprecated。新前端快捷/高级搜索只调用结构化 POST，生产入口按 method/path 统计旧 GET 调用量。
 
 ### 3.7 实时编辑与游客只读
 
@@ -248,5 +252,6 @@ foundation release 必须把 `0008+0009`、language repair、primary search trig
 - `prts-core`：状态机、权限/能力、主源 gate/state、任务 snapshot、术语、数学题纯逻辑。
 - API/db：audit fail-closed/redaction、job 恢复/FK、effective visibility、upload cancel/expiry/attempt、history retention、tagged search scope、purge 顺序。
 - 前端：智能按钮、IME、capabilities、Markdown 净化、游客只读、上传取消/重试、字体/主题/i18n。
-- 性能：20 万词条 stats reconciliation、lexical backfill、100MB 单文件、500-file batch、五种 scope 和 task progress。
-- 每阶段测试 → verify → Conventional Commit → 推 master → 等待 CI → 推 GHCR；替代能力稳定前保留兼容入口。
+- 静态/自动契约：`scripts/verify-project-workspace.ps1` 检查 Markdown 相对链接、计划最终路径、冲突关键词、冻结迁移、BCP-47 共享入口、OpenAPI、context 清理与新前端兼容交接。
+- 手动规模：20 万词条 stats reconciliation/lexical backfill/五 scope/task progress，以及 100MB 流式、500 文件/2GB 合同、replacement/cancel/expiry/purge；只有实际传入开关并保存输出的运行才算实测结果。
+- 发布闭环：后端 fmt/clippy/test/db-tests/build，前端 format/lint/test/typecheck/build，verify、规模测试、Docker health 与 Swagger；实际合并 master、GHCR 发布和生产部署前必须经过发布确认。

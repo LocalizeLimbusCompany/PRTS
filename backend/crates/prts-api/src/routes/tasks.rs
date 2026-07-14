@@ -98,6 +98,7 @@ pub struct TaskDetailDto {
 
 /// 列出 caller 可见项目的任务，按 task id DESC 键集分页。
 #[utoipa::path(get, path = "/projects/{id}/tasks", tag = "task",
+    description = "按 task ID DESC 键集列出调用者可见项目的任务和物化进度；公开项目允许只读，正常路径不实时 COUNT entries，文件/词条 ID 均保持 BIGINT/i64。",
     params(("id" = i64, Path), TaskListQuery),
     responses(
         (status = 200, body = TaskListPageDto),
@@ -127,6 +128,7 @@ pub async fn list_tasks(
 
 /// owner/manager 创建任务并在同一事务建立新增文件的 baseline。
 #[utoipa::path(post, path = "/projects/{id}/tasks", tag = "task",
+    description = "项目任务管理 capability 创建任务，并对新增 active files 当时 effective-visible 且 untranslated 的 entry IDs 建立 immutable baseline；业务、统计与审计原子提交。",
     request_body = CreateTaskRequest,
     responses(
         (status = 201, body = TaskDetailDto),
@@ -184,6 +186,7 @@ pub async fn create_task(
 
 /// 读取 caller 可见项目中与 URL project 绑定的任务详情。
 #[utoipa::path(get, path = "/projects/{id}/tasks/{task_id}", tag = "task",
+    description = "读取与 URL project 严格绑定的可见任务、净化前 Markdown 原文、active file snapshot 和物化进度；跨项目或不可见 task 统一按不存在处理。",
     params(("id" = i64, Path), ("task_id" = i64, Path)),
     responses(
         (status = 200, body = TaskDetailDto),
@@ -201,6 +204,7 @@ pub async fn get_task(
 
 /// owner/manager 更新元数据与完整期望文件集合；保留文件不会重建 baseline。
 #[utoipa::path(put, path = "/projects/{id}/tasks/{task_id}", tag = "task",
+    description = "项目任务管理 capability 更新标题、Markdown 原文和完整期望 file ID 集合；保留文件不重建 baseline，移除再加入才创建新 snapshot。",
     request_body = UpdateTaskRequest,
     responses(
         (status = 200, body = TaskDetailDto),
@@ -274,6 +278,7 @@ pub async fn update_task(
 
 /// owner/manager 显式删除任务及其 task files/baselines。
 #[utoipa::path(delete, path = "/projects/{id}/tasks/{task_id}", tag = "task",
+    description = "项目任务管理 capability 显式删除与 URL project 绑定的 task、task files 和 baseline snapshots；删除计数与 allowlisted audit 在同一事务 fail-closed 提交。",
     params(("id" = i64, Path), ("task_id" = i64, Path)),
     responses(
         (status = 204),

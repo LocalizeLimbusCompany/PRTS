@@ -40,6 +40,7 @@ async fn restore_after_failed_commit(state: &AppState, key: &str, previous: Opti
     post,
     path = "/projects/{id}/avatar",
     tag = "project",
+    description = "项目管理 capability 可上传或替换头像。服务端独立校验 WebP 签名、可解码内容、正方形、1024×1024/1,048,576 像素和 512KB 上限，并以原子媒体写入配合 fail-closed audit。",
     request_body(content = Vec<u8>, content_type = "image/webp"),
     params(("id" = i64, Path, description = "项目 ID")),
     responses(
@@ -128,6 +129,7 @@ pub async fn upload_project_avatar(
     delete,
     path = "/projects/{id}/avatar",
     tag = "project",
+    description = "项目管理 capability 可幂等删除头像；媒体操作、项目元数据与 allowlisted audit 保持失败回滚语义，不把二进制写入数据库。",
     params(("id" = i64, Path, description = "项目 ID")),
     responses(
         (status = 204),
@@ -185,6 +187,7 @@ pub async fn delete_project_avatar(
     get,
     path = "/projects/{id}/avatar",
     tag = "project",
+    description = "按项目可见性读取 WebP：公开项目允许匿名访问，私有项目只允许成员或平台管理主体；待删除或无头像项目按不可见处理。",
     params(("id" = i64, Path, description = "项目 ID")),
     responses(
         (status = 200, content_type = "image/webp", body = Vec<u8>),

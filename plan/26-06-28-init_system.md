@@ -10,7 +10,7 @@
 | 定位 | 开源版 Paratranz —— 公开、可扩展、高并发、线程安全、国际化的 L10N 协作平台 |
 | 作者 | ZengXiaoPi |
 | 日期 | 2026-06-28 |
-| 状态 | 规划已定稿，待分阶段实施 |
+| 状态 | 工作区大改造阶段 1–7.3 已实现；阶段 8 最终验证与发布准备中 |
 | 代码仓库 | `git@github.com:LocalizeLimbusCompany/PRTS.git`（master） |
 | 预计域名 | `prts.zeroasso.top` |
 | 参考 | Paratranz（paratranz.cn）；ZOOT OAuth 文档见 `docs/external/oauth_integration.md` |
@@ -356,6 +356,9 @@ trait AuthProvider {
 
 - 所有 API 归入 **utoipa/Swagger** 文档，含详尽描述，供内部协作。
 - 用户可获取**自身权限范围内**的 API 文档，并用自己的 **API-Key** 调用（`key_hash` 存储、scope 限定）。
+- 结构化搜索以 `POST /projects/{id}/search` 为主接口；OpenAPI 中 `SearchScope` 是拒绝未知字段、以 `type` 为 discriminator 的封闭 union，file/task ID 沿用 `BIGINT`/Rust `i64`。
+- 旧内联 upload 与旧 GET search 保留一个兼容周期，并在 OpenAPI 标为 deprecated；新前端不再调用它们，生产入口按 method/path 观察调用量后再决定退役。
+- 词条 schema 与 file history payload 不包含 `context`；所有 BCP-47 写入入口复用 `prts-core` 共享 canonicalizer。
 
 ---
 
@@ -375,6 +378,8 @@ trait AuthProvider {
 - `docker-compose`：`backend` + `frontend(nginx)` + `postgres(含扩展)` + `redis`，并挂载 media/upload-temp 持久卷；另有 `docker-compose.dev.yml` 供本地开发。
 - 各服务独立 Dockerfile（后端多阶段构建静态二进制；前端构建后 nginx 托管）。
 - **每完成一个阶段：测试 → verify → 提交(规范) → 推 GitHub → 构建并推 GHCR 镜像**，供生产（`prts.zeroasso.top`）拉取。
+- 阶段 8 使用 `scripts/verify-project-workspace.ps1` 区分默认静态/自动合同、可选 DB 检查与显式手动规模实测；未实际执行的昂贵场景不得声明为通过。
+- 特性分支可完成提交、推送和 CI 验证；真正合并/推送 `master`、发布 GHCR 或部署生产前必须经过明确发布确认，禁止 force push。
 
 ---
 
@@ -394,6 +399,8 @@ trait AuthProvider {
 | **P5 历史与审计** | 追加式安全审计、词条历史、文件行为 change set/delta 与保留期内可逆回滚 |
 | **P6 CP 与贡献** | 未来按既定编辑距离公式计分并上线项目贡献榜；工作区大改造本轮仅准备精确存储 |
 | **P7 完善** | i18n 全量、文档（README 中英 + docs）、安全加固、20w 词条性能压测、verify |
+
+当前项目工作区改造已完成 foundation 与 A–F（阶段 1–7.3）的实现和特性分支 CI；阶段 8 依次完成契约/文档、规模/故障恢复/安全验证与兼容发布准备。生产结果只以实际保存的 verify、CI、Docker health、Swagger 和部署冒烟输出为准。
 
 ---
 
