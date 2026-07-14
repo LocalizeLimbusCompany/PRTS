@@ -67,6 +67,28 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("PROJECT_LANGUAGE_RESOLUTION_REQUIRED", Locale::En) => {
             "Project language resolution is required"
         }
+        ("TERM_ACTIVE_SOURCE_MISMATCH", Locale::ZhCn) => "启用术语的源语言必须是项目当前主源",
+        ("TERM_ACTIVE_SOURCE_MISMATCH", Locale::En) => {
+            "An active term must use the project's current primary source language"
+        }
+        ("TERM_DUPLICATE", Locale::ZhCn) => "相同语言、原文与词性的术语已存在",
+        ("TERM_DUPLICATE", Locale::En) => {
+            "A term with the same language, source text, and part of speech already exists"
+        }
+        ("POS_NAME_REQUIRED", Locale::ZhCn) => "词性至少需要一个中文或英文名称",
+        ("POS_NAME_REQUIRED", Locale::En) => {
+            "At least one Chinese or English part-of-speech name is required"
+        }
+        ("POS_NAME_DUPLICATE", Locale::ZhCn) => "词性名称已存在",
+        ("POS_NAME_DUPLICATE", Locale::En) => "The part-of-speech name already exists",
+        ("POS_IN_USE", Locale::ZhCn) => "该词性仍被会产生术语标识冲突的记录引用",
+        ("POS_IN_USE", Locale::En) => {
+            "The part of speech is still referenced by terms that would conflict"
+        }
+        ("PROJECT_PENDING_DELETION", Locale::ZhCn) => "项目正在等待删除，目前为只读状态",
+        ("PROJECT_PENDING_DELETION", Locale::En) => {
+            "The project is pending deletion and is currently read-only"
+        }
         ("internal", Locale::ZhCn) => "服务器内部错误",
         ("internal", Locale::En) => "Internal server error",
         _ => return None,

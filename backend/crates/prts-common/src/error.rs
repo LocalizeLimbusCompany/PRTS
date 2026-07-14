@@ -49,6 +49,30 @@ pub enum Error {
     #[error("project language resolution required")]
     ProjectLanguageResolutionRequired,
 
+    /// active term 的 source_lang 不是项目当前主源。
+    #[error("active term source language mismatch")]
+    TermActiveSourceMismatch,
+
+    /// canonical term identity 已存在。
+    #[error("duplicate term")]
+    DuplicateTerm,
+
+    /// POS 至少需要一个本地化名称。
+    #[error("pos name required")]
+    PosNameRequired,
+
+    /// POS 的中文名或英文名与既有预设冲突。
+    #[error("duplicate pos name")]
+    DuplicatePosName,
+
+    /// POS 删除会使被引用术语的 NULL-safe identity 冲突。
+    #[error("pos is in use")]
+    PosInUse,
+
+    /// 项目已经进入待删除只读状态。
+    #[error("project pending deletion")]
+    ProjectPendingDeletion,
+
     /// 数据库错误。
     #[error("database error")]
     Database(#[source] sqlx_error::SqlxError),
@@ -71,6 +95,12 @@ impl Error {
             Error::InvalidLanguageTag => "INVALID_LANGUAGE_TAG",
             Error::DuplicateLanguageTag => "DUPLICATE_LANGUAGE_TAG",
             Error::ProjectLanguageResolutionRequired => "PROJECT_LANGUAGE_RESOLUTION_REQUIRED",
+            Error::TermActiveSourceMismatch => "TERM_ACTIVE_SOURCE_MISMATCH",
+            Error::DuplicateTerm => "TERM_DUPLICATE",
+            Error::PosNameRequired => "POS_NAME_REQUIRED",
+            Error::DuplicatePosName => "POS_NAME_DUPLICATE",
+            Error::PosInUse => "POS_IN_USE",
+            Error::ProjectPendingDeletion => "PROJECT_PENDING_DELETION",
             Error::Database(_) => "internal",
             Error::Internal(_) => "internal",
         }

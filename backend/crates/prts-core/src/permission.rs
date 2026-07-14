@@ -22,6 +22,8 @@ pub mod nodes {
     pub const PLATFORM_SETTINGS: &str = "platform.settings";
     /// 清除操作历史。
     pub const PLATFORM_HISTORY_PURGE: &str = "platform.history.purge";
+    /// 管理平台全局 POS 预设（仅总管理员与管理员）。
+    pub const PLATFORM_POS_MANAGE: &str = "platform.pos.manage";
 
     // —— 项目级 ——
     /// 管理项目（设置 / 语言 / 文件结构等）。
@@ -40,6 +42,8 @@ pub mod nodes {
     pub const PROJECT_HISTORY_ROLLBACK: &str = "project.history.rollback";
     /// 管理项目任务及其期望文件集合（仅拥有者与管理）。
     pub const PROJECT_TASK_MANAGE: &str = "project.task.manage";
+    /// 管理项目术语（拥有者、管理与校对）。
+    pub const PROJECT_TERM_MANAGE: &str = "project.term.manage";
     /// 编辑词条（翻译）。
     pub const PROJECT_ENTRY_EDIT: &str = "project.entry.edit";
     /// 校对 / 审核词条。
@@ -107,6 +111,7 @@ impl PlatformRole {
                 PLATFORM_PROJECT_DELETE_ANY,
                 PLATFORM_SETTINGS,
                 PLATFORM_HISTORY_PURGE,
+                PLATFORM_POS_MANAGE,
             ],
             // 管理员：除「任免管理员」外的全部平台能力。
             Self::Admin => &[
@@ -115,6 +120,7 @@ impl PlatformRole {
                 PLATFORM_PROJECT_DELETE_ANY,
                 PLATFORM_SETTINGS,
                 PLATFORM_HISTORY_PURGE,
+                PLATFORM_POS_MANAGE,
             ],
             // 维护者：仅可创建项目。
             Self::Maintainer => &[PLATFORM_PROJECT_CREATE],
@@ -163,6 +169,7 @@ impl ProjectRole {
                 PROJECT_HISTORY_VIEW,
                 PROJECT_HISTORY_ROLLBACK,
                 PROJECT_TASK_MANAGE,
+                PROJECT_TERM_MANAGE,
                 PROJECT_ENTRY_EDIT,
                 PROJECT_ENTRY_REVIEW,
                 PROJECT_ENTRY_LOCK,
@@ -177,6 +184,7 @@ impl ProjectRole {
                 PROJECT_HISTORY_VIEW,
                 PROJECT_HISTORY_ROLLBACK,
                 PROJECT_TASK_MANAGE,
+                PROJECT_TERM_MANAGE,
                 PROJECT_ENTRY_EDIT,
                 PROJECT_ENTRY_REVIEW,
                 PROJECT_ENTRY_LOCK,
@@ -188,6 +196,7 @@ impl ProjectRole {
                 PROJECT_ENTRY_REVIEW,
                 PROJECT_DOWNLOAD,
                 PROJECT_HISTORY_VIEW,
+                PROJECT_TERM_MANAGE,
             ],
             // 翻译：仅可编辑词条与下载。
             Self::Translator => &[PROJECT_ENTRY_EDIT, PROJECT_DOWNLOAD, PROJECT_HISTORY_VIEW],

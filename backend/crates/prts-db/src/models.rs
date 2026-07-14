@@ -328,6 +328,53 @@ pub struct TaskStats {
     pub updated_at: DateTime<Utc>,
 }
 
+/// 平台双语词性预设。
+#[derive(Debug, Clone, FromRow)]
+pub struct PosPreset {
+    pub id: i64,
+    pub name_zh_cn: Option<String>,
+    pub name_en: Option<String>,
+    pub sort_order: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// source-aware 项目术语；正文只在项目可见性授权后的术语 API 返回。
+#[derive(Debug, Clone, FromRow)]
+pub struct Term {
+    pub id: i64,
+    pub project_id: i64,
+    pub source_lang: String,
+    pub source_text: String,
+    pub translation: String,
+    pub notes: String,
+    pub pos_id: Option<i64>,
+    pub archived_at: Option<DateTime<Utc>>,
+    pub created_by: Option<i64>,
+    pub updated_by: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// 术语及其可空 POS 双语名称。
+#[derive(Debug, Clone, FromRow)]
+pub struct TermWithPos {
+    pub id: i64,
+    pub project_id: i64,
+    pub source_lang: String,
+    pub source_text: String,
+    pub translation: String,
+    pub notes: String,
+    pub pos_id: Option<i64>,
+    pub pos_name_zh_cn: Option<String>,
+    pub pos_name_en: Option<String>,
+    pub archived_at: Option<DateTime<Utc>>,
+    pub created_by: Option<i64>,
+    pub updated_by: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// 原始文件上传批次；项目删除后以 snapshot id 保留传输历史。
 #[derive(Debug, Clone, FromRow)]
 pub struct UploadBatch {

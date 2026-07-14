@@ -49,12 +49,16 @@ mod messages_routes;
 mod meta_routes;
 #[path = "../src/routes/notifications.rs"]
 mod notifications_routes;
+#[path = "../src/routes/pos.rs"]
+mod pos_routes;
 #[path = "../src/routes/project_media.rs"]
 mod project_media_routes;
 #[path = "../src/routes/projects.rs"]
 mod projects_routes;
 #[path = "../src/routes/tasks.rs"]
 mod tasks_routes;
+#[path = "../src/routes/terms.rs"]
+mod terms_routes;
 #[path = "../src/routes/uploads.rs"]
 mod uploads_routes;
 #[path = "../src/routes/users.rs"]
@@ -89,6 +93,7 @@ static UPLOAD_SETTINGS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::c
 static UPLOAD_LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static FILE_HISTORY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TASK_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static TERMINOLOGY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -389,6 +394,41 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         entrypoint: "routes::tasks::delete_task",
         action: "task.deleted",
         allowed_payload_keys: &["file_count", "baseline_entry_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::terms::create_term",
+        action: "term.created",
+        allowed_payload_keys: &["source_lang", "pos_id", "archived"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::terms::update_term",
+        action: "term.updated",
+        allowed_payload_keys: &["source_lang", "pos_id", "archived", "changed_field_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::terms::delete_term",
+        action: "term.deleted",
+        allowed_payload_keys: &["source_lang", "pos_id", "archived"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::pos::create_pos",
+        action: "pos.created",
+        allowed_payload_keys: &["has_zh_cn_name", "has_en_name", "sort_order"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::pos::update_pos",
+        action: "pos.updated",
+        allowed_payload_keys: &[
+            "has_zh_cn_name",
+            "has_en_name",
+            "sort_order",
+            "changed_field_count",
+        ],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::pos::delete_pos",
+        action: "pos.deleted",
+        allowed_payload_keys: &["affected_term_count"],
     },
     AuditedEntrypoint {
         entrypoint: "routes::entries::upload",
@@ -786,6 +826,48 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "term.created",
+        target_type: "term",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "term.updated",
+        target_type: "term",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "term.deleted",
+        target_type: "term",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::Required,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "pos.created",
+        target_type: "pos",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "pos.updated",
+        target_type: "pos",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "pos.deleted",
+        target_type: "pos",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "entries.uploaded",
         target_type: "file",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -1029,6 +1111,13 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "tasks::update_metadata_tx",
     "tasks::apply_file_set_plan_tx",
     "tasks::delete_tx",
+    "terms::create_tx",
+    "terms::update_tx",
+    "terms::delete_tx",
+    "terms::apply_primary_source_plan_tx",
+    "pos::create_tx",
+    "pos::update_tx",
+    "pos::delete_tx",
     "entries::bulk_upsert",
     "entries::update_translation",
     "entries::set_flags",
@@ -1109,6 +1198,10 @@ const UNAUDITED_READS: &[&str] = &[
     "tasks::list",
     "tasks::find",
     "tasks::file_details",
+    "terms::list",
+    "terms::find",
+    "terms::match_current",
+    "pos::list",
     "entries::list_entries",
     "entries::get_entry",
     "entries::entry_history",
@@ -1129,7 +1222,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        61,
+        68,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -1137,11 +1230,11 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         16,
         "auth/session writer inventory 发生漂移"
     );
-    assert_eq!(UNAUDITED_READS.len(), 29, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 67, "审计入口 inventory 发生漂移");
+    assert_eq!(UNAUDITED_READS.len(), 33, "普通读取 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 73, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        62,
+        68,
         "action 合同 inventory 发生漂移"
     );
 
@@ -2587,6 +2680,21 @@ async fn audit_contract_assert_unavailable(error: error::ApiError) {
     let body: serde_json::Value = serde_json::from_slice(&bytes).expect("错误响应为 JSON");
     assert_eq!(body["code"], "AUDIT_UNAVAILABLE");
     assert_eq!(body["message"], "审计服务暂不可用");
+}
+
+async fn audit_contract_error_code(error: error::ApiError) -> (axum::http::StatusCode, String) {
+    use axum::response::IntoResponse;
+
+    let response = error.into_response();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("读取错误响应体");
+    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("错误响应为 JSON");
+    (
+        status,
+        body["code"].as_str().unwrap_or_default().to_string(),
+    )
 }
 
 /// 认证注册把用户、active session、审计与 Redis outbox 作为一个 DB 提交；审计失败不返回 token。
@@ -11320,4 +11428,918 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
 
     projects::delete(&state.db, other_project.id).await.unwrap();
     projects::delete(&state.db, project.id).await.unwrap();
+}
+
+// ======================== Task 5.1 terminology contracts ========================
+
+/// `0012` 必须一次性冻结双语 POS、source-aware term、NULL-safe identity 与显式 FK。
+///
+/// 该测试故意直接使用 runtime role 执行合同 DML：迁移存在前应因缺少
+/// `pos_presets`/`terms` 而 RED；迁移完成后则证明数据库只执行 core/route 已决定的写入，
+/// 且不会靠模糊 cascade 猜测生命周期。
+#[tokio::test]
+async fn terminology_schema_enforces_null_safe_identity_and_explicit_foreign_keys() {
+    let _guard = TERMINOLOGY_TEST_LOCK.lock().await;
+    let pool = pool().await;
+    let owner = audit_contract_create_user(&pool, "term-schema-owner", None).await;
+    let slug = format!("term-schema-{}", owner.id);
+    let mut tx = pool.begin().await.unwrap();
+    let project = projects::create_with_primary_tx(
+        &mut tx,
+        &slug,
+        "Terminology schema",
+        "",
+        "private",
+        &["en".to_string(), "ja".to_string()],
+        "en",
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let empty_names = sqlx::query(
+        "INSERT INTO pos_presets (name_zh_cn, name_en, sort_order)
+         VALUES ('  ', '', 0)",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("POS 至少一个名称非空");
+    assert_eq!(
+        empty_names
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("23514")
+    );
+
+    let noun_id: i64 = sqlx::query_scalar(
+        "INSERT INTO pos_presets (name_zh_cn, name_en, sort_order)
+         VALUES ('名词', 'Noun', 10) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let verb_id: i64 = sqlx::query_scalar(
+        "INSERT INTO pos_presets (name_zh_cn, name_en, sort_order)
+         VALUES ('动词', 'Verb', 20) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let adjective_id: i64 = sqlx::query_scalar(
+        "INSERT INTO pos_presets (name_zh_cn, name_en, sort_order)
+         VALUES ('形容词', 'Adjective', 30) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let _null_pos_term_id: i64 = sqlx::query_scalar(
+        "INSERT INTO terms (
+             project_id, source_lang, source_text, translation, notes, pos_id,
+             archived_at, created_by, updated_by
+         ) VALUES ($1, 'en', 'shared-key', '共享译文', 'schema marker', NULL,
+                   NULL, $2, $2)
+         RETURNING id",
+    )
+    .bind(project.id)
+    .bind(owner.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let duplicate = sqlx::query(
+        "INSERT INTO terms (
+             project_id, source_lang, source_text, translation, notes, pos_id,
+             archived_at, created_by, updated_by
+         ) VALUES ($1, 'en', 'shared-key', 'other', '', NULL, NULL, $2, $2)",
+    )
+    .bind(project.id)
+    .bind(owner.id)
+    .execute(&pool)
+    .await
+    .expect_err("NULL pos 必须参与唯一性");
+    assert_eq!(
+        duplicate
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("23505")
+    );
+
+    let _noun_term_id: i64 = sqlx::query_scalar(
+        "INSERT INTO terms (
+             project_id, source_lang, source_text, translation, notes, pos_id,
+             archived_at, created_by, updated_by
+         ) VALUES ($1, 'en', 'shared-key', 'with pos', '', $2, NULL, $3, $3)
+         RETURNING id",
+    )
+    .bind(project.id)
+    .bind(noun_id)
+    .bind(owner.id)
+    .fetch_one(&pool)
+    .await
+    .expect("不同 POS 的同语言同 source_text 可并存");
+    sqlx::query(
+        "INSERT INTO terms (
+             project_id, source_lang, source_text, translation, notes, pos_id,
+             archived_at, created_by, updated_by
+         ) VALUES ($1, 'en', 'shared-key', 'with pos', '', $2, NULL, $3, $3)",
+    )
+    .bind(project.id)
+    .bind(verb_id)
+    .bind(owner.id)
+    .execute(&pool)
+    .await
+    .expect("不同 POS 的同语言同 source_text 可并存");
+    sqlx::query(
+        "INSERT INTO terms (
+             project_id, source_lang, source_text, translation, notes, pos_id,
+             archived_at, created_by, updated_by
+         ) VALUES ($1, 'de-DE-u-co-phonebk', 'Quelle', '来源', '', NULL,
+                   now(), $2, $2)
+         RETURNING id",
+    )
+    .bind(project.id)
+    .bind(owner.id)
+    .fetch_one(&pool)
+    .await
+    .expect("合法 canonical 非项目 source-set tag 可作为 archived term 保存");
+    let detachable_term_id: i64 = sqlx::query_scalar(
+        "INSERT INTO terms (
+             project_id, source_lang, source_text, translation, notes, pos_id,
+             archived_at, created_by, updated_by
+         ) VALUES ($1, 'en', 'detachable-key', 'detachable', '', $2, NULL, $3, $3)
+         RETURNING id",
+    )
+    .bind(project.id)
+    .bind(adjective_id)
+    .bind(owner.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let unique_is_null_safe: bool = sqlx::query_scalar(
+        "SELECT index.indnullsnotdistinct
+         FROM pg_index AS index
+         JOIN pg_class AS relation ON relation.oid = index.indrelid
+         WHERE relation.relname = 'terms'
+           AND index.indisunique
+           AND pg_get_indexdef(index.indexrelid)
+               ILIKE '%(project_id, source_lang, source_text, pos_id)%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(unique_is_null_safe);
+
+    let fk_delete_rules: Vec<(String, String)> = sqlx::query_as(
+        "SELECT kcu.column_name, rc.delete_rule
+         FROM information_schema.referential_constraints AS rc
+         JOIN information_schema.key_column_usage AS kcu
+           ON kcu.constraint_schema = rc.constraint_schema
+          AND kcu.constraint_name = rc.constraint_name
+         WHERE rc.constraint_schema = 'public' AND kcu.table_name = 'terms'
+         ORDER BY kcu.column_name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        fk_delete_rules,
+        vec![
+            ("created_by".to_string(), "SET NULL".to_string()),
+            ("pos_id".to_string(), "SET NULL".to_string()),
+            ("project_id".to_string(), "CASCADE".to_string()),
+            ("updated_by".to_string(), "SET NULL".to_string()),
+        ]
+    );
+
+    let colliding_detach = sqlx::query("DELETE FROM pos_presets WHERE id = $1")
+        .bind(noun_id)
+        .execute(&pool)
+        .await
+        .expect_err("SET NULL 若会破坏 term identity 必须拒绝 POS 删除");
+    assert_eq!(
+        colliding_detach
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("23505")
+    );
+    sqlx::query("DELETE FROM pos_presets WHERE id = $1")
+        .bind(adjective_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let detached_pos: Option<i64> = sqlx::query_scalar("SELECT pos_id FROM terms WHERE id = $1")
+        .bind(detachable_term_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(detached_pos, None);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let remaining_terms: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM terms WHERE project_id = $1")
+            .bind(project.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(remaining_terms, 0);
+    sqlx::query("DELETE FROM pos_presets WHERE id IN ($1, $2)")
+        .bind(noun_id)
+        .bind(verb_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(owner.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// 术语 API 统一执行 canonical BCP-47、active/archived、项目 gate、角色、URL 绑定、
+/// 主源切换、键集分页与正文脱敏；POS API 只接受 platform admin/super-admin mutation。
+#[tokio::test]
+async fn terminology_api_enforces_language_permissions_primary_switch_and_redacted_audit() {
+    use axum::extract::{Path, Query, State};
+    use axum::Json;
+    use prts_common::i18n::Locale;
+
+    let _guard = TERMINOLOGY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "term-api-owner", None).await;
+    let reviewer = audit_contract_create_user(&state.db, "term-api-reviewer", None).await;
+    let translator = audit_contract_create_user(&state.db, "term-api-translator", None).await;
+    let maintainer =
+        audit_contract_create_user(&state.db, "term-api-maintainer", Some("maintainer")).await;
+    let admin = audit_contract_create_user(&state.db, "term-api-admin", Some("admin")).await;
+    let other_owner = audit_contract_create_user(&state.db, "term-api-other-owner", None).await;
+    let mut tx = state.db.begin().await.unwrap();
+    let project = projects::create_with_primary_tx(
+        &mut tx,
+        &format!("term-api-{}", owner.id),
+        "Terminology API",
+        "",
+        "private",
+        &["en".to_string(), "ja".to_string()],
+        "en",
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, reviewer.id, "reviewer")
+        .await
+        .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, translator.id, "translator")
+        .await
+        .unwrap();
+    let other_project = projects::create_with_primary_tx(
+        &mut tx,
+        &format!("term-api-other-{}", other_owner.id),
+        "Terminology binding",
+        "",
+        "public",
+        &["en".to_string()],
+        "en",
+        "zh-Hans",
+        other_owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, other_project.id, other_owner.id, "owner")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let denied_maintainer = pos_routes::create_pos(
+        State(state.clone()),
+        audit_contract_current_user(&maintainer),
+        error::RequestLocale(Locale::ZhCn),
+        Json(pos_routes::PosWriteRequest {
+            name_zh_cn: Some("不可创建".to_string()),
+            name_en: None,
+            sort_order: 0,
+        }),
+    )
+    .await
+    .expect_err_api("maintainer 不得管理 POS");
+    assert_eq!(
+        audit_contract_error_code(denied_maintainer).await.0,
+        axum::http::StatusCode::FORBIDDEN
+    );
+    let denied_project_owner = pos_routes::create_pos(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        error::RequestLocale(Locale::ZhCn),
+        Json(pos_routes::PosWriteRequest {
+            name_zh_cn: Some("项目角色不可创建".to_string()),
+            name_en: None,
+            sort_order: 0,
+        }),
+    )
+    .await
+    .expect_err_api("项目 owner 不得因项目角色管理 POS");
+    assert_eq!(
+        audit_contract_error_code(denied_project_owner).await.0,
+        axum::http::StatusCode::FORBIDDEN
+    );
+    let (status, Json(pos)) = pos_routes::create_pos(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        error::RequestLocale(Locale::En),
+        Json(pos_routes::PosWriteRequest {
+            name_zh_cn: Some("测试词性".to_string()),
+            name_en: Some("Test POS".to_string()),
+            sort_order: 7,
+        }),
+    )
+    .await
+    .expect_api("admin 创建 POS");
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    assert_eq!(pos.display_name, "Test POS");
+    let Json(pos_zh) =
+        pos_routes::list_pos(State(state.clone()), error::RequestLocale(Locale::ZhCn))
+            .await
+            .expect_api("中文 locale 读取 POS");
+    assert_eq!(
+        pos_zh
+            .iter()
+            .find(|item| item.id == pos.id)
+            .unwrap()
+            .display_name,
+        "测试词性"
+    );
+    let updated_pos_name = format!("Test POS Updated {}", admin.id);
+    let Json(updated_pos) = pos_routes::update_pos(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        error::RequestLocale(Locale::ZhCn),
+        Path(pos.id),
+        Json(pos_routes::PosWriteRequest {
+            name_zh_cn: None,
+            name_en: Some(updated_pos_name.clone()),
+            sort_order: 8,
+        }),
+    )
+    .await
+    .expect_api("admin 更新 POS 且中文 locale 回退英文名");
+    assert_eq!(updated_pos.display_name, updated_pos_name);
+
+    let source_marker = format!("TERM_SOURCE_BODY_{}", owner.id);
+    let translation_marker = format!("TERM_TRANSLATION_BODY_{}", owner.id);
+    let notes_marker = format!("TERM_NOTES_BODY_{}", owner.id);
+    let (status, Json(active)) = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "EN".to_string(),
+            source_text: source_marker.clone(),
+            translation: translation_marker.clone(),
+            notes: notes_marker.clone(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_api("reviewer 创建当前主源 active term");
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    assert_eq!(active.source_lang, "en");
+    assert!(!active.archived);
+
+    let duplicate = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: source_marker.clone(),
+            translation: "duplicate".to_string(),
+            notes: String::new(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_err_api("canonical identity 重复必须拒绝");
+    assert_eq!(
+        audit_contract_error_code(duplicate).await,
+        (
+            axum::http::StatusCode::CONFLICT,
+            "TERM_DUPLICATE".to_string()
+        )
+    );
+
+    let invalid = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "not_a_language".to_string(),
+            source_text: "invalid".to_string(),
+            translation: String::new(),
+            notes: String::new(),
+            pos_id: None,
+            archived: true,
+        }),
+    )
+    .await
+    .expect_err_api("invalid tag 必须拒绝");
+    assert_eq!(
+        audit_contract_error_code(invalid).await.1,
+        "INVALID_LANGUAGE_TAG"
+    );
+
+    let active_mismatch = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "JA".to_string(),
+            source_text: "active mismatch".to_string(),
+            translation: String::new(),
+            notes: String::new(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_err_api("非主源 active 不得静默归档");
+    assert_eq!(
+        audit_contract_error_code(active_mismatch).await,
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            "TERM_ACTIVE_SOURCE_MISMATCH".to_string()
+        )
+    );
+    let mismatch_persisted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM terms WHERE project_id = $1 AND source_text = 'active mismatch'",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(mismatch_persisted, 0);
+
+    let (_, Json(ja_archived)) = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "JA".to_string(),
+            source_text: "日本語".to_string(),
+            translation: "日语".to_string(),
+            notes: String::new(),
+            pos_id: Some(pos.id),
+            archived: true,
+        }),
+    )
+    .await
+    .expect_api("非主源 archived term 可存");
+    assert_eq!(ja_archived.source_lang, "ja");
+    assert!(ja_archived.archived);
+    let (_, Json(de_archived)) = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "de-de-u-co-phonebk".to_string(),
+            source_text: "Quelle".to_string(),
+            translation: "来源".to_string(),
+            notes: String::new(),
+            pos_id: None,
+            archived: true,
+        }),
+    )
+    .await
+    .expect_api("非项目 source-set canonical tag 可归档保存");
+    assert_eq!(de_archived.source_lang, "de-DE-u-co-phonebk");
+
+    let translator_denied = terms_routes::update_term(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path((project.id, active.id)),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: source_marker.clone(),
+            translation: "forbidden".to_string(),
+            notes: String::new(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_err_api("translator 只读术语");
+    assert_eq!(
+        audit_contract_error_code(translator_denied).await.0,
+        axum::http::StatusCode::FORBIDDEN
+    );
+    let updated_translation_marker = format!("TERM_UPDATED_BODY_{}", owner.id);
+    let Json(updated_active) = terms_routes::update_term(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, active.id)),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "EN".to_string(),
+            source_text: source_marker.clone(),
+            translation: updated_translation_marker.clone(),
+            notes: notes_marker.clone(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_api("reviewer 更新当前主源 active term");
+    assert_eq!(updated_active.source_lang, "en");
+    assert!(!updated_active.archived);
+
+    let Json(current_terms) = terms_routes::list_terms(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&translator))),
+        Path(project.id),
+        Query(terms_routes::TermListQuery {
+            scope: Some(terms_routes::TermScope::Current),
+            after: None,
+            limit: Some(100),
+        }),
+    )
+    .await
+    .expect_api("current 只返回当前 primary active terms");
+    assert_eq!(
+        current_terms
+            .items
+            .iter()
+            .map(|term| term.id)
+            .collect::<Vec<_>>(),
+        vec![active.id]
+    );
+    let Json(archived_terms) = terms_routes::list_terms(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&translator))),
+        Path(project.id),
+        Query(terms_routes::TermListQuery {
+            scope: Some(terms_routes::TermScope::Archived),
+            after: None,
+            limit: Some(100),
+        }),
+    )
+    .await
+    .expect_api("archived 范围只返回归档术语");
+    assert_eq!(archived_terms.items.len(), 2);
+    assert!(archived_terms.items.iter().all(|term| term.archived));
+
+    let cross_bound = terms_routes::get_term(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path((other_project.id, active.id)),
+    )
+    .await
+    .expect_err_api("term/project cross-binding fail closed");
+    assert_eq!(
+        audit_contract_error_code(cross_bound).await.0,
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    let Json(page_one) = terms_routes::list_terms(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&translator))),
+        Path(project.id),
+        Query(terms_routes::TermListQuery {
+            scope: Some(terms_routes::TermScope::Mixed),
+            after: None,
+            limit: Some(2),
+        }),
+    )
+    .await
+    .expect_api("mixed keyset 第一页");
+    assert_eq!(page_one.items.len(), 2);
+    assert!(page_one.next_after.is_some());
+    let Json(page_two) = terms_routes::list_terms(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&translator))),
+        Path(project.id),
+        Query(terms_routes::TermListQuery {
+            scope: Some(terms_routes::TermScope::Mixed),
+            after: page_one.next_after,
+            limit: Some(2),
+        }),
+    )
+    .await
+    .expect_api("mixed keyset 第二页");
+    assert!(page_one
+        .items
+        .iter()
+        .all(|left| page_two.items.iter().all(|right| left.id != right.id)));
+
+    sqlx::query(
+        "UPDATE projects SET language_repair_state = 'needs_language_resolution' WHERE id = $1",
+    )
+    .bind(project.id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let gated = terms_routes::delete_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, active.id)),
+    )
+    .await
+    .expect_err_api("needs_language_resolution mutation gated");
+    assert_eq!(
+        audit_contract_error_code(gated).await.1,
+        "PROJECT_LANGUAGE_RESOLUTION_REQUIRED"
+    );
+    sqlx::query("UPDATE projects SET language_repair_state = 'ready' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let worker_registered_before: bool = sqlx::query_scalar(
+        "SELECT lexical_worker_registered FROM workspace_foundation_state WHERE singleton",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE workspace_foundation_state
+         SET lexical_worker_registered = TRUE, reconciled_at = now() WHERE singleton",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let jobs_before: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs WHERE project_id = $1")
+        .bind(project.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let states_before_noop: Vec<(i64, Option<chrono::DateTime<chrono::Utc>>)> =
+        sqlx::query_as("SELECT id, archived_at FROM terms WHERE project_id = $1 ORDER BY id")
+            .bind(project.id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    let _ = projects_routes::change_primary_source(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ChangePrimarySourceReq {
+            source_langs: vec!["en".to_string(), "ja".to_string()],
+            primary_source_lang: "EN".to_string(),
+        }),
+    )
+    .await
+    .expect_api("相同主源无术语副作用");
+    let before_switch: Vec<(i64, bool)> = sqlx::query_as(
+        "SELECT id, archived_at IS NOT NULL FROM terms WHERE project_id = $1 ORDER BY id",
+    )
+    .bind(project.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    let states_after_noop: Vec<(i64, Option<chrono::DateTime<chrono::Utc>>)> =
+        sqlx::query_as("SELECT id, archived_at FROM terms WHERE project_id = $1 ORDER BY id")
+            .bind(project.id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(states_after_noop, states_before_noop);
+    let jobs_after_noop: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM jobs WHERE project_id = $1")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(jobs_after_noop, jobs_before);
+
+    let _ = projects_routes::change_primary_source(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ChangePrimarySourceReq {
+            source_langs: vec!["en".to_string(), "ja".to_string()],
+            primary_source_lang: "JA".to_string(),
+        }),
+    )
+    .await
+    .expect_api("切换主源并原子更新术语归档");
+    let archived_states: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT source_lang, archived_at IS NOT NULL FROM terms
+         WHERE project_id = $1 ORDER BY source_lang, id",
+    )
+    .bind(project.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert!(archived_states
+        .iter()
+        .filter(|(language, _)| language == "en")
+        .all(|(_, archived)| *archived));
+    assert!(archived_states
+        .iter()
+        .filter(|(language, _)| language == "ja")
+        .all(|(_, archived)| !*archived));
+    assert!(archived_states
+        .iter()
+        .filter(|(language, _)| language == "de-DE-u-co-phonebk")
+        .all(|(_, archived)| *archived));
+    assert_ne!(
+        before_switch,
+        sqlx::query_as::<_, (i64, bool)>(
+            "SELECT id, archived_at IS NOT NULL FROM terms WHERE project_id = $1 ORDER BY id",
+        )
+        .bind(project.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap()
+    );
+    let Json(matches) = terms_routes::match_terms(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&translator))),
+        Path(project.id),
+        Json(terms_routes::TermMatchRequest {
+            source_text: "これは日本語です".to_string(),
+            limit: Some(10),
+        }),
+    )
+    .await
+    .expect_api("match 只返回当前 primary active terms");
+    assert_eq!(
+        matches.iter().map(|term| term.id).collect::<Vec<_>>(),
+        vec![ja_archived.id]
+    );
+
+    let audit_rows: Vec<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT action, payload FROM audit_log
+         WHERE (project_id_snapshot = $1 OR actor_id = $2)
+           AND (action LIKE 'term.%' OR action LIKE 'pos.%') ORDER BY id",
+    )
+    .bind(project.id)
+    .bind(admin.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    let serialized = serde_json::to_string(&audit_rows).unwrap();
+    for marker in [
+        source_marker,
+        translation_marker,
+        updated_translation_marker,
+        notes_marker,
+        "测试词性".to_string(),
+        "Test POS".to_string(),
+        updated_pos_name,
+    ] {
+        assert!(!serialized.contains(&marker));
+    }
+    for (_, payload) in &audit_rows {
+        audit_contract_assert_json_has_no_sensitive_keys(payload);
+    }
+
+    sqlx::query("UPDATE jobs SET state = 'succeeded' WHERE project_id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let lexical_job_ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM jobs WHERE project_id = $1")
+        .bind(project.id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete(&state.db, other_project.id).await.unwrap();
+    pos_routes::delete_pos(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Path(pos.id),
+    )
+    .await
+    .expect_api("admin 删除 POS");
+    sqlx::query("DELETE FROM jobs WHERE id = ANY($1::BIGINT[])")
+        .bind(&lexical_job_ids)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE workspace_foundation_state SET lexical_worker_registered = $1 WHERE singleton",
+    )
+    .bind(worker_registered_before)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM users WHERE id = ANY($1::BIGINT[])")
+        .bind(
+            &[
+                owner.id,
+                reviewer.id,
+                translator.id,
+                maintainer.id,
+                admin.id,
+                other_owner.id,
+            ][..],
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// 术语与 POS mutation 的业务写和审计必须同一事务；audit failure 不得留下正文。
+#[tokio::test]
+async fn terminology_mutations_roll_back_when_audit_is_unavailable() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+    use prts_common::i18n::Locale;
+
+    let _guard = TERMINOLOGY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "term-audit-owner", None).await;
+    let admin = audit_contract_create_user(&state.db, "term-audit-admin", Some("admin")).await;
+    let mut tx = state.db.begin().await.unwrap();
+    let project = projects::create_with_primary_tx(
+        &mut tx,
+        &format!("term-audit-{}", owner.id),
+        "Terminology audit",
+        "",
+        "private",
+        &["en".to_string()],
+        "en",
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let term_marker = format!("TERM_AUDIT_ROLLBACK_{}", owner.id);
+    let term_error = terms_routes::create_term(
+        State(failing_state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: term_marker.clone(),
+            translation: term_marker.clone(),
+            notes: term_marker.clone(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_err_api("term audit failure 必须 fail closed");
+    audit_contract_assert_unavailable(term_error).await;
+    let persisted_terms: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM terms WHERE project_id = $1 AND source_text = $2")
+            .bind(project.id)
+            .bind(&term_marker)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(persisted_terms, 0);
+
+    let pos_marker = format!("POS_AUDIT_ROLLBACK_{}", admin.id);
+    let pos_error = pos_routes::create_pos(
+        State(failing_state),
+        audit_contract_current_user(&admin),
+        error::RequestLocale(Locale::En),
+        Json(pos_routes::PosWriteRequest {
+            name_zh_cn: None,
+            name_en: Some(pos_marker.clone()),
+            sort_order: 9,
+        }),
+    )
+    .await
+    .expect_err_api("POS audit failure 必须 fail closed");
+    audit_contract_assert_unavailable(pos_error).await;
+    let persisted_pos: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pos_presets WHERE name_en = $1")
+            .bind(&pos_marker)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(persisted_pos, 0);
+
+    projects::delete(&state.db, project.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
+        .bind(owner.id)
+        .bind(admin.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
 }

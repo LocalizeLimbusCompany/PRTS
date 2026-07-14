@@ -12,11 +12,13 @@ pub mod language_resolution;
 pub mod messages;
 pub mod meta;
 pub mod notifications;
+pub mod pos;
 pub mod project_media;
 pub mod projects;
 pub mod search;
 pub mod suggestions;
 pub mod tasks;
+pub mod terms;
 pub mod uploads;
 pub mod users;
 pub mod ws;
@@ -81,6 +83,9 @@ fn api_router() -> OpenApiRouter<AppState> {
         // 平台管理
         .routes(routes!(admin::get_settings, admin::update_settings))
         .routes(routes!(admin::grant_role))
+        .routes(routes!(pos::list_pos))
+        .routes(routes!(pos::create_pos))
+        .routes(routes!(pos::update_pos, pos::delete_pos))
         .routes(routes!(
             admin_settings::get_search_settings,
             admin_settings::put_search_settings
@@ -104,6 +109,13 @@ fn api_router() -> OpenApiRouter<AppState> {
             tasks::get_task,
             tasks::update_task,
             tasks::delete_task
+        ))
+        .routes(routes!(terms::list_terms, terms::create_term))
+        .routes(routes!(terms::match_terms))
+        .routes(routes!(
+            terms::get_term,
+            terms::update_term,
+            terms::delete_term
         ))
         .routes(routes!(project_media::get_project_avatar))
         .routes(routes!(project_media::upload_project_avatar))
@@ -321,6 +333,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn terminology_openapi_documents_crud_keyset_match_and_admin_pos() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        for (path, method) in [
+            ("/projects/{id}/terms", "get"),
+            ("/projects/{id}/terms", "post"),
+            ("/projects/{id}/terms/match", "post"),
+            ("/projects/{id}/terms/{term_id}", "get"),
+            ("/projects/{id}/terms/{term_id}", "put"),
+            ("/projects/{id}/terms/{term_id}", "delete"),
+            ("/pos", "get"),
+            ("/admin/pos", "post"),
+            ("/admin/pos/{pos_id}", "put"),
+            ("/admin/pos/{pos_id}", "delete"),
+        ] {
+            assert!(
+                document["paths"][path][method].is_object(),
+                "{method} {path} 必须进入 OpenAPI"
+            );
+            assert!(
+                document["paths"][path][method]["description"]
+                    .as_str()
+                    .is_some_and(|description| !description.is_empty()),
+                "{method} {path} 必须提供完整描述"
+            );
+        }
+        let parameter_names: Vec<_> = document["paths"]["/projects/{id}/terms"]["get"]
+            ["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|parameter| parameter["name"].as_str())
+            .collect();
+        assert!(parameter_names.contains(&"after"));
+        assert!(parameter_names.contains(&"limit"));
+        assert!(parameter_names.contains(&"scope"));
+    }
+
     /// Task 1.2 的认证与受审计 mutation 都公开稳定的 fail-closed 503 schema。
     #[test]
     fn audited_mutations_document_audit_unavailable() {
@@ -349,6 +400,12 @@ mod tests {
             ("/projects/{id}/tasks", "post"),
             ("/projects/{id}/tasks/{task_id}", "put"),
             ("/projects/{id}/tasks/{task_id}", "delete"),
+            ("/projects/{id}/terms", "post"),
+            ("/projects/{id}/terms/{term_id}", "put"),
+            ("/projects/{id}/terms/{term_id}", "delete"),
+            ("/admin/pos", "post"),
+            ("/admin/pos/{pos_id}", "put"),
+            ("/admin/pos/{pos_id}", "delete"),
             ("/projects/{id}/folders", "post"),
             ("/projects/{id}/files/{file_id}", "patch"),
             ("/projects/{id}/files/{file_id}", "delete"),

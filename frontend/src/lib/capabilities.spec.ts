@@ -15,6 +15,7 @@ describe('hasProjectCapability', () => {
           view_file_history: true,
           rollback_file_history: false,
           manage_tasks: false,
+          manage_terms: false,
           download: false,
           edit_entry: false,
           review_entry: false,
@@ -28,5 +29,6 @@ describe('hasProjectCapability', () => {
       ),
     ).toBe(true)
     expect(hasProjectCapability(undefined, 'manage_tasks')).toBe(false)
+    expect(hasProjectCapability(undefined, 'manage_terms')).toBe(false)
   })
 })

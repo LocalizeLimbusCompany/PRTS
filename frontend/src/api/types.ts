@@ -52,6 +52,7 @@ export interface ProjectCapabilities {
   view_file_history: boolean
   rollback_file_history: boolean
   manage_tasks: boolean
+  manage_terms: boolean
   download: boolean
   edit_entry: boolean
   review_entry: boolean

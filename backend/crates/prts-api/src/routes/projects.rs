@@ -416,6 +416,11 @@ pub async fn change_primary_source(
     )
     .await
     .map_err(db_err)?;
+    let term_plan = prts_core::terms::plan_primary_source_terms(&primary_source_lang)
+        .map_err(|error| prts_common::Error::bad_request(error.code()))?;
+    prts_db::terms::apply_primary_source_plan_tx(&mut tx, id, &term_plan)
+        .await
+        .map_err(db_err)?;
     let updated = prts_db::projects::change_primary_source_tx(
         &mut tx,
         id,

@@ -90,6 +90,10 @@ fn status_for(code: &str) -> StatusCode {
         "AUDIT_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
         "INVALID_LANGUAGE_TAG" | "DUPLICATE_LANGUAGE_TAG" => StatusCode::BAD_REQUEST,
         "PROJECT_LANGUAGE_RESOLUTION_REQUIRED" => StatusCode::CONFLICT,
+        "TERM_ACTIVE_SOURCE_MISMATCH" | "POS_NAME_REQUIRED" => StatusCode::BAD_REQUEST,
+        "TERM_DUPLICATE" | "POS_NAME_DUPLICATE" | "POS_IN_USE" | "PROJECT_PENDING_DELETION" => {
+            StatusCode::CONFLICT
+        }
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

@@ -15,6 +15,7 @@ pub struct ProjectCapabilities {
     pub view_file_history: bool,
     pub rollback_file_history: bool,
     pub manage_tasks: bool,
+    pub manage_terms: bool,
     pub download: bool,
     pub edit_entry: bool,
     pub review_entry: bool,
@@ -43,6 +44,7 @@ impl ProjectCapabilities {
             view_file_history: has(nodes::PROJECT_HISTORY_VIEW),
             rollback_file_history: has(nodes::PROJECT_HISTORY_ROLLBACK),
             manage_tasks: has(nodes::PROJECT_TASK_MANAGE),
+            manage_terms: has(nodes::PROJECT_TERM_MANAGE),
             download: has(nodes::PROJECT_DOWNLOAD),
             edit_entry: has(nodes::PROJECT_ENTRY_EDIT),
             review_entry: has(nodes::PROJECT_ENTRY_REVIEW),
@@ -68,6 +70,7 @@ mod tests {
         assert!(manager.view_file_history);
         assert!(manager.rollback_file_history);
         assert!(manager.manage_tasks);
+        assert!(manager.manage_terms);
         assert!(!manager.resolve_languages);
         assert!(!manager.change_primary_source);
         assert!(!manager.delete_project);
@@ -76,5 +79,14 @@ mod tests {
         assert!(owner.resolve_languages);
         assert!(owner.delete_project);
         assert!(!owner.change_primary_source);
+
+        let reviewer =
+            ProjectCapabilities::for_subject(true, Some(ProjectRole::Reviewer), false, true);
+        assert!(reviewer.manage_terms);
+        assert!(!reviewer.manage_tasks);
+
+        let translator =
+            ProjectCapabilities::for_subject(true, Some(ProjectRole::Translator), false, true);
+        assert!(!translator.manage_terms);
     }
 }

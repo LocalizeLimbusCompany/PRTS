@@ -33,6 +33,7 @@ describe('project workspace navigation', () => {
           view_file_history: true,
           rollback_file_history: true,
           manage_tasks: true,
+          manage_terms: true,
           download: false,
           edit_entry: false,
           review_entry: false,
