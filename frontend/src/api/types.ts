@@ -98,6 +98,7 @@ export interface ProjectCapabilities {
   view_project: boolean
   manage_project: boolean
   manage_members: boolean
+  member_assignable_roles: string[]
   upload_files: boolean
   view_file_history: boolean
   rollback_file_history: boolean
@@ -129,6 +130,13 @@ export interface MemberDto {
   avatar_url: string | null
   role: string
   created_at: string
+  capabilities: MemberCapabilities
+}
+
+export interface MemberCapabilities {
+  assignable_roles: string[]
+  can_change_role: boolean
+  can_remove: boolean
 }
 
 export interface FolderDto {

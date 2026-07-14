@@ -32,6 +32,7 @@ describe('project workspace navigation', () => {
           view_project: true,
           manage_project: true,
           manage_members: false,
+          member_assignable_roles: [],
           upload_files: false,
           view_file_history: true,
           rollback_file_history: true,

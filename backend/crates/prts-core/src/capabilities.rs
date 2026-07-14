@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::permission::nodes;
+use crate::permission::{assignable_project_roles_for_scope, nodes};
 use crate::ProjectRole;
 
 /// 当前主体在单个项目中的显式能力。
@@ -11,6 +11,7 @@ pub struct ProjectCapabilities {
     pub view_project: bool,
     pub manage_project: bool,
     pub manage_members: bool,
+    pub member_assignable_roles: &'static [&'static str],
     pub upload_files: bool,
     pub view_file_history: bool,
     pub rollback_file_history: bool,
@@ -39,10 +40,12 @@ impl ProjectCapabilities {
     ) -> Self {
         let has = |node| role.is_some_and(|project_role| project_role.has(node));
         let elevated_editor = role.is_some_and(ProjectRole::can_edit_locked);
+        let member_assignable_roles = assignable_project_roles_for_scope(role);
         Self {
             view_project: can_view,
             manage_project: has(nodes::PROJECT_MANAGE),
             manage_members: has(nodes::PROJECT_MEMBER_MANAGE),
+            member_assignable_roles,
             upload_files: has(nodes::PROJECT_FILE_UPLOAD),
             view_file_history: has(nodes::PROJECT_HISTORY_VIEW),
             rollback_file_history: has(nodes::PROJECT_HISTORY_ROLLBACK),

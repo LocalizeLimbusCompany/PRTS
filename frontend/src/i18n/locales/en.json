@@ -238,6 +238,17 @@
       "languageNotice": "Languages use a dedicated workflow; the target language is locked after the first entry is created.",
       "saved": "Project settings saved"
     },
+    "members": {
+      "heading": "Project members",
+      "count": "{count} members",
+      "add": "Add member",
+      "username": "Username",
+      "role": "Project role",
+      "remove": "Remove member",
+      "empty": "No project members",
+      "saved": "Member role saved",
+      "removed": "Member removed"
+    },
     "avatar": {
       "heading": "Project avatar",
       "description": "Crop the image in your browser; only the final WebP avatar reaches the server.",

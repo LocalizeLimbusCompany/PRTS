@@ -8,6 +8,7 @@ import appSource from '@/App.vue?raw'
 import authStoreSource from '@/stores/auth.ts?raw'
 import adminSource from '@/views/AdminView.vue?raw'
 import profileSource from '@/views/ProfileView.vue?raw'
+import projectManageSource from '@/views/project/ProjectManageView.vue?raw'
 
 import { hasPlatformCapability, hasProjectCapability } from './capabilities'
 
@@ -20,6 +21,7 @@ describe('hasProjectCapability', () => {
           view_project: true,
           manage_project: false,
           manage_members: false,
+          member_assignable_roles: [],
           upload_files: false,
           view_file_history: true,
           rollback_file_history: false,
@@ -139,5 +141,27 @@ describe('stage 7.1 admin users and password reminder contracts', () => {
         ((en as Record<string, unknown>).profile as Record<string, unknown>)?.password ?? {},
       ).sort(),
     )
+  })
+})
+
+describe('stage 7.2 project membership authorization contracts', () => {
+  it('renders membership controls exclusively from per-target capabilities', () => {
+    for (const required of [
+      'MemberCapabilities',
+      'assignable_roles',
+      'can_change_role',
+      'can_remove',
+    ]) {
+      expect(apiTypesSource).toContain(required)
+    }
+    expect(projectManageSource).toContain('projectsApi.members')
+    expect(projectManageSource).toContain('projectsApi.addMember')
+    expect(projectManageSource).toContain('projectsApi.removeMember')
+    expect(projectManageSource).toContain('member.capabilities.can_change_role')
+    expect(projectManageSource).toContain('member.capabilities.can_remove')
+    expect(projectManageSource).toContain('detail?.capabilities.member_assignable_roles')
+    expect(projectManageSource).not.toContain("member.role === 'owner'")
+    expect(projectManageSource).not.toContain("member.role === 'manager'")
+    expect(projectManageSource).not.toContain('auth.role ===')
   })
 })

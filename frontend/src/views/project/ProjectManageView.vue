@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { apiErrorMessage, projectsApi } from '@/api'
+import { apiErrorMessage, projectsApi, type MemberDto } from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import AvatarCropDialog from '@/components/project/AvatarCropDialog.vue'
 import LegacyProjectControls from '@/components/project/LegacyProjectControls.vue'
@@ -12,6 +12,7 @@ import LanguageResolutionDialog from '@/components/project/LanguageResolutionDia
 import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import { useJobProgress } from '@/composables/useJobProgress'
 import { hasProjectCapability } from '@/lib/capabilities'
+import { ROLE_LABELS, roleLabel } from '@/lib/states'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
 
 const { detail, projectId, reload } = useProjectWorkspace()
@@ -26,6 +27,11 @@ const languageForm = ref({ source_langs: [] as string[], primary_source_lang: ''
 const avatarFile = ref<File | null>(null)
 const showAvatarCrop = ref(false)
 const changingAvatar = ref(false)
+const members = ref<MemberDto[]>([])
+const loadingMembers = ref(false)
+const showAddMember = ref(false)
+const savingMember = ref<number | 'new' | null>(null)
+const newMember = ref({ username: '', role: '' })
 
 const lexicalJobId = computed(() => detail.value?.project.lexical_job_id)
 const embeddingJobId = computed(() => detail.value?.project.embedding_job_id)
@@ -140,13 +146,77 @@ async function deleteAvatar() {
     changingAvatar.value = false
   }
 }
+
+/** Refresh server-authored per-target membership capabilities. */
+async function loadMembers() {
+  loadingMembers.value = true
+  try {
+    members.value = await projectsApi.members(projectId.value)
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    loadingMembers.value = false
+  }
+}
+
+function openAddMember() {
+  const firstRole = detail.value?.capabilities.member_assignable_roles[0]
+  if (!firstRole) return
+  newMember.value = { username: '', role: firstRole }
+  showAddMember.value = true
+}
+
+async function addMember() {
+  if (!newMember.value.username.trim() || !newMember.value.role) return
+  savingMember.value = 'new'
+  try {
+    await projectsApi.addMember(projectId.value, {
+      username: newMember.value.username.trim(),
+      role: newMember.value.role,
+    })
+    showAddMember.value = false
+    await loadMembers()
+    $q.notify({ type: 'positive', message: t('project.members.saved') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    savingMember.value = null
+  }
+}
+
+async function changeMemberRole(member: MemberDto, role: string) {
+  savingMember.value = member.user_id
+  try {
+    await projectsApi.addMember(projectId.value, { username: member.username, role })
+    await loadMembers()
+    $q.notify({ type: 'positive', message: t('project.members.saved') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    savingMember.value = null
+  }
+}
+
+async function removeMember(member: MemberDto) {
+  savingMember.value = member.user_id
+  try {
+    await projectsApi.removeMember(projectId.value, member.user_id)
+    await loadMembers()
+    $q.notify({ type: 'positive', message: t('project.members.removed') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    savingMember.value = null
+  }
+}
+
+onMounted(() => {
+  void loadMembers()
+})
 </script>
 
 <template>
-  <section
-    v-if="hasProjectCapability(detail?.capabilities, 'manage_project')"
-    class="manage-view"
-  >
+  <section v-if="hasProjectCapability(detail?.capabilities, 'manage_project')" class="manage-view">
     <div>
       <div class="prts-label">{{ $t('project.sections.manage') }}</div>
       <h2>{{ $t('project.manage.heading') }}</h2>
@@ -358,17 +428,124 @@ async function deleteAvatar() {
       </q-card-section>
     </q-card>
 
+    <q-card flat bordered>
+      <q-card-section class="row items-center">
+        <div>
+          <div class="prts-label">{{ $t('project.members.heading') }}</div>
+          <div class="prts-dim q-mt-xs">
+            {{ $t('project.members.count', { count: members.length }) }}
+          </div>
+        </div>
+        <q-space />
+        <q-btn
+          v-if="detail?.capabilities.member_assignable_roles.length"
+          flat
+          no-caps
+          icon="mdi-account-plus-outline"
+          :label="$t('project.members.add')"
+          @click="openAddMember"
+        />
+      </q-card-section>
+      <q-separator />
+      <q-list separator>
+        <q-item v-for="member in members" :key="member.user_id">
+          <q-item-section avatar>
+            <q-avatar square size="34px" color="primary" text-color="dark">
+              <img v-if="member.avatar_url" :src="member.avatar_url" alt="" />
+              <span v-else>{{ member.username.slice(0, 2).toUpperCase() }}</span>
+            </q-avatar>
+          </q-item-section>
+          <q-item-section>
+            <q-item-label>{{ member.username }}</q-item-label>
+            <q-item-label caption>{{ roleLabel(member.role) }}</q-item-label>
+          </q-item-section>
+          <q-item-section side>
+            <div class="row items-center no-wrap q-gutter-sm">
+              <q-select
+                v-if="member.capabilities.can_change_role"
+                :model-value="member.role"
+                dense
+                outlined
+                emit-value
+                map-options
+                :options="
+                  member.capabilities.assignable_roles.map((role) => ({
+                    value: role,
+                    label: ROLE_LABELS[role] ?? role,
+                  }))
+                "
+                :loading="savingMember === member.user_id"
+                :label="$t('project.members.role')"
+                @update:model-value="changeMemberRole(member, $event)"
+              />
+              <q-btn
+                v-if="member.capabilities.can_remove"
+                flat
+                round
+                dense
+                color="negative"
+                icon="mdi-account-remove-outline"
+                :loading="savingMember === member.user_id"
+                :aria-label="$t('project.members.remove')"
+                @click="removeMember(member)"
+              />
+            </div>
+          </q-item-section>
+        </q-item>
+        <q-item v-if="!loadingMembers && !members.length">
+          <q-item-section class="prts-dim">{{ $t('project.members.empty') }}</q-item-section>
+        </q-item>
+      </q-list>
+    </q-card>
+
     <LegacyProjectControls />
     <LanguageResolutionDialog
       v-model="showResolution"
       :project-id="projectId"
       @resolved="resolvedLanguages"
     />
-    <AvatarCropDialog
-      v-model="showAvatarCrop"
-      :file="avatarFile"
-      @cropped="uploadAvatar"
-    />
+    <AvatarCropDialog v-model="showAvatarCrop" :file="avatarFile" @cropped="uploadAvatar" />
+    <q-dialog v-model="showAddMember">
+      <q-card style="width: 420px; max-width: 92vw">
+        <q-card-section
+          ><div class="prts-h2">{{ $t('project.members.add') }}</div></q-card-section
+        >
+        <q-card-section class="column q-gutter-md">
+          <q-input
+            v-model="newMember.username"
+            dense
+            outlined
+            :label="$t('project.members.username')"
+          />
+          <q-select
+            v-model="newMember.role"
+            dense
+            outlined
+            emit-value
+            map-options
+            :options="
+              detail?.capabilities.member_assignable_roles.map((role) => ({
+                value: role,
+                label: ROLE_LABELS[role] ?? role,
+              })) ?? []
+            "
+            :label="$t('project.members.role')"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn v-close-popup flat no-caps :label="$t('project.cancel')" />
+          <q-btn
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            :label="$t('project.save')"
+            :loading="savingMember === 'new'"
+            @click="addMember"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </section>
 </template>
 

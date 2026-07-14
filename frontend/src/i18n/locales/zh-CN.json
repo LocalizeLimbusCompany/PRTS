@@ -238,6 +238,17 @@
       "languageNotice": "语言设置由专用流程管理；项目产生词条后目标语言不可更改。",
       "saved": "项目设置已保存"
     },
+    "members": {
+      "heading": "项目成员",
+      "count": "共 {count} 人",
+      "add": "添加成员",
+      "username": "用户名",
+      "role": "项目角色",
+      "remove": "移除成员",
+      "empty": "暂无项目成员",
+      "saved": "成员角色已保存",
+      "removed": "成员已移除"
+    },
     "avatar": {
       "heading": "项目头像",
       "description": "选择图片后在浏览器内裁剪；服务器只接收最终的 WebP 头像。",

@@ -30,11 +30,12 @@ impl PlatformCapabilitiesDto {
 }
 
 /// 当前主体在项目中的显式能力。
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ProjectCapabilitiesDto {
     pub view_project: bool,
     pub manage_project: bool,
     pub manage_members: bool,
+    pub member_assignable_roles: Vec<String>,
     pub upload_files: bool,
     pub view_file_history: bool,
     pub rollback_file_history: bool,
@@ -59,6 +60,11 @@ impl From<prts_core::capabilities::ProjectCapabilities> for ProjectCapabilitiesD
             view_project: value.view_project,
             manage_project: value.manage_project,
             manage_members: value.manage_members,
+            member_assignable_roles: value
+                .member_assignable_roles
+                .iter()
+                .map(|role| (*role).to_string())
+                .collect(),
             upload_files: value.upload_files,
             view_file_history: value.view_file_history,
             rollback_file_history: value.rollback_file_history,

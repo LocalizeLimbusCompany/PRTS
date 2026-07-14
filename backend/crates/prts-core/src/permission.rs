@@ -95,6 +95,103 @@ pub enum ProjectRole {
     Translator,
 }
 
+/// 项目成员关系允许的变更种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MembershipMutation {
+    /// 新增成员或修改既有成员角色。
+    Upsert,
+    /// 移除既有成员。
+    Remove,
+}
+
+/// 项目成员授权的封闭判定结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MembershipDecision {
+    /// 允许执行变更。
+    Allow,
+    /// 请求直接授予 owner；本阶段不提供 owner transfer。
+    OwnerTransferForbidden,
+    /// actor 没有管理该目标或角色的权限。
+    Forbidden,
+    /// remove 的目标不是当前项目成员。
+    TargetNotFound,
+}
+
+/// 事务内项目成员授权真值。
+///
+/// `project_owner_id` 始终优先于 membership 字符串，确保平台跨项目管理能力也不能修改或
+/// 移除唯一 owner。owner 可管理全部非 owner 角色；manager 只能管理 reviewer/translator；
+/// 平台 manage-all 能力按 owner 的非 owner 范围处理。
+#[allow(clippy::too_many_arguments)]
+pub fn authorize_membership_mutation(
+    mutation: MembershipMutation,
+    project_owner_id: i64,
+    actor_id: i64,
+    actor_membership: Option<ProjectRole>,
+    actor_can_manage_all_projects: bool,
+    target_id: i64,
+    target_membership: Option<ProjectRole>,
+    requested_role: Option<ProjectRole>,
+) -> MembershipDecision {
+    if requested_role == Some(ProjectRole::Owner) {
+        return MembershipDecision::OwnerTransferForbidden;
+    }
+    if mutation == MembershipMutation::Remove && target_membership.is_none() {
+        return MembershipDecision::TargetNotFound;
+    }
+    if target_id == project_owner_id || target_membership == Some(ProjectRole::Owner) {
+        return MembershipDecision::Forbidden;
+    }
+
+    let actor_scope = if actor_id == project_owner_id || actor_can_manage_all_projects {
+        Some(ProjectRole::Owner)
+    } else if actor_membership == Some(ProjectRole::Owner) {
+        None
+    } else {
+        actor_membership
+    };
+    match actor_scope {
+        Some(ProjectRole::Owner) => MembershipDecision::Allow,
+        Some(ProjectRole::Manager)
+            if target_membership != Some(ProjectRole::Manager)
+                && requested_role != Some(ProjectRole::Manager) =>
+        {
+            MembershipDecision::Allow
+        }
+        _ => MembershipDecision::Forbidden,
+    }
+}
+
+/// 当前 actor 可授予的项目角色；前端只消费服务端下发值。
+pub fn assignable_project_roles(
+    project_owner_id: i64,
+    actor_id: i64,
+    actor_membership: Option<ProjectRole>,
+    actor_can_manage_all_projects: bool,
+) -> &'static [&'static str] {
+    let actor_scope = if actor_id == project_owner_id || actor_can_manage_all_projects {
+        Some(ProjectRole::Owner)
+    } else if actor_membership == Some(ProjectRole::Owner) {
+        None
+    } else {
+        actor_membership
+    };
+    assignable_project_roles_for_scope(actor_scope)
+}
+
+/// 从服务端已验证的有效项目角色生成可授角色。
+pub fn assignable_project_roles_for_scope(
+    actor_scope: Option<ProjectRole>,
+) -> &'static [&'static str] {
+    if actor_scope == Some(ProjectRole::Owner) {
+        &["manager", "reviewer", "translator"]
+    } else if actor_scope == Some(ProjectRole::Manager) {
+        &["reviewer", "translator"]
+    } else {
+        &[]
+    }
+}
+
 impl PlatformRole {
     /// 解析数据库中的字符串标识。
     pub fn parse(s: &str) -> Option<Self> {
@@ -323,6 +420,71 @@ mod tests {
         // 其余管理能力两者相同
         assert!(ProjectRole::Manager.has(PROJECT_MANAGE));
         assert!(ProjectRole::Manager.has(PROJECT_MEMBER_MANAGE));
+    }
+
+    #[test]
+    fn membership_rule_enforces_owner_and_manager_boundaries() {
+        let decide = |actor_id, actor_role, manage_all, target_id, target_role, requested_role| {
+            authorize_membership_mutation(
+                MembershipMutation::Upsert,
+                1,
+                actor_id,
+                actor_role,
+                manage_all,
+                target_id,
+                target_role,
+                requested_role,
+            )
+        };
+        for role in [
+            ProjectRole::Manager,
+            ProjectRole::Reviewer,
+            ProjectRole::Translator,
+        ] {
+            assert_eq!(
+                decide(1, Some(ProjectRole::Owner), false, 4, None, Some(role)),
+                MembershipDecision::Allow
+            );
+        }
+        for role in [ProjectRole::Reviewer, ProjectRole::Translator] {
+            assert_eq!(
+                decide(2, Some(ProjectRole::Manager), false, 4, None, Some(role)),
+                MembershipDecision::Allow
+            );
+        }
+        assert_eq!(
+            decide(
+                2,
+                Some(ProjectRole::Manager),
+                false,
+                3,
+                Some(ProjectRole::Manager),
+                Some(ProjectRole::Reviewer)
+            ),
+            MembershipDecision::Forbidden
+        );
+        assert_eq!(
+            decide(
+                9,
+                None,
+                true,
+                1,
+                Some(ProjectRole::Owner),
+                Some(ProjectRole::Reviewer)
+            ),
+            MembershipDecision::Forbidden
+        );
+        assert_eq!(
+            decide(
+                1,
+                Some(ProjectRole::Owner),
+                false,
+                4,
+                None,
+                Some(ProjectRole::Owner)
+            ),
+            MembershipDecision::OwnerTransferForbidden
+        );
     }
 
     #[test]

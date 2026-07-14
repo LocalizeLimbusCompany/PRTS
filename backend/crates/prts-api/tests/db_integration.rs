@@ -1787,6 +1787,7 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
             .expect("项目 mutation 必须先锁项目");
         let reauthorization = body
             .find("paccess::load_locked_tx")
+            .or_else(|| body.find("authorize_membership_mutation"))
             .expect("项目 mutation 必须在锁后重验权限");
         let business_write = body.find(writer).expect("项目 mutation 业务 writer 存在");
         assert!(project_lock < reauthorization);
@@ -15573,4 +15574,350 @@ async fn stage7_create_and_password_change_audit_failures_roll_back_atomically()
             .unwrap();
     assert_eq!(unchanged.0, old_hash, "改密 audit 失败必须回滚 hash");
     assert!(unchanged.1, "改密 audit 失败必须保留持久提醒");
+}
+
+// ======================== Task 7.2 membership authorization RED contracts ========================
+
+/// 成员授权矩阵必须是 prts-core typed truth；route 只能在锁内读取 project/actor/target 后
+/// 应用 rule，不能用 platform override 或散落字符串比较实现 owner transfer。
+#[test]
+fn stage7_membership_typed_rule_transaction_and_capability_sources_exist() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let permission =
+        std::fs::read_to_string(root.join("backend/crates/prts-core/src/permission.rs")).unwrap();
+    for required in [
+        "pub enum MembershipMutation",
+        "pub enum MembershipDecision",
+        "authorize_membership_mutation",
+        "project_owner_id",
+        "actor_membership",
+        "target_membership",
+        "requested_role",
+        "OwnerTransferForbidden",
+    ] {
+        assert!(
+            permission.contains(required),
+            "项目成员 typed rule 缺少 {required}"
+        );
+    }
+
+    let route =
+        std::fs::read_to_string(root.join("backend/crates/prts-api/src/routes/projects.rs"))
+            .unwrap();
+    for function in ["pub async fn add_member(", "pub async fn remove_member("] {
+        let body = route.split_once(function).unwrap().1;
+        let project_lock = body
+            .find("projects::find_by_id_for_update_tx")
+            .expect("成员 mutation 必须锁定 project.owner_id");
+        let actor_membership = body
+            .find("memberships::find_role_tx")
+            .expect("成员 mutation 必须锁内读取 actor membership");
+        let target_membership = body[actor_membership + 1..]
+            .find("memberships::find_role_tx")
+            .map(|offset| offset + actor_membership + 1)
+            .expect("成员 mutation 必须锁内读取 target membership");
+        let rule = body
+            .find("authorize_membership_mutation")
+            .expect("成员 mutation 必须调用 typed rule");
+        let writer = body
+            .find(if function.contains("add_member") {
+                "memberships::upsert_tx"
+            } else {
+                "memberships::remove_tx"
+            })
+            .expect("成员业务 writer 存在");
+        assert!(project_lock < actor_membership);
+        assert!(actor_membership < target_membership);
+        assert!(target_membership < rule && rule < writer);
+    }
+    for required in [
+        "MemberCapabilitiesDto",
+        "assignable_roles",
+        "can_change_role",
+        "can_remove",
+    ] {
+        assert!(
+            route.contains(required),
+            "成员 capability DTO 缺少 {required}"
+        );
+    }
+}
+
+async fn stage7_project_with_members(
+    state: &state::AppState,
+) -> (
+    prts_db::models::Project,
+    prts_db::models::User,
+    prts_db::models::User,
+    prts_db::models::User,
+    prts_db::models::User,
+) {
+    let owner = audit_contract_create_user(&state.db, "member-owner", Some("maintainer")).await;
+    let manager = audit_contract_create_user(&state.db, "member-manager", None).await;
+    let reviewer = audit_contract_create_user(&state.db, "member-reviewer", None).await;
+    let translator = audit_contract_create_user(&state.db, "member-translator", None).await;
+    let project = projects::create(
+        &state.db,
+        &format!("member-matrix-{}", owner.id),
+        "Member matrix",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&state.db, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert(&state.db, project.id, manager.id, "manager")
+        .await
+        .unwrap();
+    memberships::upsert(&state.db, project.id, reviewer.id, "reviewer")
+        .await
+        .unwrap();
+    memberships::upsert(&state.db, project.id, translator.id, "translator")
+        .await
+        .unwrap();
+    (project, owner, manager, reviewer, translator)
+}
+
+/// owner 可授 manager/reviewer/translator；manager 只能授 reviewer/translator，且不能
+/// 修改/移除 manager。owner_id 对应成员在任何主体（含平台管理员）下都不可变。
+#[tokio::test]
+async fn stage7_membership_authorization_matrix_and_owner_binding_fail_closed() {
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let (project, owner, manager, reviewer, translator) = stage7_project_with_members(&state).await;
+    let outsider = audit_contract_create_user(&state.db, "member-outsider", None).await;
+    let platform_admin =
+        audit_contract_create_user(&state.db, "member-platform-admin", Some("super_admin")).await;
+
+    for role in ["manager", "reviewer", "translator"] {
+        projects_routes::add_member(
+            State(state.clone()),
+            audit_contract_current_user(&owner),
+            Path(project.id),
+            Json(projects_routes::AddMemberReq {
+                username: outsider.username.clone(),
+                role: role.to_string(),
+            }),
+        )
+        .await
+        .expect_api("owner 可授所有非 owner 项目角色");
+    }
+    for role in ["reviewer", "translator"] {
+        projects_routes::add_member(
+            State(state.clone()),
+            audit_contract_current_user(&manager),
+            Path(project.id),
+            Json(projects_routes::AddMemberReq {
+                username: outsider.username.clone(),
+                role: role.to_string(),
+            }),
+        )
+        .await
+        .expect_api("manager 可授 reviewer/translator");
+    }
+
+    let owner_input = projects_routes::add_member(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: outsider.username.clone(),
+            role: "owner".to_string(),
+        }),
+    )
+    .await
+    .expect_err_api("任何 owner 角色输入都必须拒绝");
+    assert_eq!(
+        owner_input.into_response().status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+
+    for denied in [
+        projects_routes::add_member(
+            State(state.clone()),
+            audit_contract_current_user(&manager),
+            Path(project.id),
+            Json(projects_routes::AddMemberReq {
+                username: manager.username.clone(),
+                role: "reviewer".to_string(),
+            }),
+        )
+        .await,
+        projects_routes::add_member(
+            State(state.clone()),
+            audit_contract_current_user(&manager),
+            Path(project.id),
+            Json(projects_routes::AddMemberReq {
+                username: reviewer.username.clone(),
+                role: "manager".to_string(),
+            }),
+        )
+        .await,
+        projects_routes::add_member(
+            State(state.clone()),
+            audit_contract_current_user(&platform_admin),
+            Path(project.id),
+            Json(projects_routes::AddMemberReq {
+                username: owner.username.clone(),
+                role: "reviewer".to_string(),
+            }),
+        )
+        .await,
+    ] {
+        assert_eq!(
+            denied
+                .expect_err_api("越权成员修改必须拒绝")
+                .into_response()
+                .status(),
+            axum::http::StatusCode::FORBIDDEN
+        );
+    }
+
+    for (actor, target) in [(&manager, &manager), (&platform_admin, &owner)] {
+        let denied = projects_routes::remove_member(
+            State(state.clone()),
+            audit_contract_current_user(actor),
+            Path((project.id, target.id)),
+        )
+        .await
+        .expect_err_api("受保护成员不得移除");
+        assert_eq!(
+            denied.into_response().status(),
+            axum::http::StatusCode::FORBIDDEN
+        );
+    }
+    projects_routes::remove_member(
+        State(state.clone()),
+        audit_contract_current_user(&manager),
+        Path((project.id, reviewer.id)),
+    )
+    .await
+    .expect_api("manager 可移除 reviewer/translator");
+    assert_eq!(
+        memberships::find_role(&state.db, project.id, owner.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("owner")
+    );
+    assert_eq!(
+        memberships::find_role(&state.db, project.id, manager.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("manager")
+    );
+    assert_eq!(
+        memberships::find_role(&state.db, project.id, reviewer.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        None
+    );
+    assert_eq!(
+        memberships::find_role(&state.db, project.id, translator.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("translator")
+    );
+}
+
+/// cross-project target/actor 不得借 user id 或 membership 绑定串项目；不存在目标稳定 404，
+/// 审计失败必须回滚成功矩阵中的业务写入。
+#[tokio::test]
+async fn stage7_membership_cross_project_binding_statuses_and_audit_rollback_are_stable() {
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let (project, owner, _manager, reviewer, _) = stage7_project_with_members(&state).await;
+    let other_owner =
+        audit_contract_create_user(&state.db, "member-other-owner", Some("maintainer")).await;
+    let other_project = projects::create(
+        &state.db,
+        &format!("member-other-{}", other_owner.id),
+        "Other",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        other_owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert(&state.db, other_project.id, other_owner.id, "owner")
+        .await
+        .unwrap();
+
+    let cross_actor = projects_routes::remove_member(
+        State(state.clone()),
+        audit_contract_current_user(&other_owner),
+        Path((project.id, reviewer.id)),
+    )
+    .await
+    .expect_err_api("其它项目 owner 不得管理本项目");
+    assert_eq!(
+        cross_actor.into_response().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+    let cross_target = projects_routes::remove_member(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, other_owner.id)),
+    )
+    .await
+    .expect_err_api("其它项目 membership 不得绑定为本项目目标");
+    assert_eq!(
+        cross_target.into_response().status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+    let missing = projects_routes::add_member(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: format!("missing-{}", project.id),
+            role: "translator".to_string(),
+        }),
+    )
+    .await
+    .expect_err_api("不存在用户稳定 404");
+    assert_eq!(
+        missing.into_response().status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let denied = projects_routes::add_member(
+        State(failing_state),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: reviewer.username.clone(),
+            role: "translator".to_string(),
+        }),
+    )
+    .await
+    .expect_err_api("audit failure 必须 fail closed");
+    assert_eq!(
+        denied.into_response().status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        memberships::find_role(&state.db, project.id, reviewer.id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("reviewer")
+    );
 }

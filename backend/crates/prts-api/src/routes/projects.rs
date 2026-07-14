@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use prts_common::Error;
-use prts_core::permission::nodes;
+use prts_core::permission::{
+    authorize_membership_mutation, nodes, MembershipDecision, MembershipMutation,
+};
 use prts_core::ProjectRole;
 use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 
@@ -635,11 +637,28 @@ pub struct MemberDto {
     pub avatar_url: Option<String>,
     pub role: String,
     pub created_at: String,
+    pub capabilities: MemberCapabilitiesDto,
+}
+
+/// 当前 actor 针对单个项目成员可执行的操作。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MemberCapabilitiesDto {
+    pub assignable_roles: Vec<String>,
+    pub can_change_role: bool,
+    pub can_remove: bool,
 }
 
 /// 列出项目成员。
-#[utoipa::path(get, path = "/projects/{id}/members", tag = "project",
-    responses((status = 200, body = [MemberDto]), (status = 404)))]
+#[utoipa::path(
+    get,
+    path = "/projects/{id}/members",
+    tag = "project",
+    description = "列出可见项目的成员，并为当前主体下发逐目标角色修改与移除 capability。前端不得从角色名称推导权限。",
+    responses(
+        (status = 200, description = "成员列表与逐目标 capability", body = [MemberDto]),
+        (status = 404, description = "项目不存在或对当前主体不可见", body = ErrorResponse)
+    )
+)]
 pub async fn list_members(
     State(state): State<AppState>,
     MaybeUser(user): MaybeUser,
@@ -650,18 +669,84 @@ pub async fn list_members(
     let members = prts_db::memberships::list(&state.db, id)
         .await
         .map_err(db_err)?;
+    let actor_id = user.as_ref().map(|actor| actor.id);
+    let actor_membership = match actor_id {
+        Some(actor_id) => prts_db::memberships::find_role(&state.db, id, actor_id)
+            .await
+            .map_err(db_err)?
+            .as_deref()
+            .and_then(ProjectRole::parse),
+        None => None,
+    };
+    let actor_can_manage_all_projects = user
+        .as_ref()
+        .is_some_and(|actor| actor.has_platform(nodes::PLATFORM_PROJECT_MANAGE_ALL));
+    let project_owner_id = access.project.owner_id;
     Ok(Json(
         members
             .into_iter()
-            .map(|m| MemberDto {
-                user_id: m.user_id,
-                username: m.username,
-                avatar_url: m.avatar_url,
-                role: m.role,
-                created_at: m.created_at.to_rfc3339(),
+            .map(|member| {
+                let target_membership = ProjectRole::parse(&member.role);
+                let assignable_roles = [
+                    ProjectRole::Manager,
+                    ProjectRole::Reviewer,
+                    ProjectRole::Translator,
+                ]
+                .into_iter()
+                .filter(|requested_role| {
+                    actor_id.is_some_and(|actor_id| {
+                        authorize_membership_mutation(
+                            MembershipMutation::Upsert,
+                            project_owner_id,
+                            actor_id,
+                            actor_membership,
+                            actor_can_manage_all_projects,
+                            member.user_id,
+                            target_membership,
+                            Some(*requested_role),
+                        ) == MembershipDecision::Allow
+                    })
+                })
+                .map(|role| role.as_str().to_string())
+                .collect::<Vec<_>>();
+                let can_remove = actor_id.is_some_and(|actor_id| {
+                    authorize_membership_mutation(
+                        MembershipMutation::Remove,
+                        project_owner_id,
+                        actor_id,
+                        actor_membership,
+                        actor_can_manage_all_projects,
+                        member.user_id,
+                        target_membership,
+                        None,
+                    ) == MembershipDecision::Allow
+                });
+                MemberDto {
+                    user_id: member.user_id,
+                    username: member.username,
+                    avatar_url: member.avatar_url,
+                    role: member.role,
+                    created_at: member.created_at.to_rfc3339(),
+                    capabilities: MemberCapabilitiesDto {
+                        can_change_role: !assignable_roles.is_empty(),
+                        assignable_roles,
+                        can_remove,
+                    },
+                }
             })
             .collect(),
     ))
+}
+
+fn membership_decision_error(decision: MembershipDecision) -> Result<(), ApiError> {
+    match decision {
+        MembershipDecision::Allow => Ok(()),
+        MembershipDecision::OwnerTransferForbidden => {
+            Err(Error::validation("PROJECT_OWNER_TRANSFER_FORBIDDEN").into())
+        }
+        MembershipDecision::Forbidden => Err(Error::Forbidden.into()),
+        MembershipDecision::TargetNotFound => Err(Error::NotFound.into()),
+    }
 }
 
 /// 添加/更新成员请求。
@@ -673,7 +758,9 @@ pub struct AddMemberReq {
 }
 
 /// 添加或更新项目成员。需项目「成员管理」权限。
-#[utoipa::path(post, path = "/projects/{id}/members", tag = "project", request_body = AddMemberReq,
+#[utoipa::path(post, path = "/projects/{id}/members", tag = "project",
+    description = "新增成员或更新其角色。事务内锁定项目并重新读取 actor、target 与唯一 owner，再应用 prts-core typed 授权矩阵并原子写入 allowlisted audit。",
+    request_body = AddMemberReq,
     responses(
         (status = 204),
         (status = 400),
@@ -689,26 +776,43 @@ pub async fn add_member(
 ) -> Result<StatusCode, ApiError> {
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_MEMBER_MANAGE)?;
-    if !matches!(req.role.as_str(), "manager" | "reviewer" | "translator") {
-        return Err(Error::bad_request("role 必须是 manager|reviewer|translator").into());
-    }
-    let target = prts_db::users::find_by_username(&state.db, req.username.trim())
-        .await
-        .map_err(db_err)?
-        .ok_or(Error::NotFound)?;
+    let requested_role = ProjectRole::parse(&req.role)
+        .ok_or_else(|| Error::validation("PROJECT_MEMBER_ROLE_INVALID"))?;
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    let locked_access = paccess::load_locked_tx(&mut tx, &user, project).await?;
-    locked_access.require_node(nodes::PROJECT_MEMBER_MANAGE)?;
-    if locked_access.effective_role() == Some(ProjectRole::Manager) && req.role == "manager" {
-        return Err(Error::Forbidden.into());
-    }
+    let actor = prts_db::users::find_by_id_for_update_tx(&mut tx, user.id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::Unauthorized)?;
+    let actor_membership = prts_db::memberships::find_role_tx(&mut tx, id, user.id)
+        .await
+        .map_err(db_err)?
+        .as_deref()
+        .and_then(ProjectRole::parse);
+    let target = prts_db::users::find_by_username_for_update_tx(&mut tx, req.username.trim())
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
     let previous_role = prts_db::memberships::find_role_tx(&mut tx, id, target.id)
         .await
         .map_err(db_err)?;
+    membership_decision_error(authorize_membership_mutation(
+        MembershipMutation::Upsert,
+        project.owner_id,
+        user.id,
+        actor_membership,
+        actor
+            .platform_role
+            .as_deref()
+            .and_then(prts_core::PlatformRole::parse)
+            .is_some_and(|role| role.has(nodes::PLATFORM_PROJECT_MANAGE_ALL)),
+        target.id,
+        previous_role.as_deref().and_then(ProjectRole::parse),
+        Some(requested_role),
+    ))?;
     prts_db::memberships::upsert_tx(&mut tx, id, target.id, &req.role)
         .await
         .map_err(db_err)?;
@@ -734,6 +838,7 @@ pub async fn add_member(
 
 /// 移除项目成员。需项目「成员管理」权限。不可移除最后一个拥有者。
 #[utoipa::path(delete, path = "/projects/{id}/members/{user_id}", tag = "project",
+    description = "移除非 owner 项目成员。事务内锁定项目并重新读取 actor、target 与角色，应用 prts-core typed 授权矩阵后与 allowlisted audit 原子提交。",
     responses(
         (status = 204),
         (status = 400),
@@ -755,22 +860,36 @@ pub async fn remove_member(
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    paccess::load_locked_tx(&mut tx, &user, project)
-        .await?
-        .require_node(nodes::PROJECT_MEMBER_MANAGE)?;
+    let actor = prts_db::users::find_by_id_for_update_tx(&mut tx, user.id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::Unauthorized)?;
+    let actor_membership = prts_db::memberships::find_role_tx(&mut tx, id, user.id)
+        .await
+        .map_err(db_err)?
+        .as_deref()
+        .and_then(ProjectRole::parse);
+    prts_db::users::find_by_id_for_update_tx(&mut tx, user_id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
     let previous_role = prts_db::memberships::find_role_tx(&mut tx, id, user_id)
         .await
         .map_err(db_err)?;
-    if let Some(role) = previous_role.as_deref() {
-        if role == "owner"
-            && prts_db::memberships::count_role_tx(&mut tx, id, "owner")
-                .await
-                .map_err(db_err)?
-                <= 1
-        {
-            return Err(Error::bad_request("不能移除最后一个拥有者").into());
-        }
-    }
+    membership_decision_error(authorize_membership_mutation(
+        MembershipMutation::Remove,
+        project.owner_id,
+        user.id,
+        actor_membership,
+        actor
+            .platform_role
+            .as_deref()
+            .and_then(prts_core::PlatformRole::parse)
+            .is_some_and(|role| role.has(nodes::PLATFORM_PROJECT_MANAGE_ALL)),
+        user_id,
+        previous_role.as_deref().and_then(ProjectRole::parse),
+        None,
+    ))?;
     let previous_role = previous_role.ok_or(Error::NotFound)?;
     if prts_db::memberships::remove_tx(&mut tx, id, user_id)
         .await

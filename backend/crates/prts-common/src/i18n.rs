@@ -73,6 +73,12 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("ADMIN_USER_CURSOR_INVALID", Locale::En) => {
             "Admin user cursor is invalid or does not match this request"
         }
+        ("PROJECT_MEMBER_ROLE_INVALID", Locale::ZhCn) => "项目成员角色无效",
+        ("PROJECT_MEMBER_ROLE_INVALID", Locale::En) => "Invalid project member role",
+        ("PROJECT_OWNER_TRANSFER_FORBIDDEN", Locale::ZhCn) => "不能通过成员管理变更项目拥有者",
+        ("PROJECT_OWNER_TRANSFER_FORBIDDEN", Locale::En) => {
+            "Project ownership cannot be changed through membership management"
+        }
         ("PROJECT_SEARCH_REBUILDING", Locale::ZhCn) => "项目词法搜索正在重建",
         ("PROJECT_SEARCH_REBUILDING", Locale::En) => "Project lexical search is rebuilding",
         ("PROJECT_SEARCH_FAILED", Locale::ZhCn) => "项目词法搜索重建失败",
