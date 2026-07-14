@@ -187,6 +187,16 @@ function Test-ScaleRecoverySecurityContracts {
     Assert-Contains 'backend/crates/prts-api/src/auth/project.rs' 'deletion_scheduled_at' 'Pending-deletion access is enforced by the shared project guard'
 }
 
+function Test-ReleaseCompatibilityContracts {
+    Assert-Contains 'backend/crates/prts-api/src/routes/entries.rs' 'compatibility_endpoint = "legacy_upload"' 'Legacy upload emits a stable compatibility usage event'
+    Assert-Contains 'backend/crates/prts-api/src/routes/search.rs' 'compatibility_endpoint = "legacy_get_search"' 'Legacy GET search emits a stable compatibility usage event'
+    Assert-Contains '.github/workflows/ci.yml' 'verify-project-workspace.ps1' 'CI runs the workspace contract verifier'
+    Assert-Contains 'deploy/nginx/default.conf' 'client_max_body_size 100m;' 'nginx accepts the documented per-file upload ceiling'
+    Assert-Contains 'deploy/nginx/default.conf' 'proxy_request_buffering off;' 'nginx streams API request bodies to the backend'
+    Assert-Contains 'deploy/docker-compose.yml' 'condition: service_healthy' 'Compose gates dependent services on health checks'
+    Assert-Contains 'deploy/docker-compose.yml' 'curl -fsS http://localhost:3000/health/ready' 'Compose verifies backend dependency readiness'
+}
+
 function Invoke-Checked([string]$Label, [scriptblock]$Command) {
     Write-Host "[RUN ] $Label" -ForegroundColor Cyan
     & $Command
@@ -198,6 +208,7 @@ Test-PlanPaths
 Test-ConflictKeywords
 Test-Contracts
 Test-ScaleRecoverySecurityContracts
+Test-ReleaseCompatibilityContracts
 
 if ($IncludeDatabaseChecks) {
     Push-Location backend

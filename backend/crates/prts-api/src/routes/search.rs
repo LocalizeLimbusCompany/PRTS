@@ -225,6 +225,11 @@ pub async fn search_entries(
     Path(project_id): Path<i64>,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, ApiError> {
+    tracing::info!(
+        compatibility_endpoint = "legacy_get_search",
+        project_id,
+        "deprecated compatibility endpoint used"
+    );
     let states = super::parse_states(query.state.as_deref())
         .into_iter()
         .filter_map(|state| prts_core::EntryState::parse(&state))

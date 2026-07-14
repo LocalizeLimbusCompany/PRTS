@@ -71,6 +71,11 @@ pub async fn upload(
     Path(id): Path<i64>,
     Json(req): Json<UploadReq>,
 ) -> Result<Json<UploadResult>, ApiError> {
+    tracing::info!(
+        compatibility_endpoint = "legacy_upload",
+        project_id = id,
+        "deprecated compatibility endpoint used"
+    );
     let access = paccess::load(&state, Some(&user), id).await?;
     access.require_node(nodes::PROJECT_FILE_UPLOAD)?;
     access.require_language_ready()?;

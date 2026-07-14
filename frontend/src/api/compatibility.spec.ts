@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { http, searchApi, type StructuredSearchRequest } from '@/api'
 import { uploadsApi } from '@/api/uploads'
+import apiSource from '@/api/index.ts?raw'
 import editorSource from '@/views/EditorView.vue?raw'
 import projectFilesSource from '@/views/project/ProjectFilesView.vue?raw'
 
@@ -46,5 +47,6 @@ describe('project workspace compatibility handoff', () => {
     })
     expect(projectFilesSource).toContain('UploadBatchDialog')
     expect(projectFilesSource).not.toContain('entriesApi.upload')
+    expect(apiSource).not.toContain('`/projects/${id}/upload`')
   })
 })

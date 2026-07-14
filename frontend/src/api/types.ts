@@ -234,13 +234,6 @@ export interface EntryVersionDto {
   created_at: string
 }
 
-export interface UploadResult {
-  file_id: number
-  created: number
-  updated: number
-  unchanged: number
-}
-
 /** 服务端下发的上传运行时限制；上传客户端不得复制这些默认值。 */
 export interface UploadConfigDto {
   max_files_per_batch: number

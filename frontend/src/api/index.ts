@@ -28,7 +28,6 @@ import type {
   SuggestionDto,
   TokenResponse,
   CreateAdminUserRequest,
-  UploadResult,
   UserDto,
 } from './types'
 
@@ -244,9 +243,6 @@ export const fileHistoryApi = {
 
 /** 上传与词条。 */
 export const entriesApi = {
-  upload(id: number, body: { path: string; entries: Array<Record<string, unknown>> }) {
-    return http.post<UploadResult>(`/projects/${id}/upload`, body).then((r) => r.data)
-  },
   list(
     id: number,
     params: {
