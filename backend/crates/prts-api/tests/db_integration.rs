@@ -2451,7 +2451,6 @@ fn audit_contract_upload_req(
             .map(|(key, original)| entries_routes::UploadEntryDto {
                 key: (*key).to_string(),
                 original: serde_json::json!({"en": original}),
-                context: None,
                 translation: None,
                 state: None,
             })
@@ -4092,7 +4091,6 @@ async fn audit_contract_ordinary_reads_do_not_append_audit_rows() {
         &[entries::UploadEntry {
             key: "read-key".to_string(),
             original: serde_json::json!({"en": "read fixture"}),
-            context: None,
             translation: None,
             state: None,
         }],
@@ -4981,7 +4979,6 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
     let original_marker = "FULL_ORIGINAL_SOURCE_TEXT_MUST_NOT_ENTER_AUDIT";
     let seeded_translation_marker = "FULL_SEEDED_TRANSLATION_MUST_NOT_ENTER_AUDIT";
     let updated_translation_marker = "FULL_UPDATED_TRANSLATION_MUST_NOT_ENTER_AUDIT";
-    let context_marker = "FULL_ENTRY_CONTEXT_MUST_NOT_ENTER_AUDIT";
     let description_marker = "FULL_PROJECT_DESCRIPTION_MUST_NOT_ENTER_AUDIT";
     let slug = format!("audit-project-{}", actor.id);
 
@@ -5022,7 +5019,6 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             entries: vec![entries_routes::UploadEntryDto {
                 key: "audit-key".to_string(),
                 original: serde_json::json!({"en": original_marker}),
-                context: Some(context_marker.to_string()),
                 translation: Some(seeded_translation_marker.to_string()),
                 state: Some("translated".to_string()),
             }],
@@ -5089,7 +5085,6 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             entries: vec![entries_routes::UploadEntryDto {
                 key: "delete-file-key".to_string(),
                 original: serde_json::json!({"en": original_marker}),
-                context: None,
                 translation: None,
                 state: None,
             }],
@@ -5114,7 +5109,6 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             entries: vec![entries_routes::UploadEntryDto {
                 key: "delete-folder-key".to_string(),
                 original: serde_json::json!({"en": original_marker}),
-                context: None,
                 translation: None,
                 state: None,
             }],
@@ -5222,7 +5216,6 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             original_marker,
             seeded_translation_marker,
             updated_translation_marker,
-            context_marker,
             description_marker,
         ],
     );
@@ -8472,14 +8465,12 @@ async fn projects_files_entries_roundtrip() {
         entries::UploadEntry {
             key: "k1".to_string(),
             original: serde_json::json!({ "en": "Hello", "ja": "こんにちは" }),
-            context: Some("greeting".to_string()),
             translation: None,
             state: None,
         },
         entries::UploadEntry {
             key: "k2".to_string(),
             original: serde_json::json!({ "en": "Bye" }),
-            context: None,
             translation: None,
             state: None,
         },
@@ -8530,7 +8521,6 @@ async fn projects_files_entries_roundtrip() {
     let reupload = vec![entries::UploadEntry {
         key: "k1".to_string(),
         original: serde_json::json!({ "en": "Hello!", "ja": "こんにちは" }),
-        context: None,
         translation: None,
         state: None,
     }];
@@ -8612,7 +8602,6 @@ async fn migration_0004_trigger_populates_source_text_and_zhparser_tsv() {
     let batch = vec![entries::UploadEntry {
         key: "zh_test_key".to_string(),
         original: serde_json::json!({ "zh-Hans": "今天天气很好" }),
-        context: None,
         translation: Some("nice weather".to_string()),
         state: Some("translated".to_string()),
     }];
@@ -8696,14 +8685,12 @@ async fn search_trgm_and_fts_recall() {
         entries::UploadEntry {
             key: "w1".to_string(),
             original: serde_json::json!({ "zh-Hans": "今天天气不错" }),
-            context: None,
             translation: Some("nice weather today".to_string()),
             state: Some("translated".to_string()),
         },
         entries::UploadEntry {
             key: "w2".to_string(),
             original: serde_json::json!({ "zh-Hans": "完全无关的内容" }),
-            context: None,
             translation: Some("completely unrelated".to_string()),
             state: Some("translated".to_string()),
         },
@@ -8814,14 +8801,12 @@ async fn search_orchestrator_returns_ranked_hits() {
         entries::UploadEntry {
             key: "orch1".to_string(),
             original: serde_json::json!({ "zh-Hans": "明日之后" }),
-            context: None,
             translation: Some("state of survival".to_string()),
             state: Some("translated".to_string()),
         },
         entries::UploadEntry {
             key: "orch2".to_string(),
             original: serde_json::json!({ "zh-Hans": "完全不相关词条" }),
-            context: None,
             translation: Some("completely irrelevant entry".to_string()),
             state: Some("translated".to_string()),
         },
@@ -8939,14 +8924,12 @@ async fn vector_search_returns_nearest_first() {
         entries::UploadEntry {
             key: "va".to_string(),
             original: serde_json::json!({ "en": "vector entry A" }),
-            context: None,
             translation: None,
             state: None,
         },
         entries::UploadEntry {
             key: "vb".to_string(),
             original: serde_json::json!({ "en": "vector entry B" }),
-            context: None,
             translation: None,
             state: None,
         },
@@ -9283,7 +9266,6 @@ async fn suggestions_trgm_membership_scoped() {
         vec![entries::UploadEntry {
             key: key.to_string(),
             original: serde_json::json!({ "zh-Hans": "今天天气晴朗" }),
-            context: None,
             translation: Some("the weather is sunny today".to_string()),
             state: Some("translated".to_string()),
         }]
@@ -9950,14 +9932,12 @@ async fn file_history_rollback_materializes_target_and_appends_versions() {
                 entries_routes::UploadEntryDto {
                     key: "one".to_string(),
                     original: serde_json::json!({"en":"One v1"}),
-                    context: None,
                     translation: Some("译文一".to_string()),
                     state: Some("translated".to_string()),
                 },
                 entries_routes::UploadEntryDto {
                     key: "two".to_string(),
                     original: serde_json::json!({"en":"Two"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
@@ -9992,14 +9972,12 @@ async fn file_history_rollback_materializes_target_and_appends_versions() {
                 entries_routes::UploadEntryDto {
                     key: "one".to_string(),
                     original: serde_json::json!({"en":"One v2"}),
-                    context: None,
                     translation: Some("不得覆盖".to_string()),
                     state: Some("reviewed".to_string()),
                 },
                 entries_routes::UploadEntryDto {
                     key: "three".to_string(),
                     original: serde_json::json!({"en":"Three"}),
-                    context: None,
                     translation: Some("译文三".to_string()),
                     state: Some("translated".to_string()),
                 },
@@ -10833,21 +10811,18 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
                 entries_routes::UploadEntryDto {
                     key: "baseline".to_string(),
                     original: serde_json::json!({"en":"Baseline"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "already_done".to_string(),
                     original: serde_json::json!({"en":"Already done"}),
-                    context: None,
                     translation: Some("已完成".to_string()),
                     state: Some("translated".to_string()),
                 },
                 entries_routes::UploadEntryDto {
                     key: "hidden_before_snapshot".to_string(),
                     original: serde_json::json!({"en":"Hidden"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
@@ -11033,21 +11008,18 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
                 entries_routes::UploadEntryDto {
                     key: "already_done".to_string(),
                     original: serde_json::json!({"en":"Already done"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "hidden_before_snapshot".to_string(),
                     original: serde_json::json!({"en":"Hidden"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "new_after_snapshot".to_string(),
                     original: serde_json::json!({"en":"New"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
@@ -11086,28 +11058,24 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
                 entries_routes::UploadEntryDto {
                     key: "baseline".to_string(),
                     original: serde_json::json!({"en":"Baseline"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "already_done".to_string(),
                     original: serde_json::json!({"en":"Already done"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "hidden_before_snapshot".to_string(),
                     original: serde_json::json!({"en":"Hidden"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "new_after_snapshot".to_string(),
                     original: serde_json::json!({"en":"New"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
@@ -11182,21 +11150,18 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
                 entries_routes::UploadEntryDto {
                     key: "already_done".to_string(),
                     original: serde_json::json!({"en":"Already done"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "hidden_before_snapshot".to_string(),
                     original: serde_json::json!({"en":"Hidden"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
                 entries_routes::UploadEntryDto {
                     key: "new_after_snapshot".to_string(),
                     original: serde_json::json!({"en":"New"}),
-                    context: None,
                     translation: None,
                     state: None,
                 },
@@ -13255,4 +13220,310 @@ async fn terminology_pos_import_export_is_admin_only_kind_bound_and_redacted() {
         .execute(&state.db)
         .await
         .unwrap();
+}
+
+// ======================== Task 6.1 editor/search migration contracts ========================
+
+/// 词条 context 必须从 API DTO、前端类型和编辑器展示中删除；旧项目详情上传入口也不得
+/// 继续向用户描述或构造该字段。
+#[test]
+fn entry_context_is_absent_from_runtime_dto_and_frontend_contracts() {
+    let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let contracts = [
+        (
+            "backend/crates/prts-api/src/routes/entries.rs",
+            &["pub context:", "context: e.context", "selected.context"][..],
+        ),
+        (
+            "backend/crates/prts-db/src/models.rs",
+            &["pub context:"][..],
+        ),
+        (
+            "backend/crates/prts-db/src/entries.rs",
+            &[
+                "pub context:",
+                "context = $",
+                "original, context, translation",
+                ".context.clone()",
+            ][..],
+        ),
+        ("frontend/src/api/types.ts", &["context: string"][..]),
+        (
+            "frontend/src/views/EditorView.vue",
+            &["selected.context"][..],
+        ),
+        (
+            "frontend/src/views/ProjectDetailView.vue",
+            &["context", "上下文"][..],
+        ),
+    ];
+    for (relative_path, forbidden_fragments) in contracts {
+        let source = std::fs::read_to_string(repository_root.join(relative_path))
+            .unwrap_or_else(|error| panic!("读取 {relative_path} 失败: {error}"));
+        for forbidden in forbidden_fragments {
+            assert!(
+                !source.contains(forbidden),
+                "{relative_path} 仍暴露词条 context 合同片段 {forbidden:?}"
+            );
+        }
+    }
+}
+
+/// `0013` 必须在删除列之前清理既有 entry history，并一次冻结 Task 6.2 所需的
+/// readiness、共享可见性/LIKE 转义函数与 scope 查询索引。
+#[test]
+fn editor_search_migration_source_scrubs_history_before_drop_and_declares_search_schema() {
+    let migration_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../migrations/0013_editor_search.sql");
+    let source = std::fs::read_to_string(&migration_path)
+        .unwrap_or_else(|error| panic!("0013_editor_search.sql 必须由 Task 6.1 创建: {error}"));
+    let scrub = source
+        .find("before_value - 'context'")
+        .expect("0013 必须 scrub file_change_items.before_value 的 context key");
+    assert!(
+        source.contains("after_value - 'context'"),
+        "0013 必须 scrub file_change_items.after_value 的 context key"
+    );
+    assert!(
+        source.contains("entity_type = 'entry'"),
+        "history scrub 只能针对 entry payload"
+    );
+    let drop_column = source
+        .find("DROP COLUMN context")
+        .expect("0013 必须删除 entries.context");
+    assert!(
+        scrub < drop_column,
+        "必须先 scrub 历史，再删除 entries.context"
+    );
+    for required_fragment in [
+        "editor_search_revision",
+        "structured_search_schema_ready",
+        "prts_entry_effective_visible",
+        "prts_escape_like_pattern",
+        "entries_structured_search_active_idx",
+        "files_structured_search_active_path_idx",
+        "folders_structured_search_active_path_idx",
+        "task_files_structured_search_active_idx",
+    ] {
+        assert!(
+            source.contains(required_fragment),
+            "0013 缺少结构化搜索 schema 合同 {required_fragment}"
+        );
+    }
+}
+
+/// 迁移完成后数据库不得再暴露 entries.context，并必须声明 Task 6.2 复用的共享
+/// effective-visible/LIKE helper、scope 索引和 readiness marker。
+#[tokio::test]
+async fn editor_search_database_schema_contract_is_complete() {
+    let pool = pool().await;
+    let context_column_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'entries'
+               AND column_name = 'context'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(!context_column_exists, "0013 后 entries.context 必须不存在");
+
+    let readiness_columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'workspace_foundation_state'
+           AND column_name = ANY($1::TEXT[])
+         ORDER BY column_name",
+    )
+    .bind(&["editor_search_revision", "structured_search_schema_ready"][..])
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(readiness_columns.len(), 2);
+    let readiness: (i32, bool) = sqlx::query_as(
+        "SELECT editor_search_revision, structured_search_schema_ready
+         FROM workspace_foundation_state WHERE singleton",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(readiness, (13, true));
+
+    let helpers: (bool, bool) = sqlx::query_as(
+        "SELECT
+             to_regprocedure('prts_entry_effective_visible(bigint,boolean)') IS NOT NULL,
+             to_regprocedure('prts_escape_like_pattern(text)') IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(helpers, (true, true));
+
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes
+         WHERE schemaname = 'public'
+           AND indexname = ANY($1::TEXT[])
+         ORDER BY indexname",
+    )
+    .bind(
+        &[
+            "entries_structured_search_active_idx",
+            "files_structured_search_active_path_idx",
+            "folders_structured_search_active_path_idx",
+            "task_files_structured_search_active_idx",
+        ][..],
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(indexes.len(), 4);
+
+    let history_with_context: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM file_change_items
+         WHERE entity_type = 'entry'
+           AND (COALESCE(before_value, '{}'::JSONB) ? 'context'
+                OR COALESCE(after_value, '{}'::JSONB) ? 'context')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        history_with_context, 0,
+        "迁移后既有 entry history 必须已 scrub"
+    );
+}
+
+/// 旧内联上传和新 batch 上传都必须兼容接收 legacy context，但该字段不得进入数据库
+/// 行、API DTO、file history 或项目导出。
+#[tokio::test]
+async fn legacy_context_uploads_are_ignored_by_old_and_streaming_paths() {
+    use std::io::{Cursor, Read};
+
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let (user_id, project_id, _) = audit_jobs_project(&state.db, "context-compat").await;
+    let user = users::find_by_id(&state.db, user_id)
+        .await
+        .unwrap()
+        .expect("上传 actor 存在");
+
+    let legacy_request: entries_routes::UploadReq = serde_json::from_value(serde_json::json!({
+        "path": "legacy/inline.json",
+        "entries": [{
+            "key": "legacy-inline",
+            "original": {"en": "Inline source"},
+            "context": "legacy inline context must be ignored",
+            "translation": "内联译文",
+            "state": "translated"
+        }]
+    }))
+    .expect("旧客户端携带 context 的请求仍可解析");
+    let _ = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&user),
+        Path(project_id),
+        Json(legacy_request),
+    )
+    .await
+    .expect_api("旧内联上传兼容忽略 context");
+
+    let streaming_body = r#"[{
+        "key":"legacy-streaming",
+        "original":{"en":"Streaming source"},
+        "context":{"arbitrary":"legacy shape"},
+        "translation":"批次译文",
+        "state":"translated"
+    }]"#
+    .as_bytes();
+    let (job, _batch, temp_root, _raw_path) = replacement_upload_job(
+        &state.db,
+        user_id,
+        project_id,
+        "legacy/streaming.json",
+        streaming_body,
+    )
+    .await;
+    let handler = jobs::process_upload::ProcessUploadHandler::new(state.db.clone(), &temp_root);
+    assert_eq!(
+        jobs::JobHandler::execute(&handler, &job).await.unwrap(),
+        prts_db::jobs::JobResult::Completed
+    );
+
+    let row_jsons: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(entry) FROM entries AS entry
+         WHERE entry.project_id = $1 ORDER BY entry.id",
+    )
+    .bind(project_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(row_jsons.len(), 2);
+    for row_json in &row_jsons {
+        assert!(
+            row_json.get("context").is_none(),
+            "数据库行不得保留 legacy context"
+        );
+    }
+    let uploaded_entries = entries::list(
+        &state.db,
+        project_id,
+        &entries::EntryFilter::default(),
+        None,
+        10,
+    )
+    .await
+    .unwrap();
+    assert_eq!(uploaded_entries.len(), 2);
+    for entry in &uploaded_entries {
+        let dto = serde_json::to_value(entries_routes::EntryDto::from(entry)).unwrap();
+        assert!(dto.get("context").is_none(), "EntryDto 不得回显 context");
+    }
+
+    let history_values: Vec<(Option<serde_json::Value>, Option<serde_json::Value>)> =
+        sqlx::query_as(
+            "SELECT before_value, after_value FROM file_change_items
+             WHERE entity_type = 'entry'
+               AND change_set_id IN (
+                   SELECT id FROM file_change_sets WHERE project_id = $1
+               )",
+        )
+        .bind(project_id)
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    assert!(!history_values.is_empty());
+    for (before, after) in history_values {
+        assert!(before
+            .as_ref()
+            .map_or(true, |value| value.get("context").is_none()));
+        assert!(after
+            .as_ref()
+            .map_or(true, |value| value.get("context").is_none()));
+    }
+
+    let response = entries_routes::export_project(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&user))),
+        Path(project_id),
+    )
+    .await
+    .expect_api("导出兼容上传后的项目");
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
+    assert_eq!(archive.len(), 2);
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).unwrap();
+        let mut json = String::new();
+        file.read_to_string(&mut json).unwrap();
+        let exported: Vec<serde_json::Value> = serde_json::from_str(&json).unwrap();
+        assert!(exported.iter().all(|entry| entry.get("context").is_none()));
+    }
+
+    replacement_test_cleanup(&state.db, user_id, project_id, &temp_root).await;
 }

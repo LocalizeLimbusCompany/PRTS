@@ -12,13 +12,15 @@ use prts_search::orchestrator::{run, OrchestratorInput};
 use prts_search::SortBy;
 
 async fn pool() -> prts_db::Db {
+    let runtime_role =
+        std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string());
     let migration_url =
         std::env::var("MIGRATION_DATABASE_URL").expect("MIGRATION_DATABASE_URL 未设置");
     let migration_pool = prts_db::connect_postgres(&migration_url, 1)
         .await
         .expect("连接 migration owner");
     let mut connection = migration_pool.acquire().await.expect("获取 migration 连接");
-    prts_db::run_migrations(&mut connection, "prts_runtime")
+    prts_db::run_migrations(&mut connection, &runtime_role)
         .await
         .expect("执行迁移");
     drop(connection);
@@ -28,7 +30,7 @@ async fn pool() -> prts_db::Db {
     let pool = prts_db::connect_postgres(&url, 5)
         .await
         .expect("连接 runtime Postgres");
-    prts_db::verify_runtime_role(&pool, "prts_runtime")
+    prts_db::verify_runtime_role(&pool, &runtime_role)
         .await
         .expect("验证 runtime role");
     pool
@@ -84,7 +86,6 @@ async fn search_perf_orchestrator() {
         batch.push(entries::UploadEntry {
             key: format!("k{i}"),
             original: serde_json::json!({ "en": format!("the {w} text number {i}") }),
-            context: None,
             translation: Some(format!("译文 {w} {i}")),
             state: Some("translated".to_string()),
         });

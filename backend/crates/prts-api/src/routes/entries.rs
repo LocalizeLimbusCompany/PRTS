@@ -31,8 +31,6 @@ pub struct UploadEntryDto {
     #[serde(default)]
     pub original: serde_json::Value,
     #[serde(default)]
-    pub context: Option<String>,
-    #[serde(default)]
     pub translation: Option<String>,
     #[serde(default)]
     pub state: Option<String>,
@@ -209,7 +207,6 @@ fn legacy_replacement_entries(
         let UploadEntryDto {
             key,
             original: raw_original,
-            context: _legacy_context,
             translation,
             state: raw_state,
         } = entry;
@@ -282,7 +279,6 @@ pub struct EntryDto {
     pub file_id: i64,
     pub key: String,
     pub original: serde_json::Value,
-    pub context: String,
     pub translation: String,
     pub state: String,
     pub locked: bool,
@@ -298,7 +294,6 @@ impl From<&prts_db::models::Entry> for EntryDto {
             file_id: e.file_id,
             key: e.key.clone(),
             original: e.original.clone(),
-            context: e.context.clone(),
             translation: e.translation.clone(),
             state: e.state.clone(),
             locked: e.locked,

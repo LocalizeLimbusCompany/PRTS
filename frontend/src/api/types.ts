@@ -148,7 +148,6 @@ export interface EntryDto {
   file_id: number
   key: string
   original: Record<string, string>
-  context: string
   translation: string
   state: string
   locked: boolean

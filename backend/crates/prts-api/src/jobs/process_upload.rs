@@ -326,7 +326,6 @@ impl<'de> Visitor<'de> for UploadArrayVisitor<'_> {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawUploadEntry {
     key: String,
     #[serde(default)]
@@ -335,9 +334,9 @@ struct RawUploadEntry {
     translation: Option<String>,
     #[serde(default)]
     state: Option<String>,
-    /// 0013 前的兼容字段；接收但从不进入 staging/history。
-    #[serde(default, rename = "context")]
-    _context: Option<IgnoredAny>,
+    /// 兼容旧客户端的额外字段；只消费结构，不进入 staging/history。
+    #[serde(default, flatten)]
+    _legacy_fields: BTreeMap<String, IgnoredAny>,
 }
 
 #[derive(Default)]

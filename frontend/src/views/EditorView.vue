@@ -622,10 +622,6 @@ onMounted(async () => {
               <div class="prts-label orig-lang">{{ lang }}</div>
               <div class="orig-text">{{ selected.original[lang] ?? '—' }}</div>
             </div>
-            <div v-if="selected.context" class="orig-row">
-              <div class="prts-label orig-lang">注释</div>
-              <div class="orig-text prts-dim">{{ selected.context }}</div>
-            </div>
           </div>
 
           <div class="prts-label q-mt-md q-mb-xs">译文 → {{ project?.target_lang }}</div>

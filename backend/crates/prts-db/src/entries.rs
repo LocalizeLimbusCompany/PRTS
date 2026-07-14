@@ -23,8 +23,6 @@ pub struct UploadEntry {
     #[serde(default)]
     pub original: serde_json::Value,
     #[serde(default)]
-    pub context: Option<String>,
-    #[serde(default)]
     pub translation: Option<String>,
     #[serde(default)]
     pub state: Option<String>,
@@ -957,12 +955,11 @@ pub async fn bulk_upsert_tx(
                         .await?;
                         // 覆盖源文、置未翻译、版本+1（保留 translation）
                         sqlx::query(
-                            "UPDATE entries SET original = $2, context = $3, state = 'untranslated',
-                                 version = version + 1, updated_by = $4 WHERE id = $1",
+                            "UPDATE entries SET original = $2, state = 'untranslated',
+                                 version = version + 1, updated_by = $3 WHERE id = $1",
                         )
                         .bind(id)
                         .bind(&e.original)
-                        .bind(e.context.clone().unwrap_or_default())
                         .bind(editor_id)
                         .execute(&mut *conn)
                         .await?;
@@ -976,14 +973,13 @@ pub async fn bulk_upsert_tx(
 
         if !to_insert.is_empty() {
             let mut qb = QueryBuilder::<Postgres>::new(
-                "INSERT INTO entries (file_id, project_id, key, original, context, translation, state) ",
+                "INSERT INTO entries (file_id, project_id, key, original, translation, state) ",
             );
             qb.push_values(to_insert.iter(), |mut b, e| {
                 b.push_bind(file_id)
                     .push_bind(project_id)
                     .push_bind(&e.key)
                     .push_bind(&e.original)
-                    .push_bind(e.context.clone().unwrap_or_default())
                     .push_bind(e.translation.clone().unwrap_or_default())
                     .push_bind(normalize_state(e.state.as_deref()));
             });

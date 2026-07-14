@@ -139,7 +139,6 @@ pub struct Entry {
     pub project_id: i64,
     pub key: String,
     pub original: serde_json::Value,
-    pub context: String,
     pub translation: String,
     pub state: String,
     pub locked: bool,
