@@ -1,7 +1,9 @@
 {
   "app": {
     "tagline": "Localization Platform",
-    "switchLang": "中文"
+    "switchLang": "中文",
+    "passwordChangeRequired": "This account was created by an administrator. Please change the initial password soon; the reminder does not block other features.",
+    "changePassword": "Change password"
   },
   "markdown": {
     "write": "Write",
@@ -14,6 +16,21 @@
     "no": "No",
     "cancel": "Cancel",
     "search": "Search"
+  },
+  "profile": {
+    "password": {
+      "title": "Change password",
+      "description": "Use the new password for future sign-ins. The initial-password reminder does not block this session or other features.",
+      "required": "You are still using the administrator-provided initial password.",
+      "current": "Current password",
+      "new": "New password",
+      "hint": "8–256 characters",
+      "confirm": "Confirm new password",
+      "submit": "Save new password",
+      "mismatch": "The new passwords do not match",
+      "changed": "Password changed",
+      "changeFailed": "Failed to change password"
+    }
   },
   "project": {
     "workspaceNav": "Project workspace navigation",
@@ -441,6 +458,32 @@
       "apply": "Apply",
       "updated": "Role updated",
       "updateFailed": "Failed to update role"
+    },
+    "users": {
+      "title": "User management",
+      "create": "Create account",
+      "search": "Search usernames",
+      "filterRole": "Filter by role",
+      "sort": "Sort",
+      "allRoles": "All roles",
+      "sortCreatedDesc": "Newest first",
+      "sortCreatedAsc": "Oldest first",
+      "sortUsernameAsc": "Username A–Z",
+      "sortUsernameDesc": "Username Z–A",
+      "applyFilters": "Apply filters",
+      "empty": "No users match these filters",
+      "username": "Username",
+      "role": "Platform role",
+      "createdAt": "Joined",
+      "actions": "Actions",
+      "passwordPending": "Initial password change pending",
+      "loadMore": "Load more",
+      "loadFailed": "Failed to load users",
+      "createDescription": "The account can sign in immediately and use the platform while a persistent reminder asks them to change the initial password.",
+      "initialPassword": "Initial password",
+      "initialPasswordHint": "The initial password is not stored in browser history or returned by the API",
+      "created": "Account created",
+      "createFailed": "Failed to create account"
     },
     "search": {
       "title": "Search / Vectorization",

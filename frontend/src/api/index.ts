@@ -1,6 +1,9 @@
 import { http } from './http'
 import type {
   ApiKeyDto,
+  AdminUserDto,
+  AdminUserListParams,
+  AdminUserListResponse,
   CreatedApiKey,
   EntryDto,
   EntryVersionDto,
@@ -22,6 +25,7 @@ import type {
   SearchSettingsDto,
   SuggestionDto,
   TokenResponse,
+  CreateAdminUserRequest,
   UploadResult,
   UserDto,
 } from './types'
@@ -70,6 +74,9 @@ export const usersApi = {
     translation_langs?: string[]
   }) {
     return http.put<UserDto>('/me', body).then((r) => r.data)
+  },
+  changePassword(body: { current_password: string; new_password: string }) {
+    return http.put('/me/password', body)
   },
   accounts() {
     return http.get<ExternalAccountDto[]>('/me/accounts').then((r) => r.data)
@@ -295,6 +302,14 @@ export const suggestionsApi = {
 
 /** 平台管理。 */
 export const adminApi = {
+  listUsers(params: AdminUserListParams = {}) {
+    return http
+      .get<AdminUserListResponse>('/admin/users', { params })
+      .then((response) => response.data)
+  },
+  createUser(body: CreateAdminUserRequest) {
+    return http.post<AdminUserDto>('/admin/users', body).then((response) => response.data)
+  },
   getSettings() {
     return http.get<Record<string, unknown>>('/admin/settings').then((r) => r.data)
   },

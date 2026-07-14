@@ -4,6 +4,16 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 
+/// Password length bounds shared by registration, administrator creation, and password change.
+pub const MIN_PASSWORD_CHARS: usize = 8;
+pub const MAX_PASSWORD_CHARS: usize = 256;
+
+/// Validate a new password without retaining or formatting its plaintext value.
+pub fn validate_new_password(plaintext: &str) -> bool {
+    let length = plaintext.chars().count();
+    (MIN_PASSWORD_CHARS..=MAX_PASSWORD_CHARS).contains(&length)
+}
+
 /// 用 Argon2id 哈希明文密码，返回 PHC 字符串（含算法/参数/盐）。
 pub fn hash_password(plaintext: &str) -> Result<String, argon2::password_hash::Error> {
     let salt = SaltString::generate(&mut OsRng);
@@ -45,5 +55,12 @@ mod tests {
     #[test]
     fn malformed_hash_is_rejected() {
         assert!(!verify_password("x", "not-a-phc-string"));
+    }
+
+    #[test]
+    fn new_password_policy_has_bounded_character_length() {
+        assert!(!validate_new_password("short"));
+        assert!(validate_new_password("long-enough"));
+        assert!(!validate_new_password(&"x".repeat(MAX_PASSWORD_CHARS + 1)));
     }
 }

@@ -188,6 +188,16 @@ pub enum AuditEvent<'a> {
         changed_fields: &'a [&'a str],
         translation_lang_count: usize,
     },
+    UserCreated {
+        user_id: i64,
+        username: &'a str,
+        role: Option<&'a str>,
+        password_change_required: bool,
+    },
+    UserPasswordChanged {
+        user_id: i64,
+        password_change_required_cleared: bool,
+    },
     ApiKeyCreated {
         key_id: i64,
         name: &'a str,
@@ -606,6 +616,34 @@ pub async fn append_event_tx(
             serde_json::json!({
                 "changed_fields": changed_fields,
                 "translation_lang_count": translation_lang_count,
+            }),
+        ),
+        AuditEvent::UserCreated {
+            user_id,
+            username,
+            role,
+            password_change_required,
+        } => (
+            "user.created",
+            "user",
+            user_id.to_string(),
+            None,
+            serde_json::json!({
+                "username": username,
+                "role": role,
+                "password_change_required": password_change_required,
+            }),
+        ),
+        AuditEvent::UserPasswordChanged {
+            user_id,
+            password_change_required_cleared,
+        } => (
+            "user.password_changed",
+            "user",
+            user_id.to_string(),
+            None,
+            serde_json::json!({
+                "password_change_required_cleared": password_change_required_cleared,
             }),
         ),
         AuditEvent::ApiKeyCreated {

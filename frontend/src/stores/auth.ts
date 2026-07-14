@@ -10,6 +10,7 @@ export const useAuthStore = defineStore('auth', () => {
   const ready = ref(false)
 
   const isAuthed = computed(() => user.value !== null)
+  const passwordChangeRequired = computed(() => user.value?.password_change_required === true)
   const role = computed(() => user.value?.platform_role ?? null)
   const isSuperAdmin = computed(() =>
     hasPlatformCapability(user.value?.platform_capabilities, 'grant_platform_roles'),
@@ -22,6 +23,9 @@ export const useAuthStore = defineStore('auth', () => {
   )
   const canManagePos = computed(() =>
     hasPlatformCapability(user.value?.platform_capabilities, 'manage_pos'),
+  )
+  const canManageUsers = computed(() =>
+    hasPlatformCapability(user.value?.platform_capabilities, 'manage_users'),
   )
 
   async function login(username: string, password: string) {
@@ -81,11 +85,13 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     ready,
     isAuthed,
+    passwordChangeRequired,
     role,
     isSuperAdmin,
     isAdmin,
     canCreateProject,
     canManagePos,
+    canManageUsers,
     login,
     register,
     applyTokens,

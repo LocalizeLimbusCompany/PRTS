@@ -77,8 +77,8 @@ pub async fn register(
     if username.len() < 3 || username.len() > 32 {
         return Err(Error::bad_request("用户名长度需为 3–32 字符").into());
     }
-    if req.password.len() < 8 {
-        return Err(Error::bad_request("密码至少 8 位").into());
+    if !prts_auth::password::validate_new_password(&req.password) {
+        return Err(Error::bad_request("密码长度需为 8–256 字符").into());
     }
     if prts_db::users::username_exists(&state.db, username)
         .await

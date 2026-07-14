@@ -10,6 +10,7 @@ use prts_core::permission::nodes;
 pub struct PlatformCapabilitiesDto {
     pub access_admin: bool,
     pub grant_platform_roles: bool,
+    pub manage_users: bool,
     pub create_project: bool,
     pub manage_pos: bool,
 }
@@ -21,6 +22,7 @@ impl PlatformCapabilitiesDto {
         Self {
             access_admin: has(nodes::PLATFORM_SETTINGS),
             grant_platform_roles: has(nodes::PLATFORM_ADMIN_GRANT),
+            manage_users: has(nodes::PLATFORM_USER_MANAGE),
             create_project: has(nodes::PLATFORM_PROJECT_CREATE),
             manage_pos: has(nodes::PLATFORM_POS_MANAGE),
         }
@@ -86,15 +88,18 @@ mod tests {
         let admin = PlatformCapabilitiesDto::from_role(Some("admin"));
         assert!(admin.access_admin);
         assert!(admin.manage_pos);
+        assert!(admin.manage_users);
         assert!(!admin.grant_platform_roles);
 
         let maintainer = PlatformCapabilitiesDto::from_role(Some("maintainer"));
         assert!(maintainer.create_project);
         assert!(!maintainer.access_admin);
         assert!(!maintainer.manage_pos);
+        assert!(!maintainer.manage_users);
 
         let ordinary = PlatformCapabilitiesDto::from_role(None);
         assert!(!ordinary.create_project);
         assert!(!ordinary.manage_pos);
+        assert!(!ordinary.manage_users);
     }
 }

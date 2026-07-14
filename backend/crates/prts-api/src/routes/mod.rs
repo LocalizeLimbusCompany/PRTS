@@ -77,12 +77,14 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::oauth_callback))
         // 用户自助
         .routes(routes!(users::me, users::update_me))
+        .routes(routes!(users::change_password))
         .routes(routes!(users::get_user))
         .routes(routes!(users::my_accounts))
         .routes(routes!(users::create_api_key, users::list_api_keys))
         .routes(routes!(users::revoke_api_key))
         // 平台管理
         .routes(routes!(admin::get_settings, admin::update_settings))
+        .routes(routes!(admin::list_users, admin::create_user))
         .routes(routes!(admin::grant_role))
         .routes(routes!(pos::list_pos))
         .routes(routes!(pos::create_pos))
@@ -397,6 +399,32 @@ mod tests {
         assert!(parameter_names.contains(&"scope"));
     }
 
+    #[test]
+    fn admin_users_openapi_documents_keyset_create_role_and_password_change() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        for (path, method) in [
+            ("/admin/users", "get"),
+            ("/admin/users", "post"),
+            ("/admin/users/{id}/role", "post"),
+            ("/me/password", "put"),
+        ] {
+            assert!(document["paths"][path][method].is_object());
+            assert!(document["paths"][path][method]["description"]
+                .as_str()
+                .is_some_and(|description| !description.is_empty()));
+        }
+        let parameter_names: Vec<_> = document["paths"]["/admin/users"]["get"]["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|parameter| parameter["name"].as_str())
+            .collect();
+        for required in ["q", "role", "sort", "after", "limit"] {
+            assert!(parameter_names.contains(&required));
+        }
+    }
+
     /// Task 1.2 的认证与受审计 mutation 都公开稳定的 fail-closed 503 schema。
     #[test]
     fn audited_mutations_document_audit_unavailable() {
@@ -409,9 +437,11 @@ mod tests {
             ("/auth/logout", "post"),
             ("/auth/oauth/{provider}/callback", "get"),
             ("/me", "put"),
+            ("/me/password", "put"),
             ("/me/api-keys", "post"),
             ("/me/api-keys/{id}", "delete"),
             ("/admin/settings", "put"),
+            ("/admin/users", "post"),
             ("/admin/users/{id}/role", "post"),
             ("/admin/settings/search", "put"),
             ("/admin/settings/upload", "put"),

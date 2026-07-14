@@ -2,6 +2,7 @@
 import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
+import { useI18n } from 'vue-i18n'
 
 import { useAuthStore } from '@/stores/auth'
 import { useUserStream } from '@/composables/useUserStream'
@@ -12,6 +13,7 @@ import NotificationBell from '@/components/NotificationBell.vue'
 const auth = useAuthStore()
 const router = useRouter()
 const $q = useQuasar()
+const { t } = useI18n()
 
 const initials = computed(() => auth.user?.username?.slice(0, 2).toUpperCase() ?? '')
 
@@ -133,7 +135,9 @@ async function logout() {
               </q-item>
               <q-separator />
               <q-item v-close-popup clickable @click="logout">
-                <q-item-section avatar><q-icon name="mdi-logout" color="negative" /></q-item-section>
+                <q-item-section avatar
+                  ><q-icon name="mdi-logout" color="negative"
+                /></q-item-section>
                 <q-item-section class="text-negative">登出</q-item-section>
               </q-item>
             </q-list>
@@ -155,6 +159,17 @@ async function logout() {
     </q-header>
 
     <q-page-container>
+      <q-banner
+        v-if="auth.passwordChangeRequired"
+        class="bg-warning text-dark"
+        inline-actions
+        rounded
+      >
+        {{ t('app.passwordChangeRequired') }}
+        <template #action>
+          <q-btn flat no-caps :label="t('app.changePassword')" :to="{ name: 'me' }" />
+        </template>
+      </q-banner>
       <router-view v-slot="{ Component }">
         <transition name="prts-fade" mode="out-in">
           <component :is="Component" />

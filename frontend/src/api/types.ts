@@ -7,17 +7,59 @@ export interface UserDto {
   avatar_url: string | null
   description: string
   translation_langs: string[]
-  cp: number
+  cp_tenths: number
   platform_role: string | null
   platform_capabilities: PlatformCapabilities
+  password_change_required: boolean
   created_at: string
 }
 
 export interface PlatformCapabilities {
   access_admin: boolean
   grant_platform_roles: boolean
+  manage_users: boolean
   create_project: boolean
   manage_pos: boolean
+}
+
+export type AdminUserSort = 'username_asc' | 'username_desc' | 'created_at_asc' | 'created_at_desc'
+
+export interface AdminUserCapabilities {
+  can_change_role: boolean
+}
+
+export interface AdminUserDto {
+  id: number
+  username: string
+  platform_role: string | null
+  password_change_required: boolean
+  created_at: string
+  capabilities: AdminUserCapabilities
+}
+
+export interface AdminUserListCapabilities {
+  create_user: boolean
+  assignable_roles: string[]
+}
+
+export interface AdminUserListResponse {
+  items: AdminUserDto[]
+  next_after: string | null
+  capabilities: AdminUserListCapabilities
+}
+
+export interface AdminUserListParams {
+  q?: string
+  role?: string
+  sort?: AdminUserSort
+  after?: string
+  limit?: number
+}
+
+export interface CreateAdminUserRequest {
+  username: string
+  initial_password: string
+  role: string
 }
 
 export interface TokenResponse {

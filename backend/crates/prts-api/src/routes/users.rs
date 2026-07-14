@@ -12,7 +12,7 @@ use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
 use crate::auth::CurrentUser;
 use crate::db_err;
 use crate::dto::UserDto;
-use crate::error::{ApiError, ErrorResponse};
+use crate::error::{ApiError, ErrorResponse, RequestLocale};
 use crate::state::AppState;
 
 /// 当前用户资料。
@@ -105,6 +105,78 @@ pub async fn update_me(
     .map_err(|_| Error::AuditUnavailable)?;
     tx.commit().await.map_err(db_err)?;
     Ok(Json((&updated).into()))
+}
+
+/// 修改密码请求。明文只参与验证和 Argon2id 哈希，不进入任何通用载荷。
+#[derive(Deserialize, ToSchema)]
+pub struct ChangePasswordReq {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// 修改当前密码并持久清除首次改密提醒。
+#[utoipa::path(
+    put,
+    path = "/me/password",
+    tag = "user",
+    request_body = ChangePasswordReq,
+    description = "在同一事务内锁定并重新验证当前 active 用户及现有密码，替换 Argon2id 哈希、清除非阻断改密提醒并写脱敏 typed audit。密码、哈希和数据库错误均不进入响应或审计。",
+    responses(
+        (status = 204, description = "密码已修改且提醒已清除"),
+        (status = 400, description = "新密码不符合长度要求", body = ErrorResponse),
+        (status = 401, description = "当前密码不正确或账号不支持密码", body = ErrorResponse),
+        (status = 403, description = "账号不再 active", body = ErrorResponse),
+        (status = 503, description = "审计不可用，密码修改已回滚", body = ErrorResponse)
+    )
+)]
+pub async fn change_password(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    locale: RequestLocale,
+    Json(req): Json<ChangePasswordReq>,
+) -> Result<StatusCode, ApiError> {
+    if !prts_auth::password::validate_new_password(&req.new_password) {
+        return Err(
+            ApiError::from(Error::bad_request("密码长度需为 8–256 字符")).with_locale(locale.0),
+        );
+    }
+    let new_hash = prts_auth::password::hash_password(&req.new_password)
+        .map_err(|_| Error::internal("password hash failed"))?;
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let current = prts_db::users::find_by_id_for_update_tx(&mut tx, user.id)
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| ApiError::from(Error::Unauthorized).with_locale(locale.0))?;
+    if current.status != "active" {
+        return Err(ApiError::from(Error::Forbidden).with_locale(locale.0));
+    }
+    let current_matches = current
+        .password_hash
+        .as_deref()
+        .is_some_and(|hash| prts_auth::password::verify_password(&req.current_password, hash));
+    if !current_matches {
+        return Err(ApiError::from(Error::Unauthorized).with_locale(locale.0));
+    }
+    let reminder_cleared = current.password_change_required;
+    prts_db::users::update_password_tx(&mut tx, user.id, &new_hash)
+        .await
+        .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::UserPasswordChanged {
+            user_id: user.id,
+            password_change_required_cleared: reminder_cleared,
+        },
+    )
+    .await
+    .map_err(|_| ApiError::from(Error::AuditUnavailable).with_locale(locale.0))?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// 公开用户资料（**不含 email**）。

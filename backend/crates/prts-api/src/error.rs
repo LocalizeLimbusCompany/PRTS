@@ -102,7 +102,8 @@ fn status_for(code: &str) -> StatusCode {
         | "SEARCH_PATH_INVALID"
         | "SEARCH_SCOPE_RESOURCE_INVALID"
         | "SEARCH_SCOPE_AMBIGUOUS"
-        | "SEARCH_CURSOR_INVALID" => StatusCode::BAD_REQUEST,
+        | "SEARCH_CURSOR_INVALID"
+        | "ADMIN_USER_CURSOR_INVALID" => StatusCode::BAD_REQUEST,
         "unauthorized" => StatusCode::UNAUTHORIZED,
         "forbidden" => StatusCode::FORBIDDEN,
         "not_found" => StatusCode::NOT_FOUND,

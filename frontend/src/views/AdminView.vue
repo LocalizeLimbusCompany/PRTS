@@ -4,7 +4,14 @@ import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
 import { adminApi, adminSearchApi, apiErrorMessage, posApi } from '@/api'
-import type { PosDto, PosWriteRequest, SearchSettingsDto } from '@/api'
+import type {
+  AdminUserDto,
+  AdminUserListCapabilities,
+  AdminUserSort,
+  PosDto,
+  PosWriteRequest,
+  SearchSettingsDto,
+} from '@/api'
 import TermImportDialog from '@/components/terms/TermImportDialog.vue'
 import { displayPosName, type TerminologyDocumentFormat } from '@/lib/terminology'
 import { useAuthStore } from '@/stores/auth'
@@ -46,27 +53,130 @@ async function saveSettings() {
   }
 }
 
-/* —— 角色任免（仅总管理员）—— */
-const grantUserId = ref<number | null>(null)
-const grantRoleVal = ref<string | null>('maintainer')
-const granting = ref(false)
-const roleOptions = computed(() => [
+/* —— capability 驱动的平台用户管理 —— */
+const users = ref<AdminUserDto[]>([])
+const usersLoading = ref(false)
+const usersLoadingMore = ref(false)
+const usersAfter = ref<string | null>(null)
+const userQuery = ref('')
+const userRole = ref<string | null>(null)
+const userSort = ref<AdminUserSort>('created_at_desc')
+const userCapabilities = ref<AdminUserListCapabilities>({
+  create_user: false,
+  assignable_roles: [],
+})
+const roleDrafts = ref<Record<number, string>>({})
+const roleSavingId = ref<number | null>(null)
+const createUserOpen = ref(false)
+const createUserSaving = ref(false)
+const createUsername = ref('')
+const createInitialPassword = ref('')
+const createRole = ref('user')
+
+const userRoleFilters = computed(() => [
+  { label: t('admin.users.allRoles'), value: null },
   { label: t('admin.roles.superAdmin'), value: 'super_admin' },
   { label: t('admin.roles.admin'), value: 'admin' },
   { label: t('admin.roles.maintainer'), value: 'maintainer' },
-  { label: t('admin.roles.ordinary'), value: null },
+  { label: t('admin.roles.ordinary'), value: 'user' },
 ])
-async function doGrant() {
-  if (grantUserId.value == null) return
-  granting.value = true
+const userSortOptions = computed(() => [
+  { label: t('admin.users.sortCreatedDesc'), value: 'created_at_desc' },
+  { label: t('admin.users.sortCreatedAsc'), value: 'created_at_asc' },
+  { label: t('admin.users.sortUsernameAsc'), value: 'username_asc' },
+  { label: t('admin.users.sortUsernameDesc'), value: 'username_desc' },
+])
+const assignableRoleOptions = computed(() =>
+  userCapabilities.value.assignable_roles.map((role) => ({
+    label: platformRoleLabel(role),
+    value: role,
+  })),
+)
+
+function platformRoleLabel(role: string | null) {
+  switch (role) {
+    case 'super_admin':
+      return t('admin.roles.superAdmin')
+    case 'admin':
+      return t('admin.roles.admin')
+    case 'maintainer':
+      return t('admin.roles.maintainer')
+    default:
+      return t('admin.roles.ordinary')
+  }
+}
+
+function syncRoleDrafts(items: AdminUserDto[]) {
+  for (const item of items) {
+    roleDrafts.value[item.id] = item.platform_role ?? 'user'
+  }
+}
+
+async function loadUsers(reset = true) {
+  if (!auth.canManageUsers) return
+  if (reset) usersLoading.value = true
+  else usersLoadingMore.value = true
   try {
-    await adminApi.grantRole(grantUserId.value, grantRoleVal.value)
-    $q.notify({ type: 'positive', message: t('admin.roles.updated') })
-    grantUserId.value = null
-  } catch (e) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(e, t('admin.roles.updateFailed')) })
+    const response = await adminApi.listUsers({
+      q: userQuery.value.trim() || undefined,
+      role: userRole.value || undefined,
+      sort: userSort.value,
+      after: reset ? undefined : usersAfter.value || undefined,
+      limit: 25,
+    })
+    users.value = reset ? response.items : [...users.value, ...response.items]
+    usersAfter.value = response.next_after
+    userCapabilities.value = response.capabilities
+    syncRoleDrafts(response.items)
+    if (!response.capabilities.assignable_roles.includes(createRole.value)) {
+      createRole.value = response.capabilities.assignable_roles[0] ?? 'user'
+    }
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('admin.users.loadFailed')) })
   } finally {
-    granting.value = false
+    usersLoading.value = false
+    usersLoadingMore.value = false
+  }
+}
+onMounted(() => loadUsers())
+
+function openCreateUser() {
+  createUsername.value = ''
+  createInitialPassword.value = ''
+  createRole.value = userCapabilities.value.assignable_roles[0] ?? 'user'
+  createUserOpen.value = true
+}
+
+async function createUser() {
+  createUserSaving.value = true
+  try {
+    await adminApi.createUser({
+      username: createUsername.value.trim(),
+      initial_password: createInitialPassword.value,
+      role: createRole.value,
+    })
+    createUserOpen.value = false
+    $q.notify({ type: 'positive', message: t('admin.users.created') })
+    await loadUsers()
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('admin.users.createFailed')) })
+  } finally {
+    createInitialPassword.value = ''
+    createUserSaving.value = false
+  }
+}
+
+async function updateUserRole(item: AdminUserDto) {
+  roleSavingId.value = item.id
+  try {
+    const role = roleDrafts.value[item.id]
+    await adminApi.grantRole(item.id, role === 'user' ? null : role)
+    $q.notify({ type: 'positive', message: t('admin.roles.updated') })
+    await loadUsers()
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('admin.roles.updateFailed')) })
+  } finally {
+    roleSavingId.value = null
   }
 }
 
@@ -128,7 +238,10 @@ async function loadPosPresets() {
   try {
     posPresets.value = await posApi.list()
   } catch (error) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('terminology.pos.loadFailed')) })
+    $q.notify({
+      type: 'negative',
+      message: apiErrorMessage(error, t('terminology.pos.loadFailed')),
+    })
   } finally {
     posLoading.value = false
   }
@@ -163,7 +276,10 @@ async function savePos() {
     posDialogOpen.value = false
     await loadPosPresets()
   } catch (error) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('terminology.pos.saveFailed')) })
+    $q.notify({
+      type: 'negative',
+      message: apiErrorMessage(error, t('terminology.pos.saveFailed')),
+    })
   } finally {
     posSaving.value = false
   }
@@ -209,6 +325,128 @@ async function exportPos(format: TerminologyDocumentFormat) {
     <div class="prts-label">// ADMIN</div>
     <h1 class="prts-h1 q-mb-lg">{{ t('admin.title') }}</h1>
 
+    <template v-if="auth.canManageUsers">
+      <div class="row items-center q-mb-sm">
+        <div class="prts-label">{{ t('admin.users.title') }}</div>
+        <q-space />
+        <q-btn
+          v-if="userCapabilities.create_user"
+          unelevated
+          no-caps
+          color="primary"
+          text-color="dark"
+          icon="mdi-account-plus-outline"
+          :label="t('admin.users.create')"
+          @click="openCreateUser"
+        />
+      </div>
+      <q-card flat bordered class="q-pa-md q-mb-lg">
+        <div class="row q-col-gutter-sm q-mb-md items-center">
+          <div class="col-12 col-md-5">
+            <q-input
+              v-model="userQuery"
+              outlined
+              dense
+              clearable
+              debounce="250"
+              :label="t('admin.users.search')"
+              @keyup.enter="loadUsers()"
+            />
+          </div>
+          <div class="col-6 col-md-3">
+            <q-select
+              v-model="userRole"
+              outlined
+              dense
+              emit-value
+              map-options
+              :options="userRoleFilters"
+              :label="t('admin.users.filterRole')"
+            />
+          </div>
+          <div class="col-6 col-md-3">
+            <q-select
+              v-model="userSort"
+              outlined
+              dense
+              emit-value
+              map-options
+              :options="userSortOptions"
+              :label="t('admin.users.sort')"
+            />
+          </div>
+          <div class="col-12 col-md-1">
+            <q-btn
+              outline
+              no-caps
+              class="full-width"
+              icon="mdi-filter-outline"
+              :aria-label="t('admin.users.applyFilters')"
+              @click="loadUsers()"
+            />
+          </div>
+        </div>
+
+        <q-inner-loading :showing="usersLoading" />
+        <div v-if="!usersLoading && users.length === 0" class="prts-empty">
+          {{ t('admin.users.empty') }}
+        </div>
+        <q-markup-table v-else flat bordered separator="horizontal">
+          <thead>
+            <tr>
+              <th class="text-left">{{ t('admin.users.username') }}</th>
+              <th class="text-left">{{ t('admin.users.role') }}</th>
+              <th class="text-left">{{ t('admin.users.createdAt') }}</th>
+              <th class="text-right">{{ t('admin.users.actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in users" :key="item.id">
+              <td class="text-left">
+                <div>{{ item.username }}</div>
+                <div class="prts-mono prts-dim">UID {{ item.id }}</div>
+                <q-badge v-if="item.password_change_required" color="warning" text-color="dark">
+                  {{ t('admin.users.passwordPending') }}
+                </q-badge>
+              </td>
+              <td class="text-left">
+                <q-select
+                  v-if="item.capabilities.can_change_role"
+                  v-model="roleDrafts[item.id]"
+                  outlined
+                  dense
+                  emit-value
+                  map-options
+                  :options="assignableRoleOptions"
+                />
+                <span v-else>{{ platformRoleLabel(item.platform_role) }}</span>
+              </td>
+              <td class="text-left">{{ new Date(item.created_at).toLocaleString() }}</td>
+              <td class="text-right">
+                <q-btn
+                  v-if="item.capabilities.can_change_role"
+                  outline
+                  no-caps
+                  :label="t('admin.roles.apply')"
+                  :loading="roleSavingId === item.id"
+                  @click="updateUserRole(item)"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </q-markup-table>
+        <div v-if="usersAfter" class="row justify-center q-mt-md">
+          <q-btn
+            outline
+            no-caps
+            :label="t('admin.users.loadMore')"
+            :loading="usersLoadingMore"
+            @click="loadUsers(false)"
+          />
+        </div>
+      </q-card>
+    </template>
+
     <div class="prts-label q-mb-sm">{{ t('admin.platformSettings') }}</div>
     <q-card flat bordered class="q-pa-md q-mb-lg">
       <q-toggle
@@ -219,19 +457,11 @@ async function exportPos(format: TerminologyDocumentFormat) {
       <div class="prts-dim q-mb-md" style="font-size: 12px; margin-left: 52px">
         {{ t('admin.registrationOpenHint') }}
       </div>
-      <q-toggle
-        v-model="oauthOnly"
-        :label="t('admin.oauthOnly')"
-        :disable="savingSettings"
-      />
+      <q-toggle v-model="oauthOnly" :label="t('admin.oauthOnly')" :disable="savingSettings" />
       <div class="prts-dim q-mb-md" style="font-size: 12px; margin-left: 52px">
         {{ t('admin.oauthOnlyHint') }}
       </div>
-      <q-toggle
-        v-model="requireEmail"
-        :label="t('admin.requireEmail')"
-        :disable="savingSettings"
-      />
+      <q-toggle v-model="requireEmail" :label="t('admin.requireEmail')" :disable="savingSettings" />
       <div class="prts-dim" style="font-size: 12px; margin-left: 52px">
         {{ t('admin.requireEmailHint') }}
       </div>
@@ -257,7 +487,12 @@ async function exportPos(format: TerminologyDocumentFormat) {
           {{ t('terminology.pos.description') }}
         </div>
         <div class="row q-gutter-sm">
-          <q-btn-dropdown outline no-caps icon="mdi-download-outline" :label="t('terminology.export')">
+          <q-btn-dropdown
+            outline
+            no-caps
+            icon="mdi-download-outline"
+            :label="t('terminology.export')"
+          >
             <q-list>
               <q-item v-close-popup clickable @click="exportPos('csv')">
                 <q-item-section>CSV</q-item-section>
@@ -339,7 +574,9 @@ async function exportPos(format: TerminologyDocumentFormat) {
 
       <!-- 密钥状态（只读徽标） -->
       <div class="row items-center q-mb-md" style="margin-left: 52px; gap: 8px; flex-wrap: wrap">
-        <span style="font-size: 13px; color: var(--prts-text-dim)">{{ t('admin.search.keyPresent') }}：</span>
+        <span style="font-size: 13px; color: var(--prts-text-dim)"
+          >{{ t('admin.search.keyPresent') }}：</span
+        >
         <q-chip
           dense
           square
@@ -452,48 +689,67 @@ async function exportPos(format: TerminologyDocumentFormat) {
       </div>
     </q-card>
 
-    <template v-if="auth.isSuperAdmin">
-      <div class="prts-label q-mb-sm">{{ t('admin.roles.title') }}</div>
-      <q-card flat bordered class="q-pa-md">
-        <div class="prts-dim q-mb-md" style="font-size: 13px">
-          {{ t('admin.roles.description') }}
-        </div>
-        <div class="row q-col-gutter-md items-center">
-          <div class="col-12 col-sm-4">
-            <q-input
-              v-model.number="grantUserId"
-              outlined
-              dense
-              type="number"
-              :label="t('admin.roles.userId')"
-            />
-          </div>
-          <div class="col-12 col-sm-5">
-            <q-select
-              v-model="grantRoleVal"
-              outlined
-              dense
-              :options="roleOptions"
-              emit-value
-              map-options
-              :label="t('admin.roles.role')"
-            />
-          </div>
-          <div class="col-12 col-sm-3">
-            <q-btn
-              unelevated
-              no-caps
-              color="primary"
-              text-color="dark"
-              class="full-width"
-              :label="t('admin.roles.apply')"
-              :loading="granting"
-              @click="doGrant"
-            />
-          </div>
-        </div>
+    <q-dialog v-model="createUserOpen" persistent>
+      <q-card style="width: min(520px, 94vw)">
+        <q-card-section>
+          <div class="prts-label">{{ t('admin.users.create') }}</div>
+          <div class="prts-dim q-mt-sm">{{ t('admin.users.createDescription') }}</div>
+        </q-card-section>
+        <q-card-section class="q-gutter-md">
+          <q-input
+            v-model="createUsername"
+            outlined
+            dense
+            autocomplete="off"
+            :label="t('admin.users.username')"
+            :disable="createUserSaving"
+          />
+          <q-input
+            v-model="createInitialPassword"
+            outlined
+            dense
+            type="password"
+            autocomplete="off"
+            :label="t('admin.users.initialPassword')"
+            :hint="t('admin.users.initialPasswordHint')"
+            :disable="createUserSaving"
+          />
+          <q-select
+            v-model="createRole"
+            outlined
+            dense
+            emit-value
+            map-options
+            :options="assignableRoleOptions"
+            :label="t('admin.users.role')"
+            :disable="createUserSaving"
+          />
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn
+            v-close-popup
+            flat
+            no-caps
+            :label="t('common.cancel')"
+            @click="createInitialPassword = ''"
+          />
+          <q-btn
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            :label="t('admin.users.create')"
+            :loading="createUserSaving"
+            :disable="
+              createUsername.trim().length < 3 ||
+              createInitialPassword.length < 8 ||
+              !userCapabilities.assignable_roles.includes(createRole)
+            "
+            @click="createUser"
+          />
+        </q-card-actions>
       </q-card>
-    </template>
+    </q-dialog>
 
     <q-dialog v-if="auth.canManagePos" v-model="posDialogOpen" persistent>
       <q-card style="width: min(560px, 94vw)">

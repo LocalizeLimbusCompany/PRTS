@@ -12,6 +12,8 @@ pub mod nodes {
     // —— 平台级 ——
     /// 任免管理员（仅总管理员）。
     pub const PLATFORM_ADMIN_GRANT: &str = "platform.admin.grant";
+    /// 列出、创建与严格按平台秩管理用户。
+    pub const PLATFORM_USER_MANAGE: &str = "platform.user.manage";
     /// 创建项目。
     pub const PLATFORM_PROJECT_CREATE: &str = "platform.project.create";
     /// 管理所有项目。
@@ -66,6 +68,19 @@ pub enum PlatformRole {
     Maintainer,
 }
 
+/// 平台用户秩。普通用户也进入同一 typed rule，避免 API 分支各自解释 `NULL` 角色。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PlatformRank {
+    /// 普通用户（数据库 platform_role 为 NULL）。
+    User,
+    /// 维护者。
+    Maintainer,
+    /// 管理员。
+    Admin,
+    /// 总管理员。
+    SuperAdmin,
+}
+
 /// 项目级角色。层级：拥有者 > 管理 > 校对 > 翻译。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,6 +121,7 @@ impl PlatformRole {
         match self {
             Self::SuperAdmin => &[
                 PLATFORM_ADMIN_GRANT,
+                PLATFORM_USER_MANAGE,
                 PLATFORM_PROJECT_CREATE,
                 PLATFORM_PROJECT_MANAGE_ALL,
                 PLATFORM_PROJECT_DELETE_ANY,
@@ -115,6 +131,7 @@ impl PlatformRole {
             ],
             // 管理员：除「任免管理员」外的全部平台能力。
             Self::Admin => &[
+                PLATFORM_USER_MANAGE,
                 PLATFORM_PROJECT_CREATE,
                 PLATFORM_PROJECT_MANAGE_ALL,
                 PLATFORM_PROJECT_DELETE_ANY,
@@ -130,6 +147,47 @@ impl PlatformRole {
     /// 是否拥有某权限节点。
     pub fn has(self, node: &str) -> bool {
         self.nodes().contains(&node)
+    }
+}
+
+impl PlatformRank {
+    /// 从可空平台角色取得包含普通用户的严格秩。
+    pub fn from_role(role: Option<PlatformRole>) -> Self {
+        match role {
+            Some(PlatformRole::SuperAdmin) => Self::SuperAdmin,
+            Some(PlatformRole::Admin) => Self::Admin,
+            Some(PlatformRole::Maintainer) => Self::Maintainer,
+            None => Self::User,
+        }
+    }
+}
+
+/// 创建用户与角色修改共用的严格平台秩真值。
+///
+/// `target_id = None` 表示创建用户；角色修改必须同时满足 actor 不是 target、actor 高于
+/// target 当前秩、actor 高于请求后秩。维护者与普通用户永远不能执行平台用户 mutation。
+pub fn can_manage_platform_user(
+    actor_id: i64,
+    actor_role: Option<PlatformRole>,
+    target_id: Option<i64>,
+    target_role: Option<PlatformRole>,
+    requested_role: Option<PlatformRole>,
+) -> bool {
+    let actor_rank = PlatformRank::from_role(actor_role);
+    if actor_rank < PlatformRank::Admin || target_id.is_some_and(|id| id == actor_id) {
+        return false;
+    }
+    let target_rank = PlatformRank::from_role(target_role);
+    let requested_rank = PlatformRank::from_role(requested_role);
+    target_id.is_none_or(|_| actor_rank > target_rank) && actor_rank > requested_rank
+}
+
+/// 当前 actor 可在建号/角色修改表单中选择的后秩；UI 只消费此 capability 数据。
+pub fn assignable_platform_roles(actor_role: Option<PlatformRole>) -> &'static [&'static str] {
+    match PlatformRank::from_role(actor_role) {
+        PlatformRank::SuperAdmin => &["admin", "maintainer", "user"],
+        PlatformRank::Admin => &["maintainer", "user"],
+        PlatformRank::Maintainer | PlatformRank::User => &[],
     }
 }
 
@@ -247,6 +305,8 @@ mod tests {
         assert!(PlatformRole::SuperAdmin.has(PLATFORM_ADMIN_GRANT));
         assert!(!PlatformRole::Admin.has(PLATFORM_ADMIN_GRANT));
         assert!(!PlatformRole::Maintainer.has(PLATFORM_ADMIN_GRANT));
+        assert!(PlatformRole::SuperAdmin.has(PLATFORM_USER_MANAGE));
+        assert!(PlatformRole::Admin.has(PLATFORM_USER_MANAGE));
     }
 
     #[test]
@@ -301,5 +361,81 @@ mod tests {
         assert!(ProjectRole::Manager.can_edit_locked());
         assert!(!ProjectRole::Reviewer.can_edit_locked());
         assert!(!ProjectRole::Translator.can_edit_locked());
+    }
+
+    #[test]
+    fn strict_platform_rank_rule_is_shared_by_create_and_role_change() {
+        let super_admin = Some(PlatformRole::SuperAdmin);
+        let admin = Some(PlatformRole::Admin);
+        let maintainer = Some(PlatformRole::Maintainer);
+
+        assert!(can_manage_platform_user(1, super_admin, None, None, admin));
+        assert!(can_manage_platform_user(1, admin, None, None, maintainer));
+        assert!(can_manage_platform_user(1, admin, None, None, None));
+        assert!(!can_manage_platform_user(
+            1,
+            super_admin,
+            None,
+            None,
+            super_admin
+        ));
+        assert!(!can_manage_platform_user(1, admin, None, None, admin));
+
+        assert!(can_manage_platform_user(
+            1,
+            super_admin,
+            Some(2),
+            admin,
+            maintainer
+        ));
+        assert!(can_manage_platform_user(
+            1,
+            admin,
+            Some(2),
+            maintainer,
+            None
+        ));
+        assert!(!can_manage_platform_user(
+            1,
+            admin,
+            Some(2),
+            admin,
+            maintainer
+        ));
+        assert!(!can_manage_platform_user(
+            1,
+            admin,
+            Some(2),
+            super_admin,
+            None
+        ));
+        assert!(!can_manage_platform_user(
+            1,
+            super_admin,
+            Some(1),
+            admin,
+            None
+        ));
+        assert!(!can_manage_platform_user(
+            1,
+            maintainer,
+            Some(2),
+            None,
+            None
+        ));
+    }
+
+    #[test]
+    fn assignable_roles_are_strictly_below_actor_rank() {
+        assert_eq!(
+            assignable_platform_roles(Some(PlatformRole::SuperAdmin)),
+            &["admin", "maintainer", "user"]
+        );
+        assert_eq!(
+            assignable_platform_roles(Some(PlatformRole::Admin)),
+            &["maintainer", "user"]
+        );
+        assert!(assignable_platform_roles(Some(PlatformRole::Maintainer)).is_empty());
+        assert!(assignable_platform_roles(None).is_empty());
     }
 }

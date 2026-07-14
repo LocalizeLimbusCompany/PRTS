@@ -69,6 +69,10 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("SEARCH_CURSOR_INVALID", Locale::En) => {
             "Search cursor is invalid or does not match this request"
         }
+        ("ADMIN_USER_CURSOR_INVALID", Locale::ZhCn) => "管理员用户游标无效或与当前筛选排序不匹配",
+        ("ADMIN_USER_CURSOR_INVALID", Locale::En) => {
+            "Admin user cursor is invalid or does not match this request"
+        }
         ("PROJECT_SEARCH_REBUILDING", Locale::ZhCn) => "项目词法搜索正在重建",
         ("PROJECT_SEARCH_REBUILDING", Locale::En) => "Project lexical search is rebuilding",
         ("PROJECT_SEARCH_FAILED", Locale::ZhCn) => "项目词法搜索重建失败",

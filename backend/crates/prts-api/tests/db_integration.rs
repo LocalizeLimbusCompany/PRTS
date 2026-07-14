@@ -26,6 +26,8 @@ mod job_worker;
 mod jobs;
 #[path = "../src/media.rs"]
 mod media;
+#[path = "../src/openapi.rs"]
+mod openapi;
 #[path = "../src/search_settings_worker.rs"]
 mod search_settings_worker;
 #[path = "../src/state.rs"]
@@ -41,9 +43,6 @@ mod admin_settings_routes;
 mod auth_routes;
 #[path = "../src/routes/entries.rs"]
 mod entries_routes;
-mod routes {
-    pub(crate) use crate::entries_routes as entries;
-}
 #[path = "../src/routes/files.rs"]
 mod files_routes;
 #[path = "../src/routes/language_resolution.rs"]
@@ -60,6 +59,8 @@ mod pos_routes;
 mod project_media_routes;
 #[path = "../src/routes/projects.rs"]
 mod projects_routes;
+#[path = "../src/routes/mod.rs"]
+mod routes;
 #[path = "../src/routes/search.rs"]
 mod search_routes;
 #[path = "../src/routes/tasks.rs"]
@@ -103,6 +104,7 @@ static UPLOAD_LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::
 static FILE_HISTORY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TASK_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TERMINOLOGY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static STAGE7_ADMIN_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -289,6 +291,11 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         allowed_payload_keys: &["changed_fields", "translation_lang_count"],
     },
     AuditedEntrypoint {
+        entrypoint: "routes::users::change_password",
+        action: "user.password_changed",
+        allowed_payload_keys: &["password_change_required_cleared"],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::users::create_api_key",
         action: "api_key.created",
         allowed_payload_keys: &["name", "prefix"],
@@ -322,6 +329,11 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         entrypoint: "routes::admin::grant_role",
         action: "user.platform_role_changed",
         allowed_payload_keys: &["previous_role", "new_role"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::admin::create_user",
+        action: "user.created",
+        allowed_payload_keys: &["username", "role", "password_change_required"],
     },
     AuditedEntrypoint {
         entrypoint: "routes::projects::create_project",
@@ -710,6 +722,20 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
     },
     AuditActionContract {
         action: "user.profile_updated",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "user.password_changed",
+        target_type: "user",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "user.created",
         target_type: "user",
         target_id_policy: TargetIdPolicy::Numeric,
         project_snapshot_policy: ProjectSnapshotPolicy::None,
@@ -1148,7 +1174,9 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
 /// 入口；这里保留公共函数级清单，避免遗漏不直接暴露 route 的邮箱验证与内部统计写入。
 const REPOSITORY_WRITERS: &[&str] = &[
     "users::create_password_user",
+    "users::create_admin_password_user_tx",
     "users::update_profile",
+    "users::update_password_tx",
     "users::set_platform_role",
     "users::mark_email_verified",
     "users::create_oauth_user",
@@ -1281,7 +1309,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        69,
+        71,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -1290,10 +1318,10 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         "auth/session writer inventory 发生漂移"
     );
     assert_eq!(UNAUDITED_READS.len(), 33, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 77, "审计入口 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 79, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        72,
+        74,
         "action 合同 inventory 发生漂移"
     );
 
@@ -4270,6 +4298,7 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
     admin_routes::grant_role(
         State(state.clone()),
         audit_contract_current_user(&actor),
+        error::RequestLocale(prts_common::i18n::Locale::ZhCn),
         Path(target.id),
         Json(admin_routes::GrantRoleReq {
             role: Some("maintainer".to_string()),
@@ -14524,4 +14553,1024 @@ async fn public_editor_is_anonymous_read_only_and_private_editor_fails_closed() 
         .execute(&state.db)
         .await
         .unwrap();
+}
+
+// ======================== Task 7.1 admin users / password RED contracts ========================
+
+/// `0014` 是阶段 7 唯一迁移，必须一次冻结管理员建号、exact-tenths CP 与 Task 7.3
+/// 延迟删除需要的完整 schema；后续任务不得再回补这些列、外键或 claim 索引。
+#[test]
+fn stage7_migration_source_declares_complete_admin_cp_and_deletion_schema() {
+    let migration_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../migrations/0014_admin_delete_cp.sql");
+    let source = std::fs::read_to_string(&migration_path).unwrap_or_else(|error| {
+        panic!("Task 7.1 必须先创建唯一迁移 0014_admin_delete_cp.sql: {error}")
+    });
+    let normalized = source.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    for required in [
+        "password_change_required BOOLEAN NOT NULL DEFAULT FALSE",
+        "cp_tenths BIGINT NOT NULL DEFAULT 0",
+        "DROP COLUMN cp",
+        "memberships",
+        "deletion_scheduled_at TIMESTAMPTZ",
+        "deletion_requested_by BIGINT",
+        "deletion_job_id BIGINT",
+        "REFERENCES users (id) ON DELETE SET NULL",
+        "REFERENCES jobs (id) ON DELETE SET NULL",
+        "projects_deletion_state_chk",
+        "projects_deletion_job_unique_idx",
+        "projects_pending_deletion_idx",
+        "jobs_project_purge_claim_idx",
+    ] {
+        assert!(
+            normalized.contains(required),
+            "0014 缺少阶段 7 schema 合同片段 {required:?}"
+        );
+    }
+    assert!(
+        normalized.contains("ROUND(cp * 10") || normalized.contains("round(cp * 10"),
+        "旧 users.cp 必须受控四舍五入转换为 exact tenths"
+    );
+    assert!(
+        !normalized.to_ascii_lowercase().contains("decimal")
+            && !normalized.contains("BigDecimal")
+            && !normalized.contains("rust_decimal"),
+        "0014 不得引入 decimal 家族类型"
+    );
+    assert!(
+        !normalized.contains("deletion_job_id BIGINT REFERENCES jobs (id) ON DELETE CASCADE"),
+        "project -> purge job 不得 cascade"
+    );
+}
+
+/// 真实 PostgreSQL catalog 合同：列类型/default/nullability、删除策略、唯一性、pending
+/// 查询与 purge worker claim 索引都必须由 0014 一次建立。
+#[tokio::test]
+async fn stage7_database_schema_contract_is_complete_before_admin_implementation() {
+    use std::collections::HashMap;
+
+    let pool = pool().await;
+    let columns: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT table_name || '.' || column_name, udt_name, is_nullable, column_default
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND (table_name, column_name) IN (
+             ('users', 'cp'),
+             ('users', 'cp_tenths'),
+             ('users', 'password_change_required'),
+             ('memberships', 'cp_tenths'),
+             ('projects', 'deletion_scheduled_at'),
+             ('projects', 'deletion_requested_by'),
+             ('projects', 'deletion_job_id')
+           )",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let columns: HashMap<_, _> = columns
+        .into_iter()
+        .map(|(name, ty, nullable, default)| (name, (ty, nullable, default)))
+        .collect();
+
+    assert!(
+        !columns.contains_key("users.cp"),
+        "旧浮点 users.cp 必须删除"
+    );
+    for (name, ty, nullable, default_fragment) in [
+        ("users.cp_tenths", "int8", "NO", "0"),
+        ("memberships.cp_tenths", "int8", "NO", "0"),
+        ("users.password_change_required", "bool", "NO", "false"),
+    ] {
+        let column = columns
+            .get(name)
+            .unwrap_or_else(|| panic!("0014 缺少 {name}"));
+        assert_eq!(column.0, ty, "{name} 类型错误");
+        assert_eq!(column.1, nullable, "{name} nullability 错误");
+        assert!(
+            column
+                .2
+                .as_deref()
+                .is_some_and(|default| default.contains(default_fragment)),
+            "{name} default 错误: {:?}",
+            column.2
+        );
+    }
+    for name in [
+        "projects.deletion_scheduled_at",
+        "projects.deletion_requested_by",
+        "projects.deletion_job_id",
+    ] {
+        let column = columns
+            .get(name)
+            .unwrap_or_else(|| panic!("0014 缺少 {name}"));
+        assert_eq!(column.1, "YES", "{name} 必须 nullable");
+    }
+    assert_eq!(columns["projects.deletion_scheduled_at"].0, "timestamptz");
+    assert_eq!(columns["projects.deletion_requested_by"].0, "int8");
+    assert_eq!(columns["projects.deletion_job_id"].0, "int8");
+
+    let foreign_keys: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT constraint_row.conname,
+                source_table.relname,
+                target_table.relname,
+                constraint_row.confdeltype::TEXT
+         FROM pg_constraint AS constraint_row
+         JOIN pg_class AS source_table ON source_table.oid = constraint_row.conrelid
+         JOIN pg_class AS target_table ON target_table.oid = constraint_row.confrelid
+         JOIN pg_namespace AS namespace ON namespace.oid = source_table.relnamespace
+         WHERE namespace.nspname = 'public'
+           AND constraint_row.contype = 'f'
+           AND ((source_table.relname = 'projects' AND target_table.relname IN ('users', 'jobs'))
+             OR (source_table.relname = 'jobs' AND target_table.relname = 'projects'))
+         ORDER BY constraint_row.conname",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let by_name: HashMap<_, _> = foreign_keys
+        .iter()
+        .map(|(name, source, target, action)| {
+            (
+                name.as_str(),
+                (source.as_str(), target.as_str(), action.as_str()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        by_name.get("projects_deletion_requested_by_fkey"),
+        Some(&("projects", "users", "n")),
+        "deletion_requested_by 必须显式 ON DELETE SET NULL"
+    );
+    assert_eq!(
+        by_name.get("projects_deletion_job_id_fkey"),
+        Some(&("projects", "jobs", "n")),
+        "deletion_job_id 必须 nullable REFERENCES jobs ON DELETE SET NULL"
+    );
+    assert_eq!(
+        by_name.get("jobs_project_id_fkey"),
+        Some(&("jobs", "projects", "n")),
+        "purge job 必须在 project 删除后以 project_id=NULL 保留"
+    );
+    assert!(
+        foreign_keys
+            .iter()
+            .filter(|(_, source, target, _)| {
+                (source == "projects" && target == "jobs")
+                    || (source == "jobs" && target == "projects")
+            })
+            .all(|(_, _, _, action)| action != "c"),
+        "projects/jobs 之间不得形成双向 cascade"
+    );
+
+    let deletion_check: String = sqlx::query_scalar(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint
+         WHERE conrelid = 'projects'::regclass
+           AND conname = 'projects_deletion_state_chk'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("0014 必须声明 pending deletion 字段一致性 CHECK");
+    for field in [
+        "deletion_scheduled_at",
+        "deletion_requested_by",
+        "deletion_job_id",
+    ] {
+        assert!(
+            deletion_check.contains(field),
+            "deletion CHECK 缺少 {field}"
+        );
+    }
+
+    let index_defs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT indexname, indexdef FROM pg_indexes
+         WHERE schemaname = 'public'
+           AND indexname = ANY($1::TEXT[])
+         ORDER BY indexname",
+    )
+    .bind(
+        &[
+            "jobs_project_purge_claim_idx",
+            "projects_deletion_job_unique_idx",
+            "projects_pending_deletion_idx",
+        ][..],
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let index_defs: HashMap<_, _> = index_defs.into_iter().collect();
+    let unique_job = index_defs
+        .get("projects_deletion_job_unique_idx")
+        .expect("每个 purge job 最多绑定一个 project");
+    assert!(unique_job.contains("UNIQUE"));
+    assert!(unique_job.contains("deletion_job_id"));
+    assert!(unique_job.contains("IS NOT NULL"));
+    let pending = index_defs
+        .get("projects_pending_deletion_idx")
+        .expect("pending deletion 查询必须有 deadline/id 键集索引");
+    assert!(pending.contains("deletion_scheduled_at"));
+    assert!(pending.contains("id"));
+    assert!(pending.contains("IS NOT NULL"));
+    let claim = index_defs
+        .get("jobs_project_purge_claim_idx")
+        .expect("project_purge worker claim 必须有专用 partial index");
+    assert!(claim.contains("run_after"));
+    assert!(claim.contains("id"));
+    assert!(claim.contains("project_purge"));
+    assert!(claim.contains("queued"));
+}
+
+/// RED source contract：平台秩真值必须位于 prts-core；列表/建号/角色修改与密码修改必须
+/// 复用 typed rule、签名 cursor、事务内锁定重验和封闭审计事件。
+#[test]
+fn stage7_admin_user_typed_rule_cursor_transaction_and_redaction_sources_exist() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let permission =
+        std::fs::read_to_string(root.join("backend/crates/prts-core/src/permission.rs")).unwrap();
+    for required in [
+        "pub enum PlatformRank",
+        "User",
+        "can_manage_platform_user",
+        "actor_id",
+        "target_id",
+        "requested_role",
+    ] {
+        assert!(
+            permission.contains(required),
+            "typed 平台秩规则缺少 {required}"
+        );
+    }
+
+    let admin =
+        std::fs::read_to_string(root.join("backend/crates/prts-api/src/routes/admin.rs")).unwrap();
+    for required in [
+        "pub async fn list_users",
+        "pub async fn create_user",
+        "can_manage_platform_user",
+        "find_by_id_for_update_tx",
+        "append_event_tx",
+        "UserCreated",
+        "UserPlatformRoleChanged",
+        "HmacSha256",
+        "ADMIN_USER_CURSOR_INVALID",
+        "next_after",
+        "password_change_required",
+    ] {
+        assert!(admin.contains(required), "admin 用户工作流缺少 {required}");
+    }
+    assert!(
+        !admin.to_ascii_uppercase().contains(" OFFSET "),
+        "管理员用户列表禁止 OFFSET 分页"
+    );
+    for binding in ["version", "sort", "filter", "last_user_id"] {
+        assert!(admin.contains(binding), "签名 cursor 未绑定 {binding}");
+    }
+
+    let users_route =
+        std::fs::read_to_string(root.join("backend/crates/prts-api/src/routes/users.rs")).unwrap();
+    for required in [
+        "pub async fn change_password",
+        "current_password",
+        "new_password",
+        "find_by_id_for_update_tx",
+        "verify_password",
+        "password_change_required",
+        "UserPasswordChanged",
+        "append_event_tx",
+    ] {
+        assert!(
+            users_route.contains(required),
+            "密码修改事务缺少 {required}"
+        );
+    }
+    let audit = std::fs::read_to_string(root.join("backend/crates/prts-db/src/audit.rs")).unwrap();
+    for forbidden in ["initial_password:", "current_password:", "new_password:"] {
+        assert!(
+            !audit.contains(forbidden),
+            "typed audit event 不得携带密码字段 {forbidden}"
+        );
+    }
+
+    let route_assembly =
+        std::fs::read_to_string(root.join("backend/crates/prts-api/src/routes/mod.rs")).unwrap();
+    for required in [
+        "admin::list_users",
+        "admin::create_user",
+        "users::change_password",
+    ] {
+        assert!(
+            route_assembly.contains(required),
+            "OpenAPI/路由装配缺少 {required}"
+        );
+    }
+}
+
+async fn stage7_login_actor(
+    state: &state::AppState,
+    prefix: &str,
+    role: Option<&str>,
+) -> (prts_db::models::User, String) {
+    let (user, tokens) = audit_contract_login_fixture(state, prefix).await;
+    if let Some(role) = role {
+        users::set_platform_role(&state.db, user.id, Some(role))
+            .await
+            .unwrap();
+    }
+    let user = users::find_by_id(&state.db, user.id)
+        .await
+        .unwrap()
+        .expect("stage 7 actor 存在");
+    (user, tokens.access_token)
+}
+
+async fn stage7_http_json(
+    state: &state::AppState,
+    method: axum::http::Method,
+    uri: &str,
+    token: &str,
+    locale: &str,
+    body: Option<serde_json::Value>,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    use axum::body::Body;
+    use axum::http::{header, Request};
+    use tower::ServiceExt;
+
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::ACCEPT_LANGUAGE, locale);
+    let body = match body {
+        Some(body) => {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+            Body::from(serde_json::to_vec(&body).unwrap())
+        }
+        None => Body::empty(),
+    };
+    let response = routes::app(state.clone())
+        .oneshot(builder.body(body).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json = if bytes.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&bytes).expect("stage 7 HTTP response 必须是 JSON")
+    };
+    (status, json)
+}
+
+async fn stage7_role_request(
+    state: &state::AppState,
+    token: &str,
+    target_id: i64,
+    role: Option<&str>,
+    locale: &str,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    stage7_http_json(
+        state,
+        axum::http::Method::POST,
+        &format!("/admin/users/{target_id}/role"),
+        token,
+        locale,
+        Some(serde_json::json!({"role": role})),
+    )
+    .await
+}
+
+/// 严格平台秩同时约束 actor、target 当前秩、请求后秩与 self；拒绝路径不得产生业务写入
+/// 或审计，成功路径必须写唯一 typed audit。
+#[tokio::test]
+async fn stage7_platform_rank_matrix_is_strict_localized_and_fail_closed() {
+    let _guard = STAGE7_ADMIN_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let (super_admin, super_token) =
+        stage7_login_actor(&state, "rank-super", Some("super_admin")).await;
+    let (admin, admin_token) = stage7_login_actor(&state, "rank-admin", Some("admin")).await;
+    let peer_super =
+        audit_contract_create_user(&state.db, "rank-peer-super", Some("super_admin")).await;
+    let peer_admin = audit_contract_create_user(&state.db, "rank-peer-admin", Some("admin")).await;
+    let super_target_admin =
+        audit_contract_create_user(&state.db, "rank-super-target-admin", Some("admin")).await;
+    let admin_target_maintainer = audit_contract_create_user(
+        &state.db,
+        "rank-admin-target-maintainer",
+        Some("maintainer"),
+    )
+    .await;
+    let admin_target_user =
+        audit_contract_create_user(&state.db, "rank-admin-target-user", None).await;
+    let admin_promote_too_high =
+        audit_contract_create_user(&state.db, "rank-admin-promote-high", None).await;
+
+    for (target_id, token, locale, expected_message) in [
+        (super_admin.id, super_token.as_str(), "en", "Forbidden"),
+        (
+            peer_super.id,
+            super_token.as_str(),
+            "zh-CN",
+            "无权限执行此操作",
+        ),
+        (admin.id, admin_token.as_str(), "en", "Forbidden"),
+        (
+            peer_admin.id,
+            admin_token.as_str(),
+            "zh-CN",
+            "无权限执行此操作",
+        ),
+        (peer_super.id, admin_token.as_str(), "en", "Forbidden"),
+    ] {
+        let before_role: Option<String> =
+            sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
+                .bind(target_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        let before_audit: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log
+             WHERE actor_id = $1 AND action = 'user.platform_role_changed' AND target_id = $2",
+        )
+        .bind(if token == super_token {
+            super_admin.id
+        } else {
+            admin.id
+        })
+        .bind(target_id.to_string())
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        let (status, body) = stage7_role_request(&state, token, target_id, None, locale).await;
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(body["code"], "forbidden");
+        assert_eq!(body["message"], expected_message);
+        let after_role: Option<String> =
+            sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
+                .bind(target_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(after_role, before_role, "拒绝路径不得改变 target role");
+        let after_audit: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log
+             WHERE actor_id = $1 AND action = 'user.platform_role_changed' AND target_id = $2",
+        )
+        .bind(if token == super_token {
+            super_admin.id
+        } else {
+            admin.id
+        })
+        .bind(target_id.to_string())
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        assert_eq!(after_audit, before_audit, "拒绝路径不得写业务审计");
+    }
+
+    for (token, actor_id, target_id, requested_role) in [
+        (
+            super_token.as_str(),
+            super_admin.id,
+            super_target_admin.id,
+            Some("maintainer"),
+        ),
+        (
+            admin_token.as_str(),
+            admin.id,
+            admin_target_maintainer.id,
+            None,
+        ),
+        (
+            admin_token.as_str(),
+            admin.id,
+            admin_target_user.id,
+            Some("maintainer"),
+        ),
+    ] {
+        let (status, body) =
+            stage7_role_request(&state, token, target_id, requested_role, "en").await;
+        assert_eq!(status, axum::http::StatusCode::NO_CONTENT, "{body}");
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
+                .bind(target_id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(stored.as_deref(), requested_role);
+        let audit: Vec<serde_json::Value> = sqlx::query_scalar(
+            "SELECT payload FROM audit_log
+             WHERE actor_id = $1 AND action = 'user.platform_role_changed' AND target_id = $2",
+        )
+        .bind(actor_id)
+        .bind(target_id.to_string())
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+        assert_eq!(audit.len(), 1, "成功 mutation 必须精确写一条 typed audit");
+        audit_contract_assert_json_has_no_sensitive_keys(&audit[0]);
+    }
+
+    let (status, body) = stage7_role_request(
+        &state,
+        &admin_token,
+        admin_promote_too_high.id,
+        Some("admin"),
+        "en",
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{body}");
+    let unchanged: Option<String> =
+        sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
+            .bind(admin_promote_too_high.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(unchanged, None, "admin 不得授予同级 admin");
+}
+
+/// 审计插入失败必须回滚角色业务写入，证明 mutation 与 typed audit 位于同一事务。
+#[tokio::test]
+async fn stage7_platform_role_audit_failure_rolls_back_business_mutation() {
+    let _guard = STAGE7_ADMIN_TEST_LOCK.lock().await;
+    let normal_state = audit_contract_state().await;
+    let (actor, token) =
+        stage7_login_actor(&normal_state, "rank-audit-fail", Some("super_admin")).await;
+    let target = audit_contract_create_user(&normal_state.db, "rank-audit-target", None).await;
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let (status, body) =
+        stage7_role_request(&failing_state, &token, target.id, Some("maintainer"), "en").await;
+    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["code"], "AUDIT_UNAVAILABLE");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT platform_role FROM users WHERE id = $1")
+            .bind(target.id)
+            .fetch_one(&normal_state.db)
+            .await
+            .unwrap();
+    assert_eq!(stored, None, "audit 失败必须回滚角色写入");
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log
+         WHERE actor_id = $1 AND action = 'user.platform_role_changed' AND target_id = $2",
+    )
+    .bind(actor.id)
+    .bind(target.id.to_string())
+    .fetch_one(&normal_state.db)
+    .await
+    .unwrap();
+    assert_eq!(audit_count, 0, "失败事务不得留下角色变更 audit");
+}
+
+async fn stage7_list_users_request(
+    state: &state::AppState,
+    token: &str,
+    query: &str,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    stage7_http_json(
+        state,
+        axum::http::Method::GET,
+        &format!("/admin/users?{query}"),
+        token,
+        "en",
+        None,
+    )
+    .await
+}
+
+/// GET /admin/users 必须在四种公开排序下使用 `(sort value, user_id)` 键集分页；cursor
+/// 签名并绑定规范化 filter/sort，畸形、篡改和跨请求复用均稳定拒绝。
+#[tokio::test]
+async fn stage7_admin_user_list_filters_sorts_and_signed_cursors_are_stable() {
+    use std::collections::HashSet;
+
+    let _guard = STAGE7_ADMIN_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let (_actor, token) = stage7_login_actor(&state, "list-users-super", Some("super_admin")).await;
+    let marker = audit_jobs_unique("stage7-list")
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>();
+    let mut seeded = Vec::new();
+    for (index, suffix) in ["Alpha", "alpha", "bravo", "charlie", "delta", "echo"]
+        .into_iter()
+        .enumerate()
+    {
+        let username = format!("{marker}-{suffix}");
+        let hash = prts_auth::password::hash_password("stage7-list-password").unwrap();
+        let user = users::create_password_user(&state.db, &username, None, &hash, "active")
+            .await
+            .unwrap();
+        if index >= 4 {
+            users::set_platform_role(&state.db, user.id, Some("maintainer"))
+                .await
+                .unwrap();
+        }
+        let created_at = chrono::DateTime::parse_from_rfc3339(match index {
+            0 | 1 => "2040-01-01T00:00:00Z",
+            2 => "2040-01-01T00:00:01Z",
+            3 => "2040-01-01T00:00:02Z",
+            4 => "2040-01-01T00:00:03Z",
+            _ => "2040-01-01T00:00:04Z",
+        })
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+        sqlx::query("UPDATE users SET created_at = $2 WHERE id = $1")
+            .bind(user.id)
+            .bind(created_at)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        seeded.push(user.id);
+    }
+
+    for sort in [
+        "username_asc",
+        "username_desc",
+        "created_at_asc",
+        "created_at_desc",
+    ] {
+        let expected: Vec<i64> = match sort {
+            "username_asc" => sqlx::query_scalar(
+                "SELECT id FROM users WHERE username ILIKE $1 AND platform_role IS NULL
+                 ORDER BY lower(username) ASC, id ASC",
+            )
+            .bind(format!("%{marker}%"))
+            .fetch_all(&state.db)
+            .await
+            .unwrap(),
+            "username_desc" => sqlx::query_scalar(
+                "SELECT id FROM users WHERE username ILIKE $1 AND platform_role IS NULL
+                 ORDER BY lower(username) DESC, id DESC",
+            )
+            .bind(format!("%{marker}%"))
+            .fetch_all(&state.db)
+            .await
+            .unwrap(),
+            "created_at_asc" => sqlx::query_scalar(
+                "SELECT id FROM users WHERE username ILIKE $1 AND platform_role IS NULL
+                 ORDER BY created_at ASC, id ASC",
+            )
+            .bind(format!("%{marker}%"))
+            .fetch_all(&state.db)
+            .await
+            .unwrap(),
+            _ => sqlx::query_scalar(
+                "SELECT id FROM users WHERE username ILIKE $1 AND platform_role IS NULL
+                 ORDER BY created_at DESC, id DESC",
+            )
+            .bind(format!("%{marker}%"))
+            .fetch_all(&state.db)
+            .await
+            .unwrap(),
+        };
+        assert_eq!(expected.len(), 4);
+        let mut after: Option<String> = None;
+        let mut observed = Vec::new();
+        loop {
+            let mut query = format!("q={marker}&role=user&sort={sort}&limit=2");
+            if let Some(cursor) = after.as_deref() {
+                query.push_str("&after=");
+                query.push_str(cursor);
+            }
+            let (status, body) = stage7_list_users_request(&state, &token, &query).await;
+            assert_eq!(status, axum::http::StatusCode::OK, "{body}");
+            let items = body["items"]
+                .as_array()
+                .expect("列表必须返回 items envelope");
+            assert!(!items.is_empty(), "非末页不得返回空 items");
+            for item in items {
+                assert!(item.get("cp").is_none(), "全 0 CP 列不得进入用户列表");
+                assert!(
+                    item.get("cp_tenths").is_none(),
+                    "exact-tenths 也不得作为全 0 列进入列表"
+                );
+                observed.push(item["id"].as_i64().expect("user id"));
+            }
+            after = body["next_after"].as_str().map(str::to_string);
+            if after.is_none() {
+                break;
+            }
+        }
+        assert_eq!(observed, expected, "{sort} 键集顺序或边界错误");
+        assert_eq!(
+            observed.iter().copied().collect::<HashSet<_>>().len(),
+            observed.len(),
+            "翻页不得重复"
+        );
+    }
+
+    let (_, first_page) = stage7_list_users_request(
+        &state,
+        &token,
+        &format!("q={marker}&role=user&sort=username_asc&limit=2"),
+    )
+    .await;
+    let cursor = first_page["next_after"]
+        .as_str()
+        .expect("第一页必须产生 cursor");
+    let mut tampered = cursor.to_string();
+    let replacement = if tampered.ends_with('A') { 'B' } else { 'A' };
+    tampered.pop();
+    tampered.push(replacement);
+    for query in [
+        format!("q={marker}&role=user&sort=username_desc&limit=2&after={cursor}"),
+        format!("q={marker}&role=maintainer&sort=username_asc&limit=2&after={cursor}"),
+        format!("q={marker}x&role=user&sort=username_asc&limit=2&after={cursor}"),
+        format!("q={marker}&role=user&sort=username_asc&limit=2&after={tampered}"),
+        format!("q={marker}&role=user&sort=username_asc&limit=2&after=malformed"),
+    ] {
+        let (status, body) = stage7_list_users_request(&state, &token, &query).await;
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["code"], "ADMIN_USER_CURSOR_INVALID");
+        assert_eq!(
+            body["message"],
+            "Admin user cursor is invalid or does not match this request"
+        );
+    }
+}
+
+/// 管理员建号与持久密码提醒：严格秩同样用于 create；初始密码不得进入任何响应、审计、
+/// job 或错误，登录不被提醒阻断，成功改密在同一事务清除提醒并写脱敏 audit。
+#[tokio::test]
+async fn stage7_admin_create_and_nonblocking_password_change_are_persistent_and_redacted() {
+    let _guard = STAGE7_ADMIN_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let (super_admin, super_token) =
+        stage7_login_actor(&state, "create-super", Some("super_admin")).await;
+    let (admin, admin_token) = stage7_login_actor(&state, "create-admin", Some("admin")).await;
+    let raw_marker = audit_jobs_unique("stage7-create")
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>();
+    let marker = format!("s7{}", &raw_marker[raw_marker.len().saturating_sub(12)..]);
+    let username = format!("{marker}-managed");
+    let initial_password = format!("INITIAL_PASSWORD_{marker}");
+
+    let (status, created) = stage7_http_json(
+        &state,
+        axum::http::Method::POST,
+        "/admin/users",
+        &admin_token,
+        "en",
+        Some(serde_json::json!({
+            "username": username,
+            "initial_password": initial_password,
+            "role": "maintainer"
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED, "{created}");
+    let created_text = serde_json::to_string(&created).unwrap();
+    assert!(!created_text.contains(&initial_password));
+    assert!(!created_text.contains("password_hash"));
+    assert_eq!(created["password_change_required"], true);
+    assert_eq!(created["platform_role"], "maintainer");
+    let created_id = created["id"].as_i64().expect("created user id");
+
+    for (index, (token, requested_role)) in [
+        (admin_token.as_str(), "admin"),
+        (super_token.as_str(), "super_admin"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let denied_username = format!("{marker}-d{index}");
+        let (status, body) = stage7_http_json(
+            &state,
+            axum::http::Method::POST,
+            "/admin/users",
+            token,
+            "en",
+            Some(serde_json::json!({
+                "username": denied_username,
+                "initial_password": initial_password,
+                "role": requested_role
+            })),
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["code"], "forbidden");
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)")
+                .bind(denied_username)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert!(!exists, "create rank 拒绝不得写用户");
+    }
+
+    let stored: (bool, Option<String>, String) = sqlx::query_as(
+        "SELECT password_change_required, platform_role, password_hash
+         FROM users WHERE id = $1",
+    )
+    .bind(created_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(stored.0);
+    assert_eq!(stored.1.as_deref(), Some("maintainer"));
+    assert!(prts_auth::password::verify_password(
+        &initial_password,
+        &stored.2
+    ));
+
+    let create_audit: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM audit_log
+         WHERE actor_id = $1 AND action = 'user.created' AND target_id = $2",
+    )
+    .bind(admin.id)
+    .bind(created_id.to_string())
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(create_audit.len(), 1);
+    let create_audit_text = serde_json::to_string(&create_audit).unwrap();
+    assert!(!create_audit_text.contains(&initial_password));
+    assert!(!create_audit_text.contains(&stored.2));
+    for payload in &create_audit {
+        audit_contract_assert_json_has_no_sensitive_keys(payload);
+    }
+    let job_leaks: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs
+         WHERE payload::TEXT LIKE '%' || $1 || '%'
+            OR COALESCE(result, '{}'::JSONB)::TEXT LIKE '%' || $1 || '%'",
+    )
+    .bind(&initial_password)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(job_leaks, 0);
+
+    let axum::Json(login) = auth_routes::login(
+        axum::extract::State(state.clone()),
+        axum::Json(auth_routes::LoginReq {
+            username: username.clone(),
+            password: initial_password.clone(),
+        }),
+    )
+    .await
+    .expect_api("管理员建号后可登录");
+    let login_user = serde_json::to_value(&login.user).unwrap();
+    assert_eq!(login_user["password_change_required"], true);
+    for uri in ["/me", "/projects"] {
+        let (status, _) = stage7_http_json(
+            &state,
+            axum::http::Method::GET,
+            uri,
+            &login.access_token,
+            "en",
+            None,
+        )
+        .await;
+        assert_eq!(status, axum::http::StatusCode::OK, "提醒不得阻断 {uri}");
+    }
+
+    let new_password = format!("NEW_PASSWORD_{marker}");
+    let (status, body) = stage7_http_json(
+        &state,
+        axum::http::Method::PUT,
+        "/me/password",
+        &login.access_token,
+        "en",
+        Some(serde_json::json!({
+            "current_password": initial_password,
+            "new_password": new_password
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT, "{body}");
+    let changed: (bool, String) =
+        sqlx::query_as("SELECT password_change_required, password_hash FROM users WHERE id = $1")
+            .bind(created_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert!(!changed.0, "改密成功必须持久清除提醒");
+    assert!(prts_auth::password::verify_password(
+        &new_password,
+        &changed.1
+    ));
+    assert!(!prts_auth::password::verify_password(
+        &initial_password,
+        &changed.1
+    ));
+    let password_audit: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM audit_log
+         WHERE actor_id = $1 AND action = 'user.password_changed' AND target_id = $2",
+    )
+    .bind(created_id)
+    .bind(created_id.to_string())
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(password_audit.len(), 1);
+    let password_audit_text = serde_json::to_string(&password_audit).unwrap();
+    assert!(!password_audit_text.contains(&initial_password));
+    assert!(!password_audit_text.contains(&new_password));
+    assert!(!password_audit_text.contains(&changed.1));
+    audit_contract_assert_json_has_no_sensitive_keys(&password_audit[0]);
+
+    let duplicate_secret = format!("DUPLICATE_SECRET_{marker}");
+    let (status, error) = stage7_http_json(
+        &state,
+        axum::http::Method::POST,
+        "/admin/users",
+        &super_token,
+        "en",
+        Some(serde_json::json!({
+            "username": username,
+            "initial_password": duplicate_secret,
+            "role": "user"
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CONFLICT);
+    assert!(!serde_json::to_string(&error)
+        .unwrap()
+        .contains(&duplicate_secret));
+    let _ = super_admin;
+}
+
+/// 建号与改密都必须和 typed audit 原子提交；审计故障不得留下新用户、密码哈希变化或
+/// 已清除的持久提醒。
+#[tokio::test]
+async fn stage7_create_and_password_change_audit_failures_roll_back_atomically() {
+    let _guard = STAGE7_ADMIN_TEST_LOCK.lock().await;
+    let normal_state = audit_contract_state().await;
+    let (_admin, admin_token) =
+        stage7_login_actor(&normal_state, "create-audit-admin", Some("admin")).await;
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let suffix = audit_jobs_unique("s7fail")
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>();
+    let username = format!("s7f{}", &suffix[suffix.len().saturating_sub(10)..]);
+    let initial_password = "INITIAL_AUDIT_FAILURE_PASSWORD";
+    let (status, body) = stage7_http_json(
+        &failing_state,
+        axum::http::Method::POST,
+        "/admin/users",
+        &admin_token,
+        "en",
+        Some(serde_json::json!({
+            "username": username,
+            "initial_password": initial_password,
+            "role": "user"
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["code"], "AUDIT_UNAVAILABLE");
+    assert!(!serde_json::to_string(&body)
+        .unwrap()
+        .contains(initial_password));
+    let created: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)")
+            .bind(&username)
+            .fetch_one(&normal_state.db)
+            .await
+            .unwrap();
+    assert!(!created, "建号 audit 失败必须回滚 user INSERT");
+
+    let managed = audit_contract_create_user(&normal_state.db, "password-audit-user", None).await;
+    let old_hash = managed.password_hash.clone().unwrap();
+    sqlx::query("UPDATE users SET password_change_required = TRUE WHERE id = $1")
+        .bind(managed.id)
+        .execute(&normal_state.db)
+        .await
+        .unwrap();
+    let axum::Json(login) = auth_routes::login(
+        axum::extract::State(normal_state.clone()),
+        axum::Json(auth_routes::LoginReq {
+            username: managed.username,
+            password: "audit-contract-password".to_string(),
+        }),
+    )
+    .await
+    .expect_api("改密 audit failure fixture 可登录");
+    let new_password = "NEW_AUDIT_FAILURE_PASSWORD";
+    let (status, body) = stage7_http_json(
+        &failing_state,
+        axum::http::Method::PUT,
+        "/me/password",
+        &login.access_token,
+        "en",
+        Some(serde_json::json!({
+            "current_password": "audit-contract-password",
+            "new_password": new_password
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["code"], "AUDIT_UNAVAILABLE");
+    assert!(!serde_json::to_string(&body).unwrap().contains(new_password));
+    let unchanged: (String, bool) =
+        sqlx::query_as("SELECT password_hash, password_change_required FROM users WHERE id = $1")
+            .bind(managed.id)
+            .fetch_one(&normal_state.db)
+            .await
+            .unwrap();
+    assert_eq!(unchanged.0, old_hash, "改密 audit 失败必须回滚 hash");
+    assert!(unchanged.1, "改密 audit 失败必须保留持久提醒");
 }

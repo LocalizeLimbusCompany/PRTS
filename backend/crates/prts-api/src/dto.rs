@@ -21,12 +21,14 @@ pub struct UserDto {
     pub description: String,
     /// 个人翻译语言偏好（BCP-47）。
     pub translation_langs: Vec<String>,
-    /// 贡献分。
-    pub cp: f64,
+    /// Exact contribution tenths; one stored unit equals 0.1 CP.
+    pub cp_tenths: i64,
     /// 平台角色（super_admin|admin|maintainer），普通用户为 null。
     pub platform_role: Option<String>,
     /// 显式平台能力；客户端不得从 platform_role 字符串推断授权。
     pub platform_capabilities: capabilities::PlatformCapabilitiesDto,
+    /// 持久、非阻断的密码修改提醒。
+    pub password_change_required: bool,
     /// 加入时间（RFC3339）。
     pub created_at: String,
 }
@@ -40,11 +42,12 @@ impl From<&User> for UserDto {
             avatar_url: u.avatar_url.clone(),
             description: u.description.clone(),
             translation_langs: u.translation_langs.clone(),
-            cp: u.cp,
+            cp_tenths: u.cp_tenths,
             platform_role: u.platform_role.clone(),
             platform_capabilities: capabilities::PlatformCapabilitiesDto::from_role(
                 u.platform_role.as_deref(),
             ),
+            password_change_required: u.password_change_required,
             created_at: u.created_at.to_rfc3339(),
         }
     }

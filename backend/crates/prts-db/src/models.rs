@@ -14,8 +14,11 @@ pub struct User {
     pub avatar_url: Option<String>,
     pub description: String,
     pub translation_langs: Vec<String>,
-    pub cp: f64,
+    /// Exact tenths of one CP; one stored unit equals 0.1 CP.
+    pub cp_tenths: i64,
     pub platform_role: Option<String>,
+    /// Persistent, non-blocking reminder set for administrator-created password accounts.
+    pub password_change_required: bool,
     pub email_verified: bool,
     pub status: String,
     pub created_at: DateTime<Utc>,
@@ -76,6 +79,9 @@ pub struct Project {
     pub avatar_key: Option<String>,
     pub avatar_content_type: Option<String>,
     pub avatar_updated_at: Option<DateTime<Utc>>,
+    pub deletion_scheduled_at: Option<DateTime<Utc>>,
+    pub deletion_requested_by: Option<i64>,
+    pub deletion_job_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -86,6 +92,8 @@ pub struct Membership {
     pub project_id: i64,
     pub user_id: i64,
     pub role: String,
+    /// Exact project-scoped CP tenths; not exposed until a real leaderboard is implemented.
+    pub cp_tenths: i64,
     pub created_at: DateTime<Utc>,
 }
 

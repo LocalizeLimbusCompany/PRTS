@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
+import { useI18n } from 'vue-i18n'
 
 import { apiErrorMessage, usersApi, type ApiKeyDto, type ExternalAccountDto } from '@/api'
 import { COMMON_LANGS, langLabel } from '@/lib/langs'
@@ -9,6 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const $q = useQuasar()
+const { t } = useI18n()
 
 const desc = ref('')
 const langs = ref<string[]>([])
@@ -38,6 +40,44 @@ async function saveProfile() {
     $q.notify({ type: 'negative', message: apiErrorMessage(e, '保存失败') })
   } finally {
     saving.value = false
+  }
+}
+
+/* —— 密码修改与持久提醒 —— */
+const currentPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const passwordSaving = ref(false)
+const passwordFormReady = computed(
+  () =>
+    currentPassword.value.length > 0 &&
+    newPassword.value.length >= 8 &&
+    newPassword.value === confirmPassword.value,
+)
+
+async function changePassword() {
+  if (newPassword.value !== confirmPassword.value) {
+    $q.notify({ type: 'negative', message: t('profile.password.mismatch') })
+    return
+  }
+  passwordSaving.value = true
+  try {
+    await usersApi.changePassword({
+      current_password: currentPassword.value,
+      new_password: newPassword.value,
+    })
+    await auth.refreshMe()
+    $q.notify({ type: 'positive', message: t('profile.password.changed') })
+  } catch (error) {
+    $q.notify({
+      type: 'negative',
+      message: apiErrorMessage(error, t('profile.password.changeFailed')),
+    })
+  } finally {
+    currentPassword.value = ''
+    newPassword.value = ''
+    confirmPassword.value = ''
+    passwordSaving.value = false
   }
 }
 
@@ -109,7 +149,7 @@ async function revokeKey(id: number) {
         <q-space />
         <div class="text-center">
           <div class="prts-display text-accent" style="font-size: 28px">
-            {{ Math.round(auth.user?.cp ?? 0) }}
+            {{ Math.round((auth.user?.cp_tenths ?? 0) / 10) }}
           </div>
           <div class="prts-label">贡献分 CP</div>
         </div>
@@ -147,6 +187,61 @@ async function revokeKey(id: number) {
             label="保存资料"
             :loading="saving"
             @click="saveProfile"
+          />
+        </div>
+      </div>
+    </q-card>
+
+    <div class="prts-label q-mb-sm">{{ t('profile.password.title') }}</div>
+    <q-card flat bordered class="q-pa-lg q-mb-lg">
+      <div class="prts-dim q-mb-md">{{ t('profile.password.description') }}</div>
+      <q-banner
+        v-if="auth.passwordChangeRequired"
+        dense
+        rounded
+        class="bg-warning text-dark q-mb-md"
+      >
+        {{ t('profile.password.required') }}
+      </q-banner>
+      <div class="column q-gutter-md">
+        <q-input
+          v-model="currentPassword"
+          outlined
+          dense
+          type="password"
+          autocomplete="current-password"
+          :label="t('profile.password.current')"
+          :disable="passwordSaving"
+        />
+        <q-input
+          v-model="newPassword"
+          outlined
+          dense
+          type="password"
+          autocomplete="new-password"
+          :label="t('profile.password.new')"
+          :hint="t('profile.password.hint')"
+          :disable="passwordSaving"
+        />
+        <q-input
+          v-model="confirmPassword"
+          outlined
+          dense
+          type="password"
+          autocomplete="new-password"
+          :label="t('profile.password.confirm')"
+          :disable="passwordSaving"
+        />
+        <div>
+          <q-btn
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            :label="t('profile.password.submit')"
+            :loading="passwordSaving"
+            :disable="!passwordFormReady"
+            @click="changePassword"
           />
         </div>
       </div>

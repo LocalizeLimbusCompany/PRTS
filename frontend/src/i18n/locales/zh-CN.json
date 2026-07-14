@@ -1,7 +1,9 @@
 {
   "app": {
     "tagline": "翻译协作平台",
-    "switchLang": "English"
+    "switchLang": "English",
+    "passwordChangeRequired": "此账号由管理员创建，请尽快修改初始密码。提醒不会阻止你继续使用其它功能。",
+    "changePassword": "修改密码"
   },
   "markdown": {
     "write": "编辑",
@@ -14,6 +16,21 @@
     "no": "否",
     "cancel": "取消",
     "search": "搜索"
+  },
+  "profile": {
+    "password": {
+      "title": "修改密码",
+      "description": "修改后请使用新密码登录。当前会话和其它功能不会被首次改密提醒阻断。",
+      "required": "你仍在使用管理员设置的初始密码，请完成修改。",
+      "current": "当前密码",
+      "new": "新密码",
+      "hint": "8–256 个字符",
+      "confirm": "再次输入新密码",
+      "submit": "保存新密码",
+      "mismatch": "两次输入的新密码不一致",
+      "changed": "密码已修改",
+      "changeFailed": "密码修改失败"
+    }
   },
   "project": {
     "workspaceNav": "项目工作区导航",
@@ -441,6 +458,32 @@
       "apply": "应用",
       "updated": "角色已更新",
       "updateFailed": "操作失败"
+    },
+    "users": {
+      "title": "用户管理",
+      "create": "创建账号",
+      "search": "搜索用户名",
+      "filterRole": "筛选角色",
+      "sort": "排序",
+      "allRoles": "全部角色",
+      "sortCreatedDesc": "最新加入",
+      "sortCreatedAsc": "最早加入",
+      "sortUsernameAsc": "用户名 A–Z",
+      "sortUsernameDesc": "用户名 Z–A",
+      "applyFilters": "应用筛选",
+      "empty": "没有符合条件的用户",
+      "username": "用户名",
+      "role": "平台角色",
+      "createdAt": "加入时间",
+      "actions": "操作",
+      "passwordPending": "等待修改初始密码",
+      "loadMore": "加载更多",
+      "loadFailed": "用户列表加载失败",
+      "createDescription": "新账号可立即登录并继续使用平台；系统会持续提醒其修改初始密码。",
+      "initialPassword": "初始密码",
+      "initialPasswordHint": "初始密码不会被保存到浏览器记录或显示在响应中",
+      "created": "账号已创建",
+      "createFailed": "账号创建失败"
     },
     "search": {
       "title": "搜索 / 向量化",
