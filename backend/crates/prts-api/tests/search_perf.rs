@@ -7,9 +7,9 @@
 
 use std::time::Instant;
 
+use prts_core::search_query::{CanonicalSearchCondition, SearchField, SearchOperator};
 use prts_db::{entries, files, projects, users};
 use prts_search::orchestrator::{run, OrchestratorInput};
-use prts_search::SortBy;
 
 async fn pool() -> prts_db::Db {
     let runtime_role =
@@ -99,6 +99,11 @@ async fn search_perf_orchestrator() {
 
     // 计时若干次查询（向量关，走 FTS + trgm）。
     let queries = ["survival", "weather", "engine light", "alpha"];
+    let conditions = [CanonicalSearchCondition {
+        field: SearchField::Translation,
+        operator: SearchOperator::NotContains,
+        value: "__structured_search_never_matches__".to_string(),
+    }];
     let mut max_ms = 0u128;
     for q in queries {
         let t = Instant::now();
@@ -106,15 +111,17 @@ async fn search_perf_orchestrator() {
             &pool,
             OrchestratorInput {
                 project_id: proj.id,
-                q,
+                query: Some(q),
                 src_lang: "en",
                 tgt_lang: "zh-Hans",
                 file_ids: &[],
+                restrict_to_file_ids: false,
                 states: &[],
+                conditions: &conditions,
                 include_hidden: false,
                 per_path: 100,
                 top_k: 200,
-                sort: SortBy::Relevance,
+                filter_after_entry_id: None,
                 vector_ids: None,
             },
         )
@@ -132,4 +139,15 @@ async fn search_perf_orchestrator() {
         .execute(&pool)
         .await
         .unwrap();
+}
+
+#[test]
+fn structured_search_uses_keyset_and_contains_no_offset_sql() {
+    let db_source = include_str!("../src/../../prts-db/src/search.rs");
+    let route_source = include_str!("../src/routes/search.rs");
+    assert!(!db_source.to_ascii_uppercase().contains(" OFFSET "));
+    assert!(!route_source.contains(".skip("));
+    assert!(!route_source.contains("pub offset:"));
+    assert!(db_source.contains("entry.id >"));
+    assert!(route_source.contains("last_rrf_score"));
 }

@@ -1608,6 +1608,7 @@ dependencies = [
  "csv",
  "dotenvy",
  "futures-util",
+ "hmac",
  "image",
  "pgvector",
  "prts-auth",
@@ -1708,6 +1709,7 @@ name = "prts-search"
 version = "0.1.0"
 dependencies = [
  "prts-common",
+ "prts-core",
  "prts-db",
  "reqwest",
  "serde",

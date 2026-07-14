@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 prts-common.workspace = true
+prts-core.workspace = true
 prts-db.workspace = true
 reqwest.workspace = true
 serde.workspace = true

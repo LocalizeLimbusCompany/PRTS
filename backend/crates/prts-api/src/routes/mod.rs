@@ -61,6 +61,7 @@ pub(crate) fn parse_states(s: Option<&str>) -> Vec<String> {
 /// `with_state` 之前，测试无需真实 AppState/DB/Redis 即可装配校验。历史上单测仅覆盖
 /// `public_router()`，未装配完整路由，致使「不同路径 handler 误并入一次 `routes!()`」
 /// 造成的路由重叠在服务启动时才 panic。
+#[allow(deprecated)]
 fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health::liveness))
@@ -162,7 +163,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(entries::entry_history))
         .routes(routes!(entries::export_project))
         // 混合搜索
-        .routes(routes!(search::search_entries))
+        .routes(routes!(search::search_entries, search::structured_search))
         // TM 翻译建议
         .routes(routes!(suggestions::entry_suggestions))
         // 通知（收件人自助 + poke 发送）
@@ -276,6 +277,18 @@ mod tests {
     #[test]
     fn full_router_assembles_without_route_conflicts() {
         let _ = api_router().split_for_parts();
+    }
+
+    #[test]
+    fn structured_search_openapi_has_post_envelope_and_deprecated_get() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        let path = &document["paths"]["/projects/{id}/search"];
+        assert!(path.get("post").is_some());
+        assert_eq!(path["get"]["deprecated"], true);
+        assert!(path["post"]["requestBody"]["content"]["application/json"]["schema"].is_object());
+        let response = &path["post"]["responses"]["200"]["content"]["application/json"]["schema"];
+        assert!(response.is_object());
     }
 
     #[test]

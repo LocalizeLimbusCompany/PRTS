@@ -47,6 +47,32 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
     let msg = match (code, locale) {
         ("bad_request", Locale::ZhCn) => "请求参数有误",
         ("bad_request", Locale::En) => "Bad request",
+        ("SEARCH_REQUEST_INVALID", Locale::ZhCn) => "搜索请求格式无效",
+        ("SEARCH_REQUEST_INVALID", Locale::En) => "Invalid search request",
+        ("SEARCH_LIMIT_INVALID", Locale::ZhCn) => "搜索每页数量必须在 1 到 100 之间",
+        ("SEARCH_LIMIT_INVALID", Locale::En) => "Search limit must be between 1 and 100",
+        ("SEARCH_CONDITION_FIELD_INVALID", Locale::ZhCn) => "搜索条件字段无效",
+        ("SEARCH_CONDITION_FIELD_INVALID", Locale::En) => "Invalid search condition field",
+        ("SEARCH_SOURCE_LANGUAGE_INVALID", Locale::ZhCn) => "搜索源语言标签无效",
+        ("SEARCH_SOURCE_LANGUAGE_INVALID", Locale::En) => "Invalid search source language",
+        ("SEARCH_SOURCE_LANGUAGE_NOT_IN_PROJECT", Locale::ZhCn) => "搜索源语言不属于该项目",
+        ("SEARCH_SOURCE_LANGUAGE_NOT_IN_PROJECT", Locale::En) => {
+            "Search source language is not part of this project"
+        }
+        ("SEARCH_PATH_INVALID", Locale::ZhCn) => "搜索路径无效",
+        ("SEARCH_PATH_INVALID", Locale::En) => "Invalid search path",
+        ("SEARCH_SCOPE_RESOURCE_INVALID", Locale::ZhCn) => "搜索范围资源无效",
+        ("SEARCH_SCOPE_RESOURCE_INVALID", Locale::En) => "Invalid search scope resource",
+        ("SEARCH_SCOPE_AMBIGUOUS", Locale::ZhCn) => "搜索路径同时匹配文件和文件夹",
+        ("SEARCH_SCOPE_AMBIGUOUS", Locale::En) => "Search path is ambiguous",
+        ("SEARCH_CURSOR_INVALID", Locale::ZhCn) => "搜索游标无效或与当前请求不匹配",
+        ("SEARCH_CURSOR_INVALID", Locale::En) => {
+            "Search cursor is invalid or does not match this request"
+        }
+        ("PROJECT_SEARCH_REBUILDING", Locale::ZhCn) => "项目词法搜索正在重建",
+        ("PROJECT_SEARCH_REBUILDING", Locale::En) => "Project lexical search is rebuilding",
+        ("PROJECT_SEARCH_FAILED", Locale::ZhCn) => "项目词法搜索重建失败",
+        ("PROJECT_SEARCH_FAILED", Locale::En) => "Project lexical search rebuild failed",
         ("unauthorized", Locale::ZhCn) => "未登录或登录已失效",
         ("unauthorized", Locale::En) => "Unauthorized",
         ("forbidden", Locale::ZhCn) => "无权限执行此操作",

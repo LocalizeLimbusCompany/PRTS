@@ -35,19 +35,6 @@ pub struct SearchFilters {
     pub states: Vec<String>,
 }
 
-/// 排序方式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SortBy {
-    /// 相关度（默认）。
-    #[default]
-    Relevance,
-    /// 按键名。
-    Key,
-    /// 按更新时间。
-    UpdatedAt,
-}
-
 /// 融合后的命中：entry id + 相关度分（RRF）。
 #[derive(Debug, Clone, Copy)]
 pub struct SearchHit {

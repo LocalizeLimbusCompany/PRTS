@@ -41,6 +41,9 @@ mod admin_settings_routes;
 mod auth_routes;
 #[path = "../src/routes/entries.rs"]
 mod entries_routes;
+mod routes {
+    pub(crate) use crate::entries_routes as entries;
+}
 #[path = "../src/routes/files.rs"]
 mod files_routes;
 #[path = "../src/routes/language_resolution.rs"]
@@ -57,6 +60,8 @@ mod pos_routes;
 mod project_media_routes;
 #[path = "../src/routes/projects.rs"]
 mod projects_routes;
+#[path = "../src/routes/search.rs"]
+mod search_routes;
 #[path = "../src/routes/tasks.rs"]
 mod tasks_routes;
 #[path = "../src/routes/terms.rs"]
@@ -8715,7 +8720,14 @@ async fn search_trgm_and_fts_recall() {
             .unwrap();
 
     // —— trgm 召回：w1 的 translation 含 "weather"，应出现在结果中 ——
-    let trgm_ids = prts_db::search::trgm_search(&pool, proj.id, "weather", &[], &[], false, 10)
+    let filter = prts_db::search::SearchExecutionFilter {
+        file_ids: &[],
+        restrict_to_file_ids: false,
+        states: &[],
+        conditions: &[],
+        include_hidden: false,
+    };
+    let trgm_ids = prts_db::search::trgm_search(&pool, proj.id, "weather", &filter, 10)
         .await
         .unwrap();
     assert!(
@@ -8728,19 +8740,10 @@ async fn search_trgm_and_fts_recall() {
     );
 
     // —— FTS 召回：英文 plainto_tsquery('english', 'weather') 应匹配 w1 的 translation_tsv ——
-    let fts_ids = prts_db::search::fts_search(
-        &pool,
-        proj.id,
-        "weather",
-        "zh-Hans",
-        "en",
-        &[],
-        &[],
-        false,
-        10,
-    )
-    .await
-    .unwrap();
+    let fts_ids =
+        prts_db::search::fts_search(&pool, proj.id, "weather", "zh-Hans", "en", &filter, 10)
+            .await
+            .unwrap();
     assert!(
         fts_ids.contains(&w1_id),
         "fts_search 应召回 w1（translation_tsv 匹配 'weather'），实际结果：{fts_ids:?}"
@@ -8834,15 +8837,17 @@ async fn search_orchestrator_returns_ranked_hits() {
         &pool,
         prts_search::orchestrator::OrchestratorInput {
             project_id: proj.id,
-            q: "survival",
+            query: Some("survival"),
             src_lang: "zh-Hans",
             tgt_lang: "en",
             file_ids: &[],
+            restrict_to_file_ids: false,
             states: &[],
+            conditions: &[],
             include_hidden: false,
             per_path: 100,
             top_k: 200,
-            sort: prts_search::SortBy::Relevance,
+            filter_after_entry_id: None,
             vector_ids: None,
         },
     )
@@ -8975,7 +8980,14 @@ async fn vector_search_returns_nearest_first() {
         .unwrap();
 
     // —— 查询向量贴近 A，断言 A 排在 B 之前 ——
-    let result_ids = prts_db::search::vector_search(&pool, proj.id, &vec_a, &[], &[], false, 10)
+    let filter = prts_db::search::SearchExecutionFilter {
+        file_ids: &[],
+        restrict_to_file_ids: false,
+        states: &[],
+        conditions: &[],
+        include_hidden: false,
+    };
+    let result_ids = prts_db::search::vector_search(&pool, proj.id, &vec_a, &filter, 10)
         .await
         .unwrap();
 
@@ -13526,4 +13538,667 @@ async fn legacy_context_uploads_are_ignored_by_old_and_streaming_paths() {
     }
 
     replacement_test_cleanup(&state.db, user_id, project_id, &temp_root).await;
+}
+
+// ======================== Task 6.2 structured search RED contracts ========================
+
+/// Task 6.2 的领域真值、POST DTO、固定 envelope 与 OpenAPI 注册必须同时存在；该测试
+/// 在实现前故意因缺少 `prts-core::search_query` 和 POST handler 而 RED。
+#[test]
+fn structured_search_typed_rule_dto_and_openapi_sources_exist() {
+    let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let core = std::fs::read_to_string(
+        repository_root.join("backend/crates/prts-core/src/search_query.rs"),
+    )
+    .expect("Task 6.2 必须创建 prts-core typed search rules");
+    for required in [
+        "pub enum SearchScope",
+        "deny_unknown_fields",
+        "CurrentFile { file_id: i64 }",
+        "CurrentTask { task_id: i64 }",
+        "pub enum SearchOperator",
+        "pub struct SearchCondition",
+        "pub struct StructuredSearchPlan",
+        "canonicalize_language_tag",
+        "canonicalize_file_path",
+        "fingerprint",
+    ] {
+        assert!(core.contains(required), "typed search rule 缺少 {required}");
+    }
+
+    let route = std::fs::read_to_string(
+        repository_root.join("backend/crates/prts-api/src/routes/search.rs"),
+    )
+    .unwrap();
+    for required in [
+        "post,",
+        "StructuredSearchRequest",
+        "StructuredSearchResponse",
+        "next_after",
+        "Deprecation",
+        "Sunset",
+        "deprecated",
+    ] {
+        assert!(
+            route.contains(required),
+            "search route/OpenAPI 缺少 {required}"
+        );
+    }
+}
+
+fn structured_search_request(
+    scope: prts_core::search_query::SearchScope,
+) -> prts_core::search_query::StructuredSearchRequest {
+    prts_core::search_query::StructuredSearchRequest {
+        query: None,
+        conditions: Vec::new(),
+        scope,
+        states: Vec::new(),
+        include_hidden: false,
+        vector: false,
+        after: None,
+        limit: 50,
+    }
+}
+
+/// 五 scope、五操作符、canonical source selector、segment boundary、hidden/deletion、
+/// signed keyset cursor 与 GET adapter 必须共用同一 typed service/SQL。
+#[tokio::test]
+#[allow(deprecated)]
+async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_are_stable() {
+    use axum::extract::{Path, Query, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+    use prts_core::search_query::{SearchCondition, SearchOperator, SearchScope};
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "search-owner", Some("maintainer")).await;
+    let translator = audit_contract_create_user(&state.db, "search-translator", None).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Structured search {}", owner.id),
+            slug: Some(format!("structured-search-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string(), "ja".to_string()],
+            primary_source_lang: Some("en".to_string()),
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建结构化搜索项目");
+    projects_routes::add_member(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: translator.username.clone(),
+            role: "translator".to_string(),
+        }),
+    )
+    .await
+    .expect_api("添加搜索 translator");
+
+    let legacy_upload = |path: &str, key: &str, en: &str, ja: &str, translation: &str| {
+        let request: entries_routes::UploadReq = serde_json::from_value(serde_json::json!({
+            "path": path,
+            "entries": [{
+                "key": key,
+                "original": {"en": en, "ja": ja},
+                "translation": translation,
+                "state": "translated"
+            }]
+        }))
+        .unwrap();
+        request
+    };
+    let Json(dir_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(legacy_upload(
+            "dir/file.json",
+            "alpha-key",
+            "Hello world",
+            "こんにちは世界",
+            "prefix middle suffix",
+        )),
+    )
+    .await
+    .expect_api("上传 dir file");
+    let Json(_dir2_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(legacy_upload(
+            "dir2/file.json",
+            "beta-key",
+            "Other source",
+            "別の原文",
+            "other translation",
+        )),
+    )
+    .await
+    .expect_api("上传 dir2 file");
+    let Json(root_file) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(legacy_upload(
+            "root.json",
+            "gamma-key",
+            "Gamma source",
+            "ガンマ",
+            "gamma translation",
+        )),
+    )
+    .await
+    .expect_api("上传 root file");
+    let _ = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(legacy_upload(
+            "ambiguous.json",
+            "ambiguous-file",
+            "Ambiguous file",
+            "曖昧ファイル",
+            "ambiguous file",
+        )),
+    )
+    .await
+    .expect_api("创建与 folder 同 path 的 file");
+    let _ = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(legacy_upload(
+            "ambiguous.json/child.json",
+            "ambiguous-child",
+            "Ambiguous child",
+            "曖昧な子",
+            "ambiguous child",
+        )),
+    )
+    .await
+    .expect_api("创建与 file 同 path 的 folder");
+    let alpha_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'alpha-key'")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let beta_id: i64 =
+        sqlx::query_scalar("SELECT id FROM entries WHERE project_id = $1 AND key = 'beta-key'")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE entries SET hidden = TRUE WHERE id = $1")
+        .bind(beta_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let task_id: i64 = sqlx::query_scalar(
+        "INSERT INTO tasks (project_id, title, created_by)
+         VALUES ($1, 'Search task', $2) RETURNING id",
+    )
+    .bind(project.id)
+    .bind(owner.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_files (task_id, file_id_snapshot, live_file_id)
+         VALUES ($1, $2, $2)",
+    )
+    .bind(task_id)
+    .bind(dir_file.file_id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    let scopes = [
+        SearchScope::All,
+        SearchScope::Path { path: "dir".into() },
+        SearchScope::Path {
+            path: "dir/file.json".into(),
+        },
+        SearchScope::File {
+            file_id: dir_file.file_id,
+        },
+        SearchScope::CurrentFile {
+            file_id: dir_file.file_id,
+        },
+        SearchScope::CurrentTask { task_id },
+    ];
+    for scope in scopes {
+        let mut request = structured_search_request(scope);
+        request.conditions.push(SearchCondition {
+            field: "key".into(),
+            operator: SearchOperator::Equals,
+            value: "alpha-key".into(),
+        });
+        let Json(response) = search_routes::structured_search(
+            State(state.clone()),
+            auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+            Path(project.id),
+            Ok(Json(request)),
+        )
+        .await
+        .expect_api("每种合法 scope 均可搜索");
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].entry.id, alpha_id);
+        assert!(response.next_after.is_none());
+    }
+
+    for (operator, value) in [
+        (SearchOperator::Contains, "middle"),
+        (SearchOperator::NotContains, "absent"),
+        (SearchOperator::StartsWith, "prefix"),
+        (SearchOperator::EndsWith, "suffix"),
+        (SearchOperator::Equals, "prefix middle suffix"),
+    ] {
+        let mut request = structured_search_request(SearchScope::All);
+        request.conditions.push(SearchCondition {
+            field: "translation".into(),
+            operator,
+            value: value.into(),
+        });
+        request.conditions.push(SearchCondition {
+            field: "source:EN".into(),
+            operator: SearchOperator::Contains,
+            value: "Hello".into(),
+        });
+        request.conditions.push(SearchCondition {
+            field: "source_any".into(),
+            operator: SearchOperator::Contains,
+            value: "世界".into(),
+        });
+        let Json(response) = search_routes::structured_search(
+            State(state.clone()),
+            auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+            Path(project.id),
+            Ok(Json(request)),
+        )
+        .await
+        .expect_api("五操作符与 canonical source selector");
+        assert_eq!(response.items.len(), 1, "operator={operator:?}");
+        assert_eq!(response.items[0].entry.id, alpha_id);
+    }
+
+    let Json(path_boundary) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(structured_search_request(SearchScope::Path {
+            path: "dir".into(),
+        }))),
+    )
+    .await
+    .expect_api("dir folder scope");
+    assert_eq!(
+        path_boundary
+            .items
+            .iter()
+            .map(|item| item.entry.key.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha-key"]
+    );
+    let ambiguous = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(structured_search_request(SearchScope::Path {
+            path: "ambiguous.json".into(),
+        }))),
+    )
+    .await
+    .expect_err_api("file/folder 同 path 必须稳定拒绝");
+    assert_eq!(
+        audit_contract_error_code(ambiguous).await.1,
+        "SEARCH_SCOPE_AMBIGUOUS"
+    );
+
+    let Json(without_hidden) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(structured_search_request(SearchScope::All))),
+    )
+    .await
+    .expect_api("默认隐藏 overlay");
+    assert!(!without_hidden
+        .items
+        .iter()
+        .any(|item| item.entry.id == beta_id));
+    let mut include_hidden = structured_search_request(SearchScope::All);
+    include_hidden.include_hidden = true;
+    let Json(with_hidden) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(include_hidden.clone())),
+    )
+    .await
+    .expect_api("owner include_hidden");
+    assert!(with_hidden
+        .items
+        .iter()
+        .any(|item| item.entry.id == beta_id));
+    let forbidden = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&translator))),
+        Path(project.id),
+        Ok(Json(include_hidden)),
+    )
+    .await
+    .expect_err_api("translator include_hidden 必须 403");
+    assert_eq!(audit_contract_error_code(forbidden).await.1, "forbidden");
+
+    let mut first_page = structured_search_request(SearchScope::All);
+    first_page.limit = 1;
+    let Json(first) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(first_page.clone())),
+    )
+    .await
+    .expect_api("cursor 第一页");
+    assert_eq!(first.items.len(), 1);
+    let cursor = first.next_after.clone().expect("还有下一页");
+    let mut second_page = first_page.clone();
+    second_page.after = Some(cursor.clone());
+    let Json(second) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(second_page)),
+    )
+    .await
+    .expect_api("cursor 第二页");
+    assert_eq!(second.items.len(), 1);
+    assert_ne!(first.items[0].entry.id, second.items[0].entry.id);
+
+    let mut tampered = first_page.clone();
+    let mut bytes = cursor.clone().into_bytes();
+    bytes[0] = if bytes[0] == b'a' { b'b' } else { b'a' };
+    tampered.after = Some(String::from_utf8(bytes).unwrap());
+    let invalid = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(tampered)),
+    )
+    .await
+    .expect_err_api("tampered cursor 必须 400");
+    assert_eq!(
+        audit_contract_error_code(invalid).await.1,
+        "SEARCH_CURSOR_INVALID"
+    );
+
+    let mut cross_query = first_page.clone();
+    cross_query.query = Some("different".into());
+    cross_query.after = Some(cursor.clone());
+    let invalid = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(cross_query)),
+    )
+    .await
+    .expect_err_api("cursor 不得跨 query");
+    assert_eq!(
+        audit_contract_error_code(invalid).await.1,
+        "SEARCH_CURSOR_INVALID"
+    );
+
+    let mut cross_scope = first_page.clone();
+    cross_scope.scope = SearchScope::File {
+        file_id: root_file.file_id,
+    };
+    cross_scope.after = Some(cursor.clone());
+    let invalid = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(cross_scope)),
+    )
+    .await
+    .expect_err_api("cursor 不得跨 scope");
+    assert_eq!(
+        audit_contract_error_code(invalid).await.1,
+        "SEARCH_CURSOR_INVALID"
+    );
+
+    let Json(other_project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Other search {}", owner.id),
+            slug: Some(format!("other-search-{}", owner.id)),
+            description: None,
+            visibility: Some("private".into()),
+            source_langs: vec!["en".into()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".into(),
+        }),
+    )
+    .await
+    .expect_api("创建 cursor cross-project 项目");
+    let mut cross_project = first_page.clone();
+    cross_project.after = Some(cursor.clone());
+    let invalid = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(other_project.id),
+        Ok(Json(cross_project)),
+    )
+    .await
+    .expect_err_api("cursor 不得跨 URL project");
+    assert_eq!(
+        audit_contract_error_code(invalid).await.1,
+        "SEARCH_CURSOR_INVALID"
+    );
+
+    for scope in [
+        SearchScope::File {
+            file_id: dir_file.file_id,
+        },
+        SearchScope::CurrentFile {
+            file_id: dir_file.file_id,
+        },
+        SearchScope::CurrentTask { task_id },
+    ] {
+        let cross_binding = search_routes::structured_search(
+            State(state.clone()),
+            auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+            Path(other_project.id),
+            Ok(Json(structured_search_request(scope))),
+        )
+        .await
+        .expect_err_api("file/current_file/current_task 不得跨项目绑定");
+        assert_eq!(
+            audit_contract_error_code(cross_binding).await.1,
+            "not_found"
+        );
+    }
+
+    let folder_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM folders WHERE project_id = $1 AND path = 'dir' AND deleted_at IS NULL",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    let ancestor_delete_set = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO file_change_sets (
+             id, project_id, folder_id, actor_id, operation, path_snapshot
+         ) VALUES ($1, $2, $3, $4, 'delete', 'dir')",
+    )
+    .bind(ancestor_delete_set)
+    .bind(project.id)
+    .bind(folder_id)
+    .bind(owner.id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE folders SET deleted_at = now(), deleted_by = $2,
+             deletion_change_set_id = $3, purge_after = now() + interval '30 days'
+         WHERE id = $1",
+    )
+    .bind(folder_id)
+    .bind(owner.id)
+    .bind(ancestor_delete_set)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let deleted_ancestor = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(structured_search_request(SearchScope::File {
+            file_id: dir_file.file_id,
+        }))),
+    )
+    .await
+    .expect_err_api("deleted ancestor 下 file 必须 fail closed");
+    assert_eq!(
+        audit_contract_error_code(deleted_ancestor).await.1,
+        "not_found"
+    );
+    sqlx::query(
+        "UPDATE folders SET deleted_at = NULL, deleted_by = NULL,
+             deletion_change_set_id = NULL, purge_after = NULL WHERE id = $1",
+    )
+    .bind(folder_id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM file_change_sets WHERE id = $1")
+        .bind(ancestor_delete_set)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let lexical_job_id: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (kind, project_id, payload)
+         VALUES ('primary_source_lexical_reindex', $1, '{}') RETURNING id",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE projects SET embedding_state = 'failed', lexical_job_id = $2 WHERE id = $1",
+    )
+    .bind(project.id)
+    .bind(lexical_job_id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let mut degraded_vector_request = structured_search_request(SearchScope::All);
+    degraded_vector_request.vector = true;
+    let _ = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(degraded_vector_request)),
+    )
+    .await
+    .expect_api("embedding failed 仍返回 lexical 结果");
+    sqlx::query("UPDATE projects SET lexical_state = 'rebuilding' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let rebuilding = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(structured_search_request(SearchScope::All))),
+    )
+    .await
+    .expect_err_api("lexical rebuilding 稳定拒绝");
+    let response = rebuilding.into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::CONFLICT);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(error["code"], "PROJECT_SEARCH_REBUILDING");
+    assert_eq!(error["job_id"], lexical_job_id);
+    sqlx::query("UPDATE projects SET lexical_state = 'ready' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let get_file = search_routes::search_entries(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Query(search_routes::SearchQuery {
+            q: None,
+            file_id: Some(dir_file.file_id),
+            state: None,
+            include_hidden: false,
+            after: None,
+            limit: Some(50),
+        }),
+    )
+    .await
+    .expect_api("deprecated GET file adapter");
+    assert_eq!(get_file.headers()["deprecation"], "true");
+    assert_eq!(
+        get_file.headers()["sunset"],
+        "Wed, 14 Jan 2027 00:00:00 GMT"
+    );
+    let body = axum::body::to_bytes(get_file.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(envelope["items"].is_array());
+    assert!(envelope.get("next_after").is_some());
+    assert_eq!(envelope["items"].as_array().unwrap().len(), 1);
+
+    let get_all = search_routes::search_entries(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Query(search_routes::SearchQuery {
+            q: None,
+            file_id: None,
+            state: None,
+            include_hidden: false,
+            after: None,
+            limit: Some(50),
+        }),
+    )
+    .await
+    .expect_api("deprecated GET all adapter");
+    let body = axum::body::to_bytes(get_all.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(envelope["items"].as_array().unwrap().len() > 1);
+
+    projects::delete(&state.db, other_project.id).await.unwrap();
+    replacement_test_cleanup(
+        &state.db,
+        owner.id,
+        project.id,
+        &std::env::temp_dir().join("prts-search-no-temp"),
+    )
+    .await;
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(translator.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
 }

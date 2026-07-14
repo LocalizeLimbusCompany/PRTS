@@ -109,50 +109,12 @@ fn snapshot_dto(snapshot: prts_db::uploads::UploadBatchSnapshot) -> UploadBatchD
 }
 
 fn normalize_upload_path(raw: &str) -> Result<String, ApiError> {
-    if raw != raw.trim() {
-        return Err(Error::bad_request("upload_path_invalid").into());
-    }
-    let normalized = raw.replace('\\', "/");
-    if normalized.is_empty() || normalized.len() > 1024 || normalized.starts_with('/') {
-        return Err(Error::bad_request("upload_path_invalid").into());
-    }
-    let path = FilePath::new(&normalized);
-    if path.is_absolute()
-        || path.components().any(|component| {
-            !matches!(component, Component::Normal(_))
-                || component.as_os_str().to_string_lossy().is_empty()
-        })
-        || normalized.split('/').any(is_reserved_path_segment)
-        || !normalized.to_ascii_lowercase().ends_with(".json")
-    {
+    let normalized = prts_core::search_query::canonicalize_file_path(raw)
+        .map_err(|_| Error::bad_request("upload_path_invalid"))?;
+    if !normalized.to_ascii_lowercase().ends_with(".json") {
         return Err(Error::bad_request("upload_path_invalid").into());
     }
     Ok(normalized)
-}
-
-fn is_reserved_path_segment(segment: &str) -> bool {
-    if segment.is_empty()
-        || matches!(segment, "." | "..")
-        || segment.starts_with('.')
-        || segment.ends_with('.')
-        || segment.ends_with(' ')
-        || segment.chars().any(|character| {
-            character.is_control() || matches!(character, '<' | '>' | ':' | '"' | '|' | '?' | '*')
-        })
-    {
-        return true;
-    }
-    let device_name = segment
-        .split_once('.')
-        .map_or(segment, |(stem, _extension)| stem)
-        .to_ascii_uppercase();
-    matches!(device_name.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || device_name
-            .strip_prefix("COM")
-            .or_else(|| device_name.strip_prefix("LPT"))
-            .is_some_and(|number| {
-                matches!(number, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
-            })
 }
 
 fn temp_key(project_id: i64, batch_hint: &str) -> String {

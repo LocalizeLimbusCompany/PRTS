@@ -15,6 +15,7 @@ pub mod language;
 pub mod permission;
 pub mod ports;
 pub mod project_language;
+pub mod search_query;
 pub mod tasks;
 pub mod terms;
 pub mod upload_replacement;

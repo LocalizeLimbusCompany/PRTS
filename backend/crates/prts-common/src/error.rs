@@ -17,6 +17,10 @@ pub enum Error {
     #[error("bad request: {0}")]
     BadRequest(Cow<'static, str>),
 
+    /// 带稳定机器码的参数/状态校验失败；不得把用户 query/value 放进 code。
+    #[error("validation failed: {0}")]
+    Validation(&'static str),
+
     /// 未认证。
     #[error("unauthorized")]
     Unauthorized,
@@ -103,6 +107,7 @@ impl Error {
     pub fn code(&self) -> &'static str {
         match self {
             Error::BadRequest(_) => "bad_request",
+            Error::Validation(code) => code,
             Error::Unauthorized => "unauthorized",
             Error::Forbidden => "forbidden",
             Error::NotFound => "not_found",
@@ -135,6 +140,11 @@ impl Error {
     pub fn bad_request(msg: impl Into<Cow<'static, str>>) -> Self {
         Error::BadRequest(msg.into())
     }
+
+    /// 构造不携带正文的稳定校验错误码。
+    pub const fn validation(code: &'static str) -> Self {
+        Error::Validation(code)
+    }
 }
 
 /// 将 `sqlx::Error` 桥接进来而不让 `prts-common` 直接依赖 sqlx 的全部特性。
@@ -155,6 +165,10 @@ mod tests {
         assert_eq!(Error::NotFound.code(), "not_found");
         assert_eq!(Error::Unauthorized.code(), "unauthorized");
         assert_eq!(Error::bad_request("x").code(), "bad_request");
+        assert_eq!(
+            Error::validation("SEARCH_CURSOR_INVALID").code(),
+            "SEARCH_CURSOR_INVALID"
+        );
         assert_eq!(Error::Conflict.code(), "conflict");
         assert_eq!(Error::AuditUnavailable.code(), "AUDIT_UNAVAILABLE");
     }

@@ -18,6 +18,7 @@ use utoipa::ToSchema;
 pub struct ApiError {
     error: Error,
     locale: Locale,
+    job_id: Option<i64>,
 }
 
 impl From<Error> for ApiError {
@@ -26,6 +27,7 @@ impl From<Error> for ApiError {
         Self {
             error,
             locale: Locale::default(),
+            job_id: None,
         }
     }
 }
@@ -41,6 +43,12 @@ impl ApiError {
         self.locale = locale;
         self
     }
+
+    /// 为持久化阶段错误附加可安全公开的 job 引用，不附带内部错误文本。
+    pub fn with_job_id(mut self, job_id: Option<i64>) -> Self {
+        self.job_id = job_id;
+        self
+    }
 }
 
 /// 共享错误响应体；所有 OpenAPI error response 复用该 schema。
@@ -50,6 +58,9 @@ pub struct ErrorResponse {
     pub code: String,
     /// 已本地化的人类可读消息。
     pub message: String,
+    /// 可重试/查看进度的持久化 job；普通错误省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<i64>,
 }
 
 /// 传递给 route-boundary middleware 的稳定错误码。
@@ -83,6 +94,15 @@ where
 fn status_for(code: &str) -> StatusCode {
     match code {
         "bad_request" => StatusCode::BAD_REQUEST,
+        "SEARCH_REQUEST_INVALID"
+        | "SEARCH_LIMIT_INVALID"
+        | "SEARCH_CONDITION_FIELD_INVALID"
+        | "SEARCH_SOURCE_LANGUAGE_INVALID"
+        | "SEARCH_SOURCE_LANGUAGE_NOT_IN_PROJECT"
+        | "SEARCH_PATH_INVALID"
+        | "SEARCH_SCOPE_RESOURCE_INVALID"
+        | "SEARCH_SCOPE_AMBIGUOUS"
+        | "SEARCH_CURSOR_INVALID" => StatusCode::BAD_REQUEST,
         "unauthorized" => StatusCode::UNAUTHORIZED,
         "forbidden" => StatusCode::FORBIDDEN,
         "not_found" => StatusCode::NOT_FOUND,
@@ -90,6 +110,7 @@ fn status_for(code: &str) -> StatusCode {
         "AUDIT_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
         "INVALID_LANGUAGE_TAG" | "DUPLICATE_LANGUAGE_TAG" => StatusCode::BAD_REQUEST,
         "PROJECT_LANGUAGE_RESOLUTION_REQUIRED" => StatusCode::CONFLICT,
+        "PROJECT_SEARCH_REBUILDING" | "PROJECT_SEARCH_FAILED" => StatusCode::CONFLICT,
         "TERM_ACTIVE_SOURCE_MISMATCH" | "POS_NAME_REQUIRED" => StatusCode::BAD_REQUEST,
         "TERM_DUPLICATE" | "POS_NAME_DUPLICATE" | "POS_IN_USE" | "PROJECT_PENDING_DELETION" => {
             StatusCode::CONFLICT
@@ -108,6 +129,7 @@ impl IntoResponse for ApiError {
         let body = ErrorResponse {
             code: code.to_string(),
             message: localize(code, self.locale).to_string(),
+            job_id: self.job_id,
         };
         let mut response = (status_for(code), Json(body)).into_response();
         response.extensions_mut().insert(ApiErrorCode(code));
@@ -143,6 +165,7 @@ pub async fn localize_audit_errors(mut request: Request, next: Next) -> Response
         Json(ErrorResponse {
             code: "AUDIT_UNAVAILABLE".to_string(),
             message: localize("AUDIT_UNAVAILABLE", locale).to_string(),
+            job_id: None,
         }),
     )
         .into_response();
@@ -165,6 +188,11 @@ mod tests {
     fn maps_codes_to_status() {
         assert_eq!(status_for("not_found"), StatusCode::NOT_FOUND);
         assert_eq!(status_for("conflict"), StatusCode::CONFLICT);
+        assert_eq!(status_for("SEARCH_CURSOR_INVALID"), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_for("PROJECT_SEARCH_REBUILDING"),
+            StatusCode::CONFLICT
+        );
         assert_eq!(
             status_for("AUDIT_UNAVAILABLE"),
             StatusCode::SERVICE_UNAVAILABLE
