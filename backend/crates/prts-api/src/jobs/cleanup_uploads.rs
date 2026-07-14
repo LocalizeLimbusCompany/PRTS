@@ -60,9 +60,13 @@ impl JobHandler for CleanupUploadsHandler {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         Err(error) => {
+                            tracing::error!(
+                                error_kind = ?error.kind(),
+                                "upload temp cleanup failed"
+                            );
                             return Err(JobExecutionError {
                                 code: JobErrorCode::DatabaseUnavailable,
-                                message: format!("upload temp cleanup failed: {error}"),
+                                message: "upload temp cleanup failed".to_string(),
                                 retryable: true,
                                 details: None,
                             });
@@ -79,11 +83,24 @@ impl JobHandler for CleanupUploadsHandler {
 }
 
 fn database_error(error: sqlx::Error) -> JobExecutionError {
+    tracing::error!(
+        error_class = database_error_class(&error),
+        "upload cleanup failed"
+    );
     JobExecutionError {
         code: JobErrorCode::DatabaseUnavailable,
-        message: format!("upload cleanup database operation failed: {error}"),
+        message: "upload cleanup database operation failed".to_string(),
         retryable: true,
         details: None,
+    }
+}
+
+fn database_error_class(error: &sqlx::Error) -> &'static str {
+    match error {
+        sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed => "pool_unavailable",
+        sqlx::Error::Io(_) | sqlx::Error::Tls(_) => "transport",
+        sqlx::Error::Database(_) => "database",
+        _ => "internal",
     }
 }
 

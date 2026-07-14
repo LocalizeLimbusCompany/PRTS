@@ -3,6 +3,9 @@
 //! 运行：
 //! `cargo test -p prts-api --features db-tests -- --ignored upload_perf --nocapture`
 //! `PRTS_UPLOAD_PERF_N=200000` 用于生产目标 20 万词条；默认 20000 便于本地预检。
+//! 同一过滤器还执行 `PRTS_UPLOAD_PERF_MB=100` 的 bounded parser 实测。常规 CI 只执行
+//! 源码/设置合同，验证 500 文件、100MiB、2GiB、byte-zero attempt、取消/过期清理与
+//! 30 天 restoration purge；未实际执行 ignored 测试时不得声称规模实测完成。
 #![cfg(feature = "db-tests")]
 
 use prts_core::upload_replacement::{EntryStatsDelta, ReplacementSummary};
@@ -42,6 +45,90 @@ fn upload_worker_source_keeps_bounded_streaming_contract() {
     assert!(!source.contains("read_to_end"));
     assert!(!source.contains("read_to_string"));
     assert!(!source.contains("serde_json::from_slice"));
+}
+
+#[test]
+fn upload_limits_and_byte_zero_attempt_lifecycle_are_fixed_contracts() {
+    let settings = include_str!("../src/../../prts-db/src/upload_settings.rs");
+    let routes = include_str!("../src/routes/uploads.rs");
+    let uploads = include_str!("../src/../../prts-db/src/uploads.rs");
+    assert!(settings.contains("max_files_per_batch: 500"));
+    assert!(settings.contains("max_bytes_per_file: 100 * MEBIBYTE"));
+    assert!(settings.contains("max_bytes_per_batch: 2 * GIBIBYTE"));
+    assert!(settings.contains("upload_batch_expiry_hours: 24"));
+    assert!(routes.contains("header::RANGE"));
+    assert!(routes.contains("header::CONTENT_RANGE"));
+    assert!(routes.contains("upload_resume_not_supported"));
+    assert!(uploads.contains("COALESCE(max(attempt_number), 0) + 1"));
+    assert!(uploads.contains("ORDER BY file.ordinal, attempt.attempt_number"));
+    assert!(uploads.contains("current_attempt_id"));
+    assert!(uploads.contains("processing_job_id"));
+}
+
+#[test]
+fn cancellation_expiry_partial_success_and_cleanup_are_durable_contracts() {
+    let uploads = include_str!("../src/../../prts-db/src/uploads.rs");
+    let cleanup = include_str!("../src/jobs/cleanup_uploads.rs");
+    assert!(uploads.contains("SET state = 'cancelling'"));
+    assert!(
+        uploads.contains("WHEN batch.state = 'cancelling' AND counts.active = 0 THEN 'cancelled'")
+    );
+    assert!(uploads.contains("WHEN counts.succeeded > 0 THEN 'partially_succeeded'"));
+    assert!(
+        uploads.contains("state IN ('draft', 'uploading', 'queued', 'processing', 'cancelling')")
+    );
+    assert!(uploads.contains("SET state = 'expired'"));
+    assert!(uploads.contains("state IN ('failed', 'cancelled', 'expired', 'succeeded')"));
+    assert!(cleanup.contains("list_cleanup_candidates"));
+    assert!(cleanup.contains("mark_attempt_cleaned"));
+}
+
+#[test]
+fn replacement_history_and_thirty_day_purge_remove_restoration_payload() {
+    let replacement = include_str!("../src/jobs/process_upload.rs");
+    let history = include_str!("../src/../../prts-core/src/file_history.rs");
+    let purge = include_str!("../src/jobs/purge_deleted_files.rs");
+    assert!(replacement.contains("apply_staged_replacement_tx"));
+    assert!(replacement.contains("mark_processing_succeeded_tx"));
+    assert!(history.contains("DEFAULT_RETENTION_DAYS: i64 = 30"));
+    assert!(history.contains("plan_file_rollback"));
+    assert!(history.contains("plan_folder_rollback"));
+    assert!(purge.contains("purge_due_operation_tx"));
+    assert!(purge.contains("task file/entry live refs"));
+}
+
+#[test]
+fn stage8_recovery_wiring_resumes_durable_stages_without_leaking_internal_errors() {
+    let language = include_str!("../src/jobs/repair_languages.rs");
+    let upload = include_str!("../src/jobs/process_upload.rs");
+    let cleanup = include_str!("../src/jobs/cleanup_uploads.rs");
+    let reindex = include_str!("../src/jobs/reindex_project.rs");
+    let file_purge = include_str!("../src/jobs/purge_deleted_files.rs");
+    let project_purge = include_str!("../src/jobs/purge_project.rs");
+
+    assert!(language.contains("UPDATE jobs SET stage = 'entries', progress_current = $2"));
+    assert!(language.contains("tx.commit()"));
+    assert!(upload.contains("begin_processing_tx"));
+    assert!(upload.contains("stage_parsed_upload(&mut tx"));
+    assert!(upload.contains("tx.commit()"));
+
+    assert!(reindex.contains("payload = jsonb_set(payload, '{cursor}'"));
+    assert!(reindex.contains("kind = 'primary_source_embedding_backfill'"));
+    assert!(reindex.contains("embedding provider request failed"));
+    assert!(reindex.contains("retryable: true"));
+
+    assert!(file_purge.contains("purge_due_operation_tx"));
+    assert!(file_purge.contains("tx.commit()"));
+    assert!(file_purge.contains("retryable: true"));
+    assert!(project_purge.contains("mark_external_cleanup_pending_tx"));
+    assert!(project_purge.contains("if job.stage != \"external_cleanup_pending\""));
+    assert!(project_purge.contains("external project cleanup failed"));
+    assert!(project_purge.contains("retryable: true"));
+
+    assert!(!upload.contains("message: format!"));
+    assert!(!cleanup.contains("message: format!"));
+    assert!(upload.contains("upload replacement database operation failed"));
+    assert!(cleanup.contains("upload cleanup database operation failed"));
 }
 
 #[tokio::test]

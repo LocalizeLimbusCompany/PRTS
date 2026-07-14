@@ -561,11 +561,24 @@ fn invalid_payload(message: &str) -> JobExecutionError {
 }
 
 fn database_error(error: sqlx::Error) -> JobExecutionError {
+    tracing::error!(
+        error_class = database_error_class(&error),
+        "upload replacement failed"
+    );
     JobExecutionError {
         code: JobErrorCode::DatabaseUnavailable,
-        message: format!("upload replacement database operation failed: {error}"),
-        retryable: false,
+        message: "upload replacement database operation failed".to_string(),
+        retryable: true,
         details: None,
+    }
+}
+
+fn database_error_class(error: &sqlx::Error) -> &'static str {
+    match error {
+        sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed => "pool_unavailable",
+        sqlx::Error::Io(_) | sqlx::Error::Tls(_) => "transport",
+        sqlx::Error::Database(_) => "database",
+        _ => "internal",
     }
 }
 
@@ -655,7 +668,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "100MB streaming verify，手动运行"]
-    async fn parser_streams_large_file_through_bounded_channel() {
+    async fn upload_perf_parser_streams_large_file_through_bounded_channel() {
         use std::io::{BufWriter, Write};
 
         let target_mb: usize = std::env::var("PRTS_UPLOAD_PERF_MB")

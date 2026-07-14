@@ -151,6 +151,42 @@ function Test-Contracts {
     Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0014_admin_delete_cp.sql') '0014 remains the newest migration'
 }
 
+function Test-ScaleRecoverySecurityContracts {
+    Assert-Contains 'backend/crates/prts-api/tests/search_perf.rs' 'search_perf_five_scopes_and_materialized_reads' 'Manual search verify covers all five scopes and materialized reads'
+    Assert-Contains 'backend/crates/prts-api/tests/search_perf.rs' 'PRTS_PERF_N' 'Manual search scale is explicitly configurable to 200k entries'
+    Assert-Contains 'backend/crates/prts-api/tests/search_perf.rs' 'PRTS_SEARCH_BUDGET_MS' 'Manual search verify enforces an explicit latency budget'
+    Assert-Contains 'backend/crates/prts-api/tests/search_perf.rs' 'stats_and_task_progress_hot_reads_only_use_materialized_tables' 'CI checks stats and task progress hot-read SQL contracts'
+    Assert-Contains 'backend/crates/prts-api/tests/search_perf.rs' 'lexical_reindex_persists_a_keyset_checkpoint_every_bounded_batch' 'CI checks lexical keyset checkpoint recovery'
+    Assert-Contains 'backend/crates/prts-api/tests/upload_perf.rs' 'max_files_per_batch: 500' 'CI checks the 500-file upload contract'
+    Assert-Contains 'backend/crates/prts-api/tests/upload_perf.rs' 'max_bytes_per_batch: 2 \* GIBIBYTE' 'CI checks the 2GiB upload contract'
+    Assert-Contains 'backend/crates/prts-api/src/jobs/process_upload.rs' 'upload_perf_parser_streams_large_file_through_bounded_channel' 'Manual upload verify covers bounded 100MiB parsing'
+    Assert-Contains 'backend/crates/prts-api/tests/upload_perf.rs' 'byte_zero_attempt_lifecycle' 'CI checks byte-zero retry and attempt history'
+    Assert-Contains 'backend/crates/prts-api/tests/upload_perf.rs' 'cancellation_expiry_partial_success_and_cleanup' 'CI checks cancellation, expiry, partial success and cleanup'
+    Assert-Contains 'backend/crates/prts-api/tests/upload_perf.rs' 'replacement_history_and_thirty_day_purge' 'CI checks replacement, rollback and restoration purge contracts'
+    Assert-Contains 'backend/crates/prts-api/tests/upload_perf.rs' 'stage8_recovery_wiring_resumes_durable_stages_without_leaking_internal_errors' 'CI checks durable recovery wiring and redacted worker errors'
+
+    $integration = 'backend/crates/prts-api/tests/db_integration.rs'
+    foreach ($contract in @(
+        'language_resolution_owner_selection_permissions_and_audit_rollback_are_atomic',
+        'upload_replacement_duplicate_key_rolls_back_file_transaction',
+        'audit_jobs_expired_lease_is_taken_over_and_active_lease_is_preserved',
+        'audit_contract_transient_auth_outbox_requeues_same_intent_until_redis_returns',
+        'file_history_retention_purge_uses_explicit_cleanup_order',
+        'stage7_due_purge_is_db_first_retains_job_and_retries_external_cleanup_idempotently',
+        'structured_search_scopes_conditions_visibility_cursor_and_get_adapter_are_stable',
+        'terminology_import_preview_confirm_is_bound_one_time_and_fail_closed',
+        'stage7_membership_authorization_matrix_and_owner_binding_fail_closed',
+        'audit_contract_projects_files_entries_memberships_and_export_are_audited_and_redacted',
+        'public_editor_is_anonymous_read_only_and_private_editor_fails_closed'
+    )) {
+        Assert-Contains $integration $contract "DB integration coverage exists: $contract"
+    }
+    Assert-Contains 'backend/crates/prts-api/src/jobs/reindex_project.rs' 'primary_source_embedding_backfill' 'Lexical and embedding recovery use separate durable stages'
+    Assert-Contains 'backend/crates/prts-api/src/jobs/purge_project.rs' 'external_cleanup' 'Project purge keeps a retryable external-cleanup stage'
+    Assert-Contains 'backend/crates/prts-db/src/audit.rs' 'pub enum AuditEvent' 'Audit payload construction uses a closed action-specific allowlist'
+    Assert-Contains 'backend/crates/prts-api/src/auth/project.rs' 'deletion_scheduled_at' 'Pending-deletion access is enforced by the shared project guard'
+}
+
 function Invoke-Checked([string]$Label, [scriptblock]$Command) {
     Write-Host "[RUN ] $Label" -ForegroundColor Cyan
     & $Command
@@ -161,6 +197,7 @@ Test-MarkdownLinks
 Test-PlanPaths
 Test-ConflictKeywords
 Test-Contracts
+Test-ScaleRecoverySecurityContracts
 
 if ($IncludeDatabaseChecks) {
     Push-Location backend
