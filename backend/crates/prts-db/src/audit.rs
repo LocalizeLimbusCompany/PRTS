@@ -313,6 +313,17 @@ pub enum AuditEvent<'a> {
         pos_id: Option<i64>,
         archived: bool,
     },
+    TermImported {
+        project_id: i64,
+        created: usize,
+        updated: usize,
+        warning_count: usize,
+    },
+    TermExported {
+        project_id: i64,
+        row_count: usize,
+        format: &'a str,
+    },
     PosCreated {
         pos_id: i64,
         has_zh_cn_name: bool,
@@ -329,6 +340,14 @@ pub enum AuditEvent<'a> {
     PosDeleted {
         pos_id: i64,
         affected_term_count: i64,
+    },
+    PosImported {
+        created: usize,
+        updated: usize,
+    },
+    PosExported {
+        row_count: usize,
+        format: &'a str,
     },
     EntriesUploaded {
         project_id: i64,
@@ -891,6 +910,33 @@ pub async fn append_event_tx(
                 "archived": archived,
             }),
         ),
+        AuditEvent::TermImported {
+            project_id,
+            created,
+            updated,
+            warning_count,
+        } => (
+            "term.import_confirmed",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "created": created,
+                "updated": updated,
+                "warning_count": warning_count,
+            }),
+        ),
+        AuditEvent::TermExported {
+            project_id,
+            row_count,
+            format,
+        } => (
+            "term.exported",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"row_count": row_count, "format": format}),
+        ),
         AuditEvent::PosCreated {
             pos_id,
             has_zh_cn_name,
@@ -934,6 +980,20 @@ pub async fn append_event_tx(
             pos_id.to_string(),
             None,
             serde_json::json!({"affected_term_count": affected_term_count}),
+        ),
+        AuditEvent::PosImported { created, updated } => (
+            "pos.import_confirmed",
+            "pos_collection",
+            "global".to_string(),
+            None,
+            serde_json::json!({"created": created, "updated": updated}),
+        ),
+        AuditEvent::PosExported { row_count, format } => (
+            "pos.exported",
+            "pos_collection",
+            "global".to_string(),
+            None,
+            serde_json::json!({"row_count": row_count, "format": format}),
         ),
         AuditEvent::EntriesUploaded {
             project_id,

@@ -41,6 +41,11 @@ export const projectRoutes: RouteRecordRaw[] = [
         props: (route) => ({ taskId: Number(route.params.taskId) }),
       },
       {
+        path: 'terms',
+        name: 'project-terms',
+        component: () => import('@/views/project/ProjectTermsView.vue'),
+      },
+      {
         path: 'leaderboard',
         name: 'project-leaderboard',
         component: () => import('@/views/project/ProjectLeaderboardView.vue'),

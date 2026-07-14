@@ -9,7 +9,15 @@ export interface UserDto {
   translation_langs: string[]
   cp: number
   platform_role: string | null
+  platform_capabilities: PlatformCapabilities
   created_at: string
+}
+
+export interface PlatformCapabilities {
+  access_admin: boolean
+  grant_platform_roles: boolean
+  create_project: boolean
+  manage_pos: boolean
 }
 
 export interface TokenResponse {

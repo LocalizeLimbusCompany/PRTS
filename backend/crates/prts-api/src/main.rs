@@ -17,6 +17,7 @@ mod openapi;
 mod routes;
 mod search_settings_worker;
 mod state;
+mod term_import;
 
 use std::sync::Arc;
 

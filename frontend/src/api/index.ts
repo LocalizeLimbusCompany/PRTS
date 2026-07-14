@@ -27,8 +27,10 @@ import type {
 
 export * from './types'
 export * from './tasks'
+export * from './terms'
 export { http, apiErrorMessage } from './http'
 export { tasksApi } from './tasks'
+export { posApi, termsApi } from './terms'
 
 /** 认证。 */
 export const authApi = {

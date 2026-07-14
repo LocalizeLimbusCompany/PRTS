@@ -9,6 +9,10 @@
     "supported": "Markdown supported",
     "remaining": "{count} characters remaining"
   },
+  "common": {
+    "yes": "Yes",
+    "no": "No"
+  },
   "project": {
     "workspaceNav": "Project workspace navigation",
     "loadFailed": "Failed to load project",
@@ -266,6 +270,92 @@
       "deleteAction": "Delete project"
     }
   },
+  "terminology": {
+    "heading": "Project terminology",
+    "description": "Maintain active primary-source terms and migration-ready terms from historical source languages. Matching uses active terms from the current primary source only.",
+    "loadFailed": "Failed to load terminology",
+    "create": "New term",
+    "edit": "Edit term",
+    "saved": "Term saved",
+    "saveFailed": "Failed to save term",
+    "archive": "Archive",
+    "archived": "Term archived",
+    "restore": "Restore as active",
+    "restorePrimaryOnly": "Only terms in the current primary source language can be restored as active",
+    "restored": "Term restored as active",
+    "delete": "Delete term",
+    "deleteConfirm": "Permanently delete this term? This cannot be undone.",
+    "deleted": "Term deleted",
+    "deleteFailed": "Failed to delete term",
+    "export": "Export",
+    "exportFailed": "Export failed",
+    "loadMore": "Load more terms",
+    "empty": "No terms in this scope",
+    "emptyHint": "Choose another scope, or create or import terms if you have permission.",
+    "active": "Active",
+    "sourceLangHint": "Use canonical BCP-47. A non-primary source can only be saved as archived.",
+    "scopes": {
+      "current": "Current",
+      "archived": "Archived",
+      "mixed": "All"
+    },
+    "fields": {
+      "sourceLang": "Source language",
+      "sourceText": "Source text",
+      "translation": "Translation",
+      "pos": "Part of speech",
+      "notes": "Notes",
+      "archived": "Save as archived",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "import": {
+      "label": "Preview-confirm import",
+      "termHeading": "Import project terms",
+      "posHeading": "Import POS presets",
+      "description": "The file is parsed and previewed before anything is written. A preview expires after 15 minutes and can be confirmed only once.",
+      "chooseFile": "Choose a CSV or JSON file",
+      "invalidFile": "Choose a .csv or .json file",
+      "previewFailed": "Failed to preview import",
+      "confirmFailed": "Failed to confirm import",
+      "confirmed": "Import complete: {created} created, {updated} updated",
+      "termFields": "Fields: source_lang, source_text, translation, pos, notes, archived",
+      "posFields": "Fields: name_zh_cn, name_en, sort_order",
+      "created": "{count} created",
+      "updated": "{count} updated",
+      "warnings": "{count} warnings",
+      "warningCodes": {
+        "UNKNOWN_POS": "The POS on row {row} is unknown and will be imported without a POS."
+      },
+      "action": "Import",
+      "preview": "Generate preview",
+      "confirm": "Confirm import",
+      "actions": {
+        "created": "Create",
+        "updated": "Update"
+      },
+      "previewLimited": "Only the first {count} rows are shown here. Confirmation processes every valid preview row."
+    },
+    "pos": {
+      "heading": "Bilingual POS presets",
+      "description": "POS presets are shared across projects. Only platform administrators can create, edit, import, or delete them.",
+      "loadFailed": "Failed to load POS presets",
+      "create": "New POS",
+      "edit": "Edit POS",
+      "saved": "POS preset saved",
+      "saveFailed": "Failed to save POS preset",
+      "delete": "Delete POS",
+      "deleteConfirm": "Delete this POS preset? References are cleared; the server rejects deletion if that would create a term identity conflict.",
+      "deleted": "POS preset deleted",
+      "deleteFailed": "Failed to delete POS preset",
+      "empty": "No POS presets yet",
+      "displayName": "Current display name",
+      "nameZh": "Chinese name",
+      "nameEn": "English name",
+      "sortOrder": "Sort order",
+      "nameRequired": "Enter at least one Chinese or English name."
+    }
+  },
   "home": {
     "title": "Welcome to PRTS",
     "subtitle": "An open, public localization collaboration platform",
@@ -300,6 +390,30 @@
     "taskScope": "Task #{id}"
   },
   "admin": {
+    "title": "Administration",
+    "platformSettings": "Platform settings",
+    "registrationOpen": "Open registration",
+    "registrationOpenHint": "When disabled, new users cannot register themselves.",
+    "oauthOnly": "OAuth-only login (disable passwords)",
+    "oauthOnlyHint": "When enabled, only OAuth providers such as ZOOT can be used to sign in.",
+    "requireEmail": "Require email verification",
+    "requireEmailHint": "Takes effect after SMTP delivery is configured.",
+    "saveSettings": "Save settings",
+    "settingsSaved": "Settings saved",
+    "settingsSaveFailed": "Failed to save settings",
+    "roles": {
+      "title": "Platform roles",
+      "description": "Set a platform role by user UID. Only super administrators can change roles.",
+      "superAdmin": "Super administrator",
+      "admin": "Administrator",
+      "maintainer": "Maintainer",
+      "ordinary": "Ordinary user (remove role)",
+      "userId": "User UID",
+      "role": "Role",
+      "apply": "Apply",
+      "updated": "Role updated",
+      "updateFailed": "Failed to update role"
+    },
     "search": {
       "title": "Search / Vectorization",
       "subtitle": "Configure hybrid search behaviour (FTS + trgm + pgvector).",

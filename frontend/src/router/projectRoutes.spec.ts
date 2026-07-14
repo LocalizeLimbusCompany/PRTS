@@ -13,6 +13,7 @@ describe('project routes', () => {
       'project-task-new',
       'project-task-detail',
       'project-task-manage',
+      'project-terms',
       'project-leaderboard',
       'project-download',
       'project-manage',

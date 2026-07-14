@@ -11,6 +11,30 @@ pub async fn list(pool: &PgPool) -> Result<Vec<PosPreset>, sqlx::Error> {
         .await
 }
 
+/// Confirm 时先取得平台级 advisory lock，再锁定全部 POS，串行化批量 identity 计划。
+pub async fn list_for_import_tx(conn: &mut PgConnection) -> Result<Vec<PosPreset>, sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(578_084_595_650_329_i64)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query_as::<_, PosPreset>(
+        "SELECT * FROM pos_presets ORDER BY sort_order ASC, id ASC FOR UPDATE",
+    )
+    .fetch_all(conn)
+    .await
+}
+
+/// Term confirm 锁住当前 POS 小集合，避免解析后被并发删除或改名。
+pub async fn list_for_term_import_tx(
+    conn: &mut PgConnection,
+) -> Result<Vec<PosPreset>, sqlx::Error> {
+    sqlx::query_as::<_, PosPreset>(
+        "SELECT * FROM pos_presets ORDER BY sort_order ASC, id ASC FOR UPDATE",
+    )
+    .fetch_all(conn)
+    .await
+}
+
 /// 在 mutation 事务中锁定一个 POS。
 pub async fn find_for_update_tx(
     conn: &mut PgConnection,

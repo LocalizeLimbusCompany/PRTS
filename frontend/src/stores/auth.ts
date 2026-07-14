@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 
 import { authApi, usersApi, type UserDto } from '@/api'
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '@/api/session'
+import { hasPlatformCapability } from '@/lib/capabilities'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserDto | null>(null)
@@ -10,10 +11,17 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthed = computed(() => user.value !== null)
   const role = computed(() => user.value?.platform_role ?? null)
-  const isSuperAdmin = computed(() => role.value === 'super_admin')
-  const isAdmin = computed(() => role.value === 'super_admin' || role.value === 'admin')
+  const isSuperAdmin = computed(() =>
+    hasPlatformCapability(user.value?.platform_capabilities, 'grant_platform_roles'),
+  )
+  const isAdmin = computed(() =>
+    hasPlatformCapability(user.value?.platform_capabilities, 'access_admin'),
+  )
   const canCreateProject = computed(() =>
-    ['super_admin', 'admin', 'maintainer'].includes(role.value ?? ''),
+    hasPlatformCapability(user.value?.platform_capabilities, 'create_project'),
+  )
+  const canManagePos = computed(() =>
+    hasPlatformCapability(user.value?.platform_capabilities, 'manage_pos'),
   )
 
   async function login(username: string, password: string) {
@@ -77,6 +85,7 @@ export const useAuthStore = defineStore('auth', () => {
     isSuperAdmin,
     isAdmin,
     canCreateProject,
+    canManagePos,
     login,
     register,
     applyTokens,

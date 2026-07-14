@@ -30,6 +30,8 @@ mod media;
 mod search_settings_worker;
 #[path = "../src/state.rs"]
 mod state;
+#[path = "../src/term_import.rs"]
+mod term_import;
 
 #[path = "../src/routes/admin.rs"]
 mod admin_routes;
@@ -411,6 +413,16 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         allowed_payload_keys: &["source_lang", "pos_id", "archived"],
     },
     AuditedEntrypoint {
+        entrypoint: "routes::terms::confirm_term_import",
+        action: "term.import_confirmed",
+        allowed_payload_keys: &["created", "updated", "warning_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::terms::export_terms",
+        action: "term.exported",
+        allowed_payload_keys: &["row_count", "format"],
+    },
+    AuditedEntrypoint {
         entrypoint: "routes::pos::create_pos",
         action: "pos.created",
         allowed_payload_keys: &["has_zh_cn_name", "has_en_name", "sort_order"],
@@ -429,6 +441,16 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
         entrypoint: "routes::pos::delete_pos",
         action: "pos.deleted",
         allowed_payload_keys: &["affected_term_count"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::pos::confirm_pos_import",
+        action: "pos.import_confirmed",
+        allowed_payload_keys: &["created", "updated"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::pos::export_pos",
+        action: "pos.exported",
+        allowed_payload_keys: &["row_count", "format"],
     },
     AuditedEntrypoint {
         entrypoint: "routes::entries::upload",
@@ -847,6 +869,20 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
+        action: "term.import_confirmed",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "term.exported",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
         action: "pos.created",
         target_type: "pos",
         target_id_policy: TargetIdPolicy::Numeric,
@@ -864,6 +900,20 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         action: "pos.deleted",
         target_type: "pos",
         target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "pos.import_confirmed",
+        target_type: "pos_collection",
+        target_id_policy: TargetIdPolicy::Constant("global"),
+        project_snapshot_policy: ProjectSnapshotPolicy::None,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "pos.exported",
+        target_type: "pos_collection",
+        target_id_policy: TargetIdPolicy::Constant("global"),
         project_snapshot_policy: ProjectSnapshotPolicy::None,
         expected_count: 1,
     },
@@ -1114,6 +1164,7 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "terms::create_tx",
     "terms::update_tx",
     "terms::delete_tx",
+    "terms::upsert_import_tx",
     "terms::apply_primary_source_plan_tx",
     "pos::create_tx",
     "pos::update_tx",
@@ -1222,7 +1273,7 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
 
     assert_eq!(
         REPOSITORY_WRITERS.len(),
-        68,
+        69,
         "repository writer inventory 发生漂移"
     );
     assert_eq!(
@@ -1231,10 +1282,10 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         "auth/session writer inventory 发生漂移"
     );
     assert_eq!(UNAUDITED_READS.len(), 33, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 73, "审计入口 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 77, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        68,
+        72,
         "action 合同 inventory 发生漂移"
     );
 
@@ -2956,7 +3007,7 @@ async fn audit_contract_failed_password_login_is_audited_and_audit_failure_hides
     let failing_db = audit_contract_failing_audit_db().await;
     let failing_state = audit_contract_state_with_db(failing_db).await;
     let denied = auth_routes::login(
-        State(failing_state),
+        State(failing_state.clone()),
         Json(auth_routes::LoginReq {
             username,
             password: wrong_password.to_string(),
@@ -12315,7 +12366,7 @@ async fn terminology_mutations_roll_back_when_audit_is_unavailable() {
 
     let pos_marker = format!("POS_AUDIT_ROLLBACK_{}", admin.id);
     let pos_error = pos_routes::create_pos(
-        State(failing_state),
+        State(failing_state.clone()),
         audit_contract_current_user(&admin),
         error::RequestLocale(Locale::En),
         Json(pos_routes::PosWriteRequest {
@@ -12335,10 +12386,872 @@ async fn terminology_mutations_roll_back_when_audit_is_unavailable() {
             .unwrap();
     assert_eq!(persisted_pos, 0);
 
+    let import_term_marker = format!("TERM_IMPORT_AUDIT_ROLLBACK_{}", owner.id);
+    let Json(import_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: serde_json::to_string(&vec![term_import::TermDocumentRow {
+                source_lang: "en".to_string(),
+                source_text: import_term_marker.clone(),
+                translation: import_term_marker.clone(),
+                pos: None,
+                notes: import_term_marker.clone(),
+                archived: false,
+            }])
+            .unwrap(),
+        }),
+    )
+    .await
+    .expect_api("创建 term import audit failure preview");
+    let import_term_error = terms_routes::confirm_term_import(
+        State(failing_state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, import_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: import_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("term import audit failure 必须 rollback");
+    audit_contract_assert_unavailable(import_term_error).await;
+    let imported_terms: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM terms WHERE project_id = $1 AND source_text = $2")
+            .bind(project.id)
+            .bind(&import_term_marker)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(imported_terms, 0);
+
+    let import_pos_marker = format!("POS_IMPORT_AUDIT_ROLLBACK_{}", admin.id);
+    let Json(import_pos_preview) = pos_routes::preview_pos_import(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: serde_json::to_string(&vec![term_import::PosDocumentRow {
+                name_zh_cn: None,
+                name_en: Some(import_pos_marker.clone()),
+                sort_order: 99,
+            }])
+            .unwrap(),
+        }),
+    )
+    .await
+    .expect_api("创建 POS import audit failure preview");
+    let import_pos_error = pos_routes::confirm_pos_import(
+        State(failing_state),
+        audit_contract_current_user(&admin),
+        Path(import_pos_preview.token),
+        Json(term_import::ImportConfirmRequest {
+            digest: import_pos_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("POS import audit failure 必须 rollback");
+    audit_contract_assert_unavailable(import_pos_error).await;
+    let imported_pos: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pos_presets WHERE name_en = $1")
+            .bind(&import_pos_marker)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(imported_pos, 0);
+
     projects::delete(&state.db, project.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
         .bind(owner.id)
         .bind(admin.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+// ======================== Task 5.2 import/export contracts ========================
+
+/// preview 不写业务表；confirm 原子一次性消费 token，并在事务内重查 actor、project、
+/// digest、权限、当前主源与项目 gate。未知 POS 只产生脱敏 warning 并按 NULL 写入。
+#[tokio::test]
+async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() {
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    let _guard = TERMINOLOGY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "term-import-owner", None).await;
+    let reviewer = audit_contract_create_user(&state.db, "term-import-reviewer", None).await;
+    let mut tx = state.db.begin().await.unwrap();
+    let project = projects::create_with_primary_tx(
+        &mut tx,
+        &format!("term-import-{}", owner.id),
+        "Terminology import",
+        "",
+        "private",
+        &["en".to_string(), "ja".to_string()],
+        "en",
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, reviewer.id, "reviewer")
+        .await
+        .unwrap();
+    let other_project = projects::create_with_primary_tx(
+        &mut tx,
+        &format!("term-import-other-{}", owner.id),
+        "Terminology import binding",
+        "",
+        "private",
+        &["en".to_string()],
+        "en",
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, other_project.id, owner.id, "owner")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let existing_source = format!("IMPORT_EXISTING_{}", owner.id);
+    let (_, Json(existing)) = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: existing_source.clone(),
+            translation: "before".to_string(),
+            notes: String::new(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_api("创建 import update 基线");
+    let created_source = format!("IMPORT_CREATED_{}", owner.id);
+    let secret_translation = format!("IMPORT_TRANSLATION_BODY_{}", owner.id);
+    let secret_notes = format!("IMPORT_NOTES_BODY_{}", owner.id);
+    let content = serde_json::to_string(&vec![
+        term_import::TermDocumentRow {
+            source_lang: "EN".to_string(),
+            source_text: existing_source.clone(),
+            translation: "after".to_string(),
+            pos: None,
+            notes: "updated".to_string(),
+            archived: false,
+        },
+        term_import::TermDocumentRow {
+            source_lang: "en".to_string(),
+            source_text: created_source.clone(),
+            translation: secret_translation.clone(),
+            pos: Some("UNKNOWN_POS_BODY".to_string()),
+            notes: secret_notes.clone(),
+            archived: false,
+        },
+        term_import::TermDocumentRow {
+            source_lang: "de-de-u-co-phonebk".to_string(),
+            source_text: format!("IMPORT_ARCHIVED_{}", owner.id),
+            translation: "archived".to_string(),
+            pos: None,
+            notes: String::new(),
+            archived: true,
+        },
+    ])
+    .unwrap();
+    let count_before: i64 = sqlx::query_scalar("SELECT count(*) FROM terms WHERE project_id = $1")
+        .bind(project.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let Json(preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content,
+        }),
+    )
+    .await
+    .expect_api("预览术语导入");
+    assert_eq!((preview.created, preview.updated), (2, 1));
+    assert_eq!(preview.expires_in_seconds, 15 * 60);
+    assert_eq!(preview.warnings.len(), 1);
+    assert_eq!(preview.warnings[0].row, 2);
+    assert_eq!(preview.warnings[0].code, "UNKNOWN_POS");
+    assert!(!serde_json::to_string(&preview.warnings)
+        .unwrap()
+        .contains("UNKNOWN_POS_BODY"));
+    let count_after_preview: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM terms WHERE project_id = $1")
+            .bind(project.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(count_after_preview, count_before, "preview 不写业务表");
+
+    let Json(confirmed) = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, preview.token.clone())),
+        Json(term_import::ImportConfirmRequest {
+            digest: preview.digest.clone(),
+        }),
+    )
+    .await
+    .expect_api("确认术语导入");
+    assert_eq!((confirmed.created, confirmed.updated), (2, 1));
+    assert_eq!(confirmed.warnings.len(), 1);
+    let imported: (String, String, Option<i64>, bool) = sqlx::query_as(
+        "SELECT source_lang, notes, pos_id, archived_at IS NOT NULL
+         FROM terms WHERE project_id = $1 AND source_text = $2",
+    )
+    .bind(project.id)
+    .bind(&created_source)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        imported,
+        ("en".to_string(), secret_notes.clone(), None, false)
+    );
+    let updated_translation: String =
+        sqlx::query_scalar("SELECT translation FROM terms WHERE id = $1")
+            .bind(existing.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(updated_translation, "after");
+
+    let replay = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("preview token 不得重放");
+    assert_eq!(
+        audit_contract_error_code(replay).await.1,
+        "IMPORT_PREVIEW_TOKEN_INVALID"
+    );
+
+    let binding_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
+        source_lang: "en".to_string(),
+        source_text: format!("IMPORT_BINDING_{}", owner.id),
+        translation: "binding".to_string(),
+        pos: None,
+        notes: String::new(),
+        archived: false,
+    }])
+    .unwrap();
+    let Json(actor_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: binding_content.clone(),
+        }),
+    )
+    .await
+    .expect_api("创建 actor binding preview");
+    let actor_mismatch = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, actor_preview.token.clone())),
+        Json(term_import::ImportConfirmRequest {
+            digest: actor_preview.digest.clone(),
+        }),
+    )
+    .await
+    .expect_err_api("token 必须绑定 preview actor");
+    assert_eq!(
+        audit_contract_error_code(actor_mismatch).await.1,
+        "IMPORT_PREVIEW_TOKEN_INVALID"
+    );
+    let Json(actor_recovered) = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, actor_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: actor_preview.digest,
+        }),
+    )
+    .await
+    .expect_api("actor mismatch 不得消耗合法 preview");
+    assert_eq!((actor_recovered.created, actor_recovered.updated), (1, 0));
+
+    let Json(project_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: binding_content.clone(),
+        }),
+    )
+    .await
+    .expect_api("创建 project binding preview");
+    let project_mismatch = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((other_project.id, project_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: project_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("token 必须绑定 preview project");
+    assert_eq!(
+        audit_contract_error_code(project_mismatch).await.1,
+        "IMPORT_PREVIEW_TOKEN_INVALID"
+    );
+
+    let Json(digest_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: binding_content.clone(),
+        }),
+    )
+    .await
+    .expect_api("创建 digest binding preview");
+    let digest_mismatch = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, digest_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: "0".repeat(64),
+        }),
+    )
+    .await
+    .expect_err_api("token 必须绑定 canonical digest");
+    assert_eq!(
+        audit_contract_error_code(digest_mismatch).await.1,
+        "IMPORT_PREVIEW_TOKEN_INVALID"
+    );
+
+    let primary_change_source = format!("IMPORT_PRIMARY_CHANGED_{}", owner.id);
+    let primary_change_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
+        source_lang: "en".to_string(),
+        source_text: primary_change_source.clone(),
+        translation: "must not persist".to_string(),
+        pos: None,
+        notes: String::new(),
+        archived: false,
+    }])
+    .unwrap();
+    let Json(primary_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: primary_change_content,
+        }),
+    )
+    .await
+    .expect_api("主源变化前 preview");
+    sqlx::query("UPDATE projects SET primary_source_lang = 'ja' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let primary_changed = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, primary_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: primary_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("preview 后 primary 改变必须重新校验 active 行");
+    assert_eq!(
+        audit_contract_error_code(primary_changed).await.1,
+        "TERM_ACTIVE_SOURCE_MISMATCH"
+    );
+    let primary_changed_writes: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM terms WHERE project_id = $1 AND source_text = $2")
+            .bind(project.id)
+            .bind(&primary_change_source)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(primary_changed_writes, 0);
+    sqlx::query("UPDATE projects SET primary_source_lang = 'en' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let resolution_source = format!("IMPORT_RESOLUTION_{}", owner.id);
+    let resolution_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
+        source_lang: "en".to_string(),
+        source_text: resolution_source.clone(),
+        translation: "must not persist".to_string(),
+        pos: None,
+        notes: String::new(),
+        archived: false,
+    }])
+    .unwrap();
+    let Json(resolution_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: resolution_content,
+        }),
+    )
+    .await
+    .expect_api("resolution gate 前 preview");
+    sqlx::query(
+        "UPDATE projects SET language_repair_state = 'needs_language_resolution' WHERE id = $1",
+    )
+    .bind(project.id)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let resolution_gated = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, resolution_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: resolution_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("preview 后进入 language resolution 必须拒绝");
+    assert_eq!(
+        audit_contract_error_code(resolution_gated).await.1,
+        "PROJECT_LANGUAGE_RESOLUTION_REQUIRED"
+    );
+    let resolution_writes: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM terms WHERE project_id = $1 AND source_text = $2")
+            .bind(project.id)
+            .bind(&resolution_source)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(resolution_writes, 0);
+    sqlx::query("UPDATE projects SET language_repair_state = 'ready' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let Json(expired_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: binding_content.clone(),
+        }),
+    )
+    .await
+    .expect_api("创建 expiry preview");
+    let mut cache = state.cache.clone();
+    let _: i64 = redis::cmd("DEL")
+        .arg(term_import::preview_redis_key(&expired_preview.token))
+        .query_async(&mut cache)
+        .await
+        .unwrap();
+    let expired = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, expired_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: expired_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("过期 token 必须拒绝");
+    assert_eq!(
+        audit_contract_error_code(expired).await.1,
+        "IMPORT_PREVIEW_TOKEN_INVALID"
+    );
+
+    let Json(revoked_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: binding_content.clone(),
+        }),
+    )
+    .await
+    .expect_api("撤权前 preview");
+    memberships::remove(&state.db, project.id, reviewer.id)
+        .await
+        .unwrap();
+    let revoked = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, revoked_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: revoked_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("preview 后撤权必须拒绝");
+    assert_eq!(
+        audit_contract_error_code(revoked).await.0,
+        axum::http::StatusCode::FORBIDDEN
+    );
+
+    let active_mismatch_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
+        source_lang: "ja".to_string(),
+        source_text: "active mismatch".to_string(),
+        translation: String::new(),
+        pos: None,
+        notes: String::new(),
+        archived: false,
+    }])
+    .unwrap();
+    let mismatch = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: active_mismatch_content,
+        }),
+    )
+    .await
+    .expect_err_api("preview 不得静默归档非主源 active 行");
+    assert_eq!(
+        audit_contract_error_code(mismatch).await.1,
+        "TERM_ACTIVE_SOURCE_MISMATCH"
+    );
+
+    let duplicate_content = r#"[
+      {"source_lang":"EN","source_text":"canonical duplicate","translation":"a","pos":null,"notes":"","archived":false},
+      {"source_lang":"en","source_text":"canonical duplicate","translation":"b","pos":null,"notes":"","archived":false}
+    ]"#;
+    let duplicate = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: duplicate_content.to_string(),
+        }),
+    )
+    .await
+    .expect_err_api("canonical duplicate row 必须拒绝");
+    assert_eq!(
+        audit_contract_error_code(duplicate).await.1,
+        "IMPORT_DUPLICATE_ROW"
+    );
+
+    let concurrent_source = format!("IMPORT_CONCURRENT_{}", owner.id);
+    let concurrent_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
+        source_lang: "en".to_string(),
+        source_text: concurrent_source,
+        translation: "once".to_string(),
+        pos: None,
+        notes: String::new(),
+        archived: false,
+    }])
+    .unwrap();
+    let Json(concurrent_preview) = terms_routes::preview_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: concurrent_content,
+        }),
+    )
+    .await
+    .expect_api("并发 confirm preview");
+    let left = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, concurrent_preview.token.clone())),
+        Json(term_import::ImportConfirmRequest {
+            digest: concurrent_preview.digest.clone(),
+        }),
+    );
+    let right = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, concurrent_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: concurrent_preview.digest,
+        }),
+    );
+    let (left, right) = tokio::join!(left, right);
+    assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+
+    let export_response = terms_routes::export_terms(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        axum::extract::Query(term_import::ExportQuery {
+            format: Some(term_import::DocumentFormat::Json),
+        }),
+    )
+    .await
+    .expect_api("导出 mixed 术语 JSON");
+    let export_body = axum::body::to_bytes(export_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let exported: Vec<term_import::TermDocumentRow> = serde_json::from_slice(&export_body).unwrap();
+    assert!(exported.iter().any(|row| !row.archived));
+    assert!(exported
+        .iter()
+        .any(|row| row.source_lang == "de-DE-u-co-phonebk" && row.archived));
+    assert!(exported.iter().any(|row| row.notes == secret_notes));
+
+    let audit_rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM audit_log WHERE project_id_snapshot = $1
+           AND (action LIKE 'term.import_%' OR action = 'term.exported') ORDER BY id",
+    )
+    .bind(project.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    let audit_json = serde_json::to_string(&audit_rows).unwrap();
+    for secret in [secret_translation, secret_notes, created_source] {
+        assert!(!audit_json.contains(&secret));
+    }
+    for payload in &audit_rows {
+        audit_contract_assert_json_has_no_sensitive_keys(payload);
+    }
+
+    projects::delete(&state.db, other_project.id).await.unwrap();
+    projects::delete(&state.db, project.id).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
+        .bind(owner.id)
+        .bind(reviewer.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// POS 导入复用 preview-confirm 约束，只有 platform admin/super-admin 可执行；稳定导出
+/// 保留双语名称与 sort_order，token 的 import kind 不能跨 term/POS 使用。
+#[tokio::test]
+async fn terminology_pos_import_export_is_admin_only_kind_bound_and_redacted() {
+    use axum::extract::{Path, Query, State};
+    use axum::Json;
+    use prts_common::i18n::Locale;
+
+    let _guard = TERMINOLOGY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let admin = audit_contract_create_user(&state.db, "pos-import-admin", Some("admin")).await;
+    let maintainer =
+        audit_contract_create_user(&state.db, "pos-import-maintainer", Some("maintainer")).await;
+    let existing_zh = format!("导入词性{}", admin.id);
+    let existing_en = format!("Import POS {}", admin.id);
+    let (_, Json(existing)) = pos_routes::create_pos(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        error::RequestLocale(Locale::En),
+        Json(pos_routes::PosWriteRequest {
+            name_zh_cn: Some(existing_zh.clone()),
+            name_en: Some(existing_en.clone()),
+            sort_order: 10,
+        }),
+    )
+    .await
+    .expect_api("创建 POS import update 基线");
+    let new_zh = format!("新词性{}", admin.id);
+    let new_en = format!("New POS {}", admin.id);
+    let content = serde_json::to_string(&vec![
+        term_import::PosDocumentRow {
+            name_zh_cn: Some(existing_zh.clone()),
+            name_en: Some(existing_en.clone()),
+            sort_order: 11,
+        },
+        term_import::PosDocumentRow {
+            name_zh_cn: Some(new_zh.clone()),
+            name_en: Some(new_en.clone()),
+            sort_order: 20,
+        },
+    ])
+    .unwrap();
+
+    let denied = pos_routes::preview_pos_import(
+        State(state.clone()),
+        audit_contract_current_user(&maintainer),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: content.clone(),
+        }),
+    )
+    .await
+    .expect_err_api("maintainer 不得 preview POS import");
+    assert_eq!(
+        audit_contract_error_code(denied).await.0,
+        axum::http::StatusCode::FORBIDDEN
+    );
+
+    let count_before: i64 = sqlx::query_scalar("SELECT count(*) FROM pos_presets")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let Json(kind_preview) = pos_routes::preview_pos_import(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content: content.clone(),
+        }),
+    )
+    .await
+    .expect_api("POS kind binding preview");
+    assert_eq!((kind_preview.created, kind_preview.updated), (1, 1));
+    let count_after_preview: i64 = sqlx::query_scalar("SELECT count(*) FROM pos_presets")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(count_after_preview, count_before);
+
+    let mut tx = state.db.begin().await.unwrap();
+    let project = projects::create_with_primary_tx(
+        &mut tx,
+        &format!("pos-import-kind-{}", admin.id),
+        "POS import kind binding",
+        "",
+        "private",
+        &["en".to_string()],
+        "en",
+        "zh-Hans",
+        admin.id,
+    )
+    .await
+    .unwrap();
+    memberships::upsert_tx(&mut tx, project.id, admin.id, "owner")
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let kind_mismatch = terms_routes::confirm_term_import(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Path((project.id, kind_preview.token)),
+        Json(term_import::ImportConfirmRequest {
+            digest: kind_preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("POS token 不得用于 term confirm");
+    assert_eq!(
+        audit_contract_error_code(kind_mismatch).await.1,
+        "IMPORT_PREVIEW_TOKEN_INVALID"
+    );
+
+    let Json(preview) = pos_routes::preview_pos_import(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Json(term_import::ImportPreviewRequest {
+            format: term_import::DocumentFormat::Json,
+            content,
+        }),
+    )
+    .await
+    .expect_api("POS import preview");
+    let Json(confirmed) = pos_routes::confirm_pos_import(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Path(preview.token.clone()),
+        Json(term_import::ImportConfirmRequest {
+            digest: preview.digest.clone(),
+        }),
+    )
+    .await
+    .expect_api("POS import confirm");
+    assert_eq!((confirmed.created, confirmed.updated), (1, 1));
+    let updated_sort: i32 = sqlx::query_scalar("SELECT sort_order FROM pos_presets WHERE id = $1")
+        .bind(existing.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(updated_sort, 11);
+    let new_id: i64 = sqlx::query_scalar("SELECT id FROM pos_presets WHERE name_en = $1")
+        .bind(&new_en)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+
+    let replay = pos_routes::confirm_pos_import(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Path(preview.token),
+        Json(term_import::ImportConfirmRequest {
+            digest: preview.digest,
+        }),
+    )
+    .await
+    .expect_err_api("POS token 不得重放");
+    assert_eq!(
+        audit_contract_error_code(replay).await.1,
+        "IMPORT_PREVIEW_TOKEN_INVALID"
+    );
+
+    let export = pos_routes::export_pos(
+        State(state.clone()),
+        audit_contract_current_user(&admin),
+        Query(term_import::ExportQuery {
+            format: Some(term_import::DocumentFormat::Json),
+        }),
+    )
+    .await
+    .expect_api("导出 POS JSON");
+    let export_body = axum::body::to_bytes(export.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let exported: Vec<term_import::PosDocumentRow> = serde_json::from_slice(&export_body).unwrap();
+    assert!(exported.iter().any(|row| {
+        row.name_zh_cn.as_deref() == Some(new_zh.as_str())
+            && row.name_en.as_deref() == Some(new_en.as_str())
+            && row.sort_order == 20
+    }));
+
+    let audit_rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM audit_log WHERE actor_id = $1
+           AND action IN ('pos.import_confirmed', 'pos.exported') ORDER BY id",
+    )
+    .bind(admin.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    let serialized = serde_json::to_string(&audit_rows).unwrap();
+    for secret in [existing_zh, existing_en, new_zh, new_en] {
+        assert!(!serialized.contains(&secret));
+    }
+    for payload in &audit_rows {
+        audit_contract_assert_json_has_no_sensitive_keys(payload);
+    }
+
+    projects::delete(&state.db, project.id).await.unwrap();
+    sqlx::query("DELETE FROM pos_presets WHERE id IN ($1, $2)")
+        .bind(existing.id)
+        .bind(new_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
+        .bind(admin.id)
+        .bind(maintainer.id)
         .execute(&state.db)
         .await
         .unwrap();

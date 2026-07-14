@@ -94,6 +94,10 @@ fn status_for(code: &str) -> StatusCode {
         "TERM_DUPLICATE" | "POS_NAME_DUPLICATE" | "POS_IN_USE" | "PROJECT_PENDING_DELETION" => {
             StatusCode::CONFLICT
         }
+        "IMPORT_FORMAT_INVALID" | "IMPORT_DUPLICATE_ROW" | "IMPORT_POS_AMBIGUOUS" => {
+            StatusCode::BAD_REQUEST
+        }
+        "IMPORT_PREVIEW_TOKEN_INVALID" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

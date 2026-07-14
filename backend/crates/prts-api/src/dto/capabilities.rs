@@ -3,6 +3,30 @@
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use prts_core::permission::nodes;
+
+/// 当前用户的显式平台能力；前端不得从平台角色名称推断权限。
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+pub struct PlatformCapabilitiesDto {
+    pub access_admin: bool,
+    pub grant_platform_roles: bool,
+    pub create_project: bool,
+    pub manage_pos: bool,
+}
+
+impl PlatformCapabilitiesDto {
+    pub fn from_role(role: Option<&str>) -> Self {
+        let role = role.and_then(prts_core::PlatformRole::parse);
+        let has = |node| role.is_some_and(|role| role.has(node));
+        Self {
+            access_admin: has(nodes::PLATFORM_SETTINGS),
+            grant_platform_roles: has(nodes::PLATFORM_ADMIN_GRANT),
+            create_project: has(nodes::PLATFORM_PROJECT_CREATE),
+            manage_pos: has(nodes::PLATFORM_POS_MANAGE),
+        }
+    }
+}
+
 /// 当前主体在项目中的显式能力。
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
 pub struct ProjectCapabilitiesDto {
@@ -44,5 +68,27 @@ impl From<prts_core::capabilities::ProjectCapabilities> for ProjectCapabilitiesD
             change_primary_source: value.change_primary_source,
             delete_project: value.delete_project,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_capabilities_are_explicit_permission_node_projections() {
+        let admin = PlatformCapabilitiesDto::from_role(Some("admin"));
+        assert!(admin.access_admin);
+        assert!(admin.manage_pos);
+        assert!(!admin.grant_platform_roles);
+
+        let maintainer = PlatformCapabilitiesDto::from_role(Some("maintainer"));
+        assert!(maintainer.create_project);
+        assert!(!maintainer.access_admin);
+        assert!(!maintainer.manage_pos);
+
+        let ordinary = PlatformCapabilitiesDto::from_role(None);
+        assert!(!ordinary.create_project);
+        assert!(!ordinary.manage_pos);
     }
 }

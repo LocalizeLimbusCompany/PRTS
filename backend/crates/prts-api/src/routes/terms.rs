@@ -1,7 +1,10 @@
 //! source-aware 项目术语 CRUD、键集列表与当前主源匹配。
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use std::collections::{HashMap, HashSet};
+
+use axum::http::{header, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -14,6 +17,11 @@ use crate::auth::{project as paccess, CurrentUser, MaybeUser};
 use crate::db_err;
 use crate::error::{ApiError, ErrorResponse};
 use crate::state::AppState;
+use crate::term_import::{
+    self, DocumentFormat, ExportQuery, ImportConfirmDto, ImportConfirmRequest, ImportKind,
+    ImportPreviewRequest, ImportWarningDto, ResolvedTermImportRow, StoredPreview, TermDocumentRow,
+    TermImportPreviewDto, TermPreviewRowDto,
+};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 100;
@@ -353,6 +361,434 @@ pub async fn match_terms(
         .await
         .map_err(db_err)?;
     Ok(Json(rows.into_iter().map(term_dto).collect()))
+}
+
+/// 解析并预览术语 CSV/JSON；只写固定 TTL Redis token，不写 PostgreSQL 业务表。
+#[utoipa::path(post, path = "/projects/{id}/terms/imports/preview", tag = "term",
+    params(("id" = i64, Path)), request_body = ImportPreviewRequest,
+    description = "解析并校验术语 CSV/JSON，先 canonicalize source_lang，再计算 NULL-safe identity、created/updated 与未知 POS 脱敏警告。该端点不写术语表，只保存绑定 actor/project/kind/digest 的十五分钟一次性 Redis preview。",
+    responses((status = 200, body = TermImportPreviewDto),
+        (status = 400, body = ErrorResponse), (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse),
+        (status = 409, body = ErrorResponse), (status = 500, body = ErrorResponse)))]
+pub async fn preview_term_import(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Json(request): Json<ImportPreviewRequest>,
+) -> Result<Json<TermImportPreviewDto>, ApiError> {
+    let access = paccess::load(&state, Some(&user), id).await?;
+    access.require_node(nodes::PROJECT_TERM_MANAGE)?;
+    access.require_language_ready()?;
+    if prts_db::terms::project_pending_deletion(&state.db, id)
+        .await
+        .map_err(db_err)?
+    {
+        return Err(prts_common::Error::ProjectPendingDeletion.into());
+    }
+    let primary = access
+        .project
+        .primary_source_lang
+        .as_deref()
+        .ok_or(prts_common::Error::ProjectLanguageResolutionRequired)?;
+    let rows = term_import::parse_term_document(request.format, &request.content, primary)
+        .map_err(map_import_rule_error)?;
+    let presets = prts_db::pos::list(&state.db).await.map_err(db_err)?;
+    let (resolved, warnings) = resolve_term_rows(&rows, &presets)?;
+    let source_langs = resolved
+        .iter()
+        .map(|row| row.source_lang.clone())
+        .collect::<Vec<_>>();
+    let source_texts = resolved
+        .iter()
+        .map(|row| row.source_text.clone())
+        .collect::<Vec<_>>();
+    let pos_ids = resolved.iter().map(|row| row.pos_id).collect::<Vec<_>>();
+    let existing =
+        prts_db::terms::existing_import_ids(&state.db, id, &source_langs, &source_texts, &pos_ids)
+            .await
+            .map_err(db_err)?;
+    let created = existing.iter().filter(|id| id.is_none()).count();
+    let updated = existing.len() - created;
+    let preview_rows = rows
+        .iter()
+        .zip(existing.iter())
+        .enumerate()
+        .map(|(index, (row, existing_id))| TermPreviewRowDto {
+            row: index + 1,
+            source_lang: row.source_lang.clone(),
+            source_text: row.source_text.clone(),
+            translation: row.translation.clone(),
+            pos: row.pos.clone(),
+            notes: row.notes.clone(),
+            archived: row.archived,
+            action: if existing_id.is_some() {
+                "updated".to_string()
+            } else {
+                "created".to_string()
+            },
+        })
+        .collect();
+    let digest = term_import::canonical_digest(&rows).map_err(map_import_rule_error)?;
+    let token = term_import::store_preview(
+        &state.cache,
+        &StoredPreview {
+            actor_id: user.id.to_string(),
+            project_id: Some(id.to_string()),
+            kind: ImportKind::Term,
+            digest: digest.clone(),
+            primary_source_lang: Some(primary.to_string()),
+            terms: resolved,
+            pos: Vec::new(),
+        },
+    )
+    .await
+    .map_err(map_preview_store_error)?;
+    Ok(Json(TermImportPreviewDto {
+        token,
+        digest,
+        expires_in_seconds: term_import::PREVIEW_TTL_SECONDS,
+        created,
+        updated,
+        rows: preview_rows,
+        warnings,
+    }))
+}
+
+/// 原子消费 preview token，并在一个数据库事务内重查权限/项目状态/主源后 upsert。
+#[utoipa::path(post, path = "/projects/{id}/terms/imports/{token}/confirm", tag = "term",
+    params(("id" = i64, Path), ("token" = String, Path)), request_body = ImportConfirmRequest,
+    description = "使用 Redis Lua 原子校验 actor/project/kind/canonical digest 并一次性消费术语 preview。随后事务内重新锁定项目并检查最新权限、language-resolution/pending-deletion、当前主源、POS 与 NULL-safe identity；业务 upsert 和脱敏审计同事务提交。",
+    responses((status = 200, body = ImportConfirmDto),
+        (status = 400, body = ErrorResponse), (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse),
+        (status = 409, body = ErrorResponse), (status = 500, body = ErrorResponse),
+        (status = 503, body = ErrorResponse)))]
+pub async fn confirm_term_import(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((id, token)): Path<(i64, String)>,
+    Json(request): Json<ImportConfirmRequest>,
+) -> Result<Json<ImportConfirmDto>, ApiError> {
+    let stored = take_bound_preview(
+        &state,
+        &token,
+        user.id,
+        Some(id),
+        ImportKind::Term,
+        &request,
+    )
+    .await?;
+    let canonical_rows = stored
+        .terms
+        .iter()
+        .map(|row| TermDocumentRow {
+            source_lang: row.source_lang.clone(),
+            source_text: row.source_text.clone(),
+            translation: row.translation.clone(),
+            pos: row.pos.clone(),
+            notes: row.notes.clone(),
+            archived: row.archived,
+        })
+        .collect::<Vec<_>>();
+    require_digest(&stored, &request.digest, &canonical_rows)?;
+
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = lock_term_mutation(&mut tx, &user, id).await?;
+    let primary = project
+        .primary_source_lang
+        .as_deref()
+        .ok_or(prts_common::Error::ProjectLanguageResolutionRequired)?;
+    for row in &canonical_rows {
+        let plan = prts_core::terms::plan_term_write(
+            &row.source_lang,
+            primary,
+            row.archived,
+            project.language_repair_state == "ready",
+            false,
+        )
+        .map_err(map_term_rule_error)?;
+        if plan.source_lang != row.source_lang || row.source_text.trim() != row.source_text {
+            return Err(prts_common::Error::ImportPreviewTokenInvalid.into());
+        }
+    }
+    let presets = prts_db::pos::list_for_term_import_tx(&mut tx)
+        .await
+        .map_err(db_err)?;
+    let (resolved, warnings) = resolve_term_rows(&canonical_rows, &presets)?;
+    let source_langs = resolved
+        .iter()
+        .map(|row| row.source_lang.clone())
+        .collect::<Vec<_>>();
+    let source_texts = resolved
+        .iter()
+        .map(|row| row.source_text.clone())
+        .collect::<Vec<_>>();
+    let pos_ids = resolved.iter().map(|row| row.pos_id).collect::<Vec<_>>();
+    let existing =
+        prts_db::terms::existing_import_ids_tx(&mut tx, id, &source_langs, &source_texts, &pos_ids)
+            .await
+            .map_err(db_err)?;
+    let created = existing.iter().filter(|id| id.is_none()).count();
+    let updated = existing.len() - created;
+    for row in &resolved {
+        prts_db::terms::upsert_import_tx(
+            &mut tx,
+            id,
+            &row.source_lang,
+            &row.source_text,
+            &row.translation,
+            &row.notes,
+            row.pos_id,
+            row.archived.then(Utc::now),
+            user.id,
+        )
+        .await
+        .map_err(map_term_db_error)?;
+    }
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        audit_actor(&user),
+        AuditEvent::TermImported {
+            project_id: id,
+            created,
+            updated,
+            warning_count: warnings.len(),
+        },
+    )
+    .await
+    .map_err(|_| prts_common::Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(ImportConfirmDto {
+        created,
+        updated,
+        warnings,
+    }))
+}
+
+/// 导出项目全部 current/archived 术语；稳定格式总是显式包含 source_lang/archived。
+#[utoipa::path(get, path = "/projects/{id}/terms/export", tag = "term",
+    params(("id" = i64, Path), ExportQuery),
+    description = "按 CSV 或 JSON 导出可见项目的 mixed 术语集合。每行固定包含 source_lang、source_text、translation、pos、notes、archived；导出成功前必须提交不含正文的审计。",
+    responses((status = 200, description = "稳定 CSV/JSON 术语文档"),
+        (status = 400, body = ErrorResponse), (status = 404, body = ErrorResponse),
+        (status = 409, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+pub async fn export_terms(
+    State(state): State<AppState>,
+    MaybeUser(user): MaybeUser,
+    Path(id): Path<i64>,
+    Query(query): Query<ExportQuery>,
+) -> Result<Response, ApiError> {
+    let format = query.format.unwrap_or(DocumentFormat::Csv);
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::NotFound)?;
+    match user.as_ref() {
+        Some(user) => {
+            let access = paccess::load_locked_tx(&mut tx, user, project.clone()).await?;
+            access.require_view()?;
+            access.require_language_ready()?;
+        }
+        None if project.visibility == "public" && project.language_repair_state == "ready" => {}
+        None if project.visibility != "public" => {
+            return Err(prts_common::Error::NotFound.into());
+        }
+        None => return Err(prts_common::Error::ProjectLanguageResolutionRequired.into()),
+    }
+    let terms = prts_db::terms::list_for_export_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?;
+    let rows = terms
+        .into_iter()
+        .map(|term| TermDocumentRow {
+            source_lang: term.source_lang,
+            source_text: term.source_text,
+            translation: term.translation,
+            pos: term.pos_name_en.or(term.pos_name_zh_cn),
+            notes: term.notes,
+            archived: term.archived_at.is_some(),
+        })
+        .collect::<Vec<_>>();
+    let body = term_import::encode_term_document(format, &rows)
+        .map_err(|_| prts_common::Error::internal("terminology export encoding failed"))?;
+    let actor = user.as_ref().map_or(
+        AuditActor {
+            id: None,
+            kind: AuditActorKind::Anonymous,
+            ip: None,
+        },
+        audit_actor,
+    );
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        actor,
+        AuditEvent::TermExported {
+            project_id: id,
+            row_count: rows.len(),
+            format: format_name(format),
+        },
+    )
+    .await
+    .map_err(|_| prts_common::Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    let (content_type, extension) = match format {
+        DocumentFormat::Csv => ("text/csv; charset=utf-8", "csv"),
+        DocumentFormat::Json => ("application/json; charset=utf-8", "json"),
+    };
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!(
+                    "attachment; filename=\"{}-terms.{extension}\"",
+                    project.slug
+                ),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+fn resolve_term_rows(
+    rows: &[TermDocumentRow],
+    presets: &[prts_db::models::PosPreset],
+) -> Result<(Vec<ResolvedTermImportRow>, Vec<ImportWarningDto>), ApiError> {
+    let mut resolved = Vec::with_capacity(rows.len());
+    let mut warnings = Vec::new();
+    let mut identities = HashMap::new();
+    for (index, row) in rows.iter().enumerate() {
+        let row_number = index + 1;
+        let (pos_id, warning_codes) = resolve_pos_name(row.pos.as_deref(), presets)?;
+        for code in &warning_codes {
+            warnings.push(ImportWarningDto {
+                row: row_number,
+                code: code.clone(),
+            });
+        }
+        let identity = (row.source_lang.clone(), row.source_text.clone(), pos_id);
+        if identities.insert(identity, row_number).is_some() {
+            return Err(prts_common::Error::ImportDuplicateRow.into());
+        }
+        resolved.push(ResolvedTermImportRow {
+            row: row_number,
+            source_lang: row.source_lang.clone(),
+            source_text: row.source_text.clone(),
+            translation: row.translation.clone(),
+            pos: row.pos.clone(),
+            pos_id,
+            notes: row.notes.clone(),
+            archived: row.archived,
+            warning_codes,
+        });
+    }
+    Ok((resolved, warnings))
+}
+
+fn resolve_pos_name(
+    name: Option<&str>,
+    presets: &[prts_db::models::PosPreset],
+) -> Result<(Option<i64>, Vec<String>), ApiError> {
+    let Some(name) = name else {
+        return Ok((None, Vec::new()));
+    };
+    let normalized = name.trim().to_lowercase();
+    let matches = presets
+        .iter()
+        .filter(|preset| {
+            preset
+                .name_en
+                .as_deref()
+                .is_some_and(|value| value.trim().to_lowercase() == normalized)
+                || preset
+                    .name_zh_cn
+                    .as_deref()
+                    .is_some_and(|value| value.trim().to_lowercase() == normalized)
+        })
+        .map(|preset| preset.id)
+        .collect::<HashSet<_>>();
+    match matches.len() {
+        0 => Ok((None, vec!["UNKNOWN_POS".to_string()])),
+        1 => Ok((matches.into_iter().next(), Vec::new())),
+        _ => Err(prts_common::Error::ImportPosAmbiguous.into()),
+    }
+}
+
+async fn take_bound_preview(
+    state: &AppState,
+    token: &str,
+    actor_id: i64,
+    project_id: Option<i64>,
+    kind: ImportKind,
+    request: &ImportConfirmRequest,
+) -> Result<StoredPreview, ApiError> {
+    term_import::take_bound_preview(
+        &state.cache,
+        token,
+        actor_id,
+        project_id,
+        kind,
+        &request.digest,
+    )
+    .await
+    .map_err(map_preview_store_error)?
+    .ok_or_else(|| prts_common::Error::ImportPreviewTokenInvalid.into())
+}
+
+fn require_digest<T: Serialize + ?Sized>(
+    stored: &StoredPreview,
+    requested: &str,
+    rows: &T,
+) -> Result<(), ApiError> {
+    let actual = term_import::canonical_digest(rows).map_err(map_import_rule_error)?;
+    if stored.digest == requested && stored.digest == actual {
+        Ok(())
+    } else {
+        Err(prts_common::Error::ImportPreviewTokenInvalid.into())
+    }
+}
+
+fn map_import_rule_error(error: term_import::ImportRuleError) -> ApiError {
+    match error {
+        term_import::ImportRuleError::InvalidLanguageTag { .. } => {
+            prts_common::Error::InvalidLanguageTag.into()
+        }
+        term_import::ImportRuleError::DuplicateRow { .. } => {
+            prts_common::Error::ImportDuplicateRow.into()
+        }
+        term_import::ImportRuleError::ActiveSourceMismatch { .. } => {
+            prts_common::Error::TermActiveSourceMismatch.into()
+        }
+        term_import::ImportRuleError::PosNameRequired { .. } => {
+            prts_common::Error::PosNameRequired.into()
+        }
+        term_import::ImportRuleError::InvalidFormat
+        | term_import::ImportRuleError::SourceTextRequired { .. } => {
+            prts_common::Error::ImportFormatInvalid.into()
+        }
+    }
+}
+
+fn map_preview_store_error(error: term_import::PreviewStoreError) -> ApiError {
+    match error {
+        term_import::PreviewStoreError::InvalidPayload => {
+            prts_common::Error::ImportPreviewTokenInvalid.into()
+        }
+        term_import::PreviewStoreError::Unavailable => {
+            prts_common::Error::internal("terminology preview store unavailable").into()
+        }
+    }
+}
+
+fn format_name(format: DocumentFormat) -> &'static str {
+    match format {
+        DocumentFormat::Csv => "csv",
+        DocumentFormat::Json => "json",
+    }
 }
 
 async fn lock_term_mutation(

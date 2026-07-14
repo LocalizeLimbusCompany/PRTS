@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { hasProjectCapability } from './capabilities'
+import { hasPlatformCapability, hasProjectCapability } from './capabilities'
 
 describe('hasProjectCapability', () => {
   it('uses only explicit API capability values', () => {
@@ -30,5 +30,22 @@ describe('hasProjectCapability', () => {
     ).toBe(true)
     expect(hasProjectCapability(undefined, 'manage_tasks')).toBe(false)
     expect(hasProjectCapability(undefined, 'manage_terms')).toBe(false)
+  })
+})
+
+describe('hasPlatformCapability', () => {
+  it('uses explicit platform capability values without role-name inference', () => {
+    expect(hasPlatformCapability(undefined, 'manage_pos')).toBe(false)
+    expect(
+      hasPlatformCapability(
+        {
+          access_admin: true,
+          grant_platform_roles: false,
+          create_project: true,
+          manage_pos: true,
+        },
+        'manage_pos',
+      ),
+    ).toBe(true)
   })
 })

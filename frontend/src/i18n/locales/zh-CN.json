@@ -9,6 +9,10 @@
     "supported": "支持 Markdown",
     "remaining": "还可输入 {count} 字"
   },
+  "common": {
+    "yes": "是",
+    "no": "否"
+  },
   "project": {
     "workspaceNav": "项目工作区导航",
     "loadFailed": "项目加载失败",
@@ -266,6 +270,92 @@
       "deleteAction": "删除项目"
     }
   },
+  "terminology": {
+    "heading": "项目术语",
+    "description": "维护当前主源术语与可迁移的历史源语言术语；匹配只使用当前主源的启用项。",
+    "loadFailed": "术语加载失败",
+    "create": "新建术语",
+    "edit": "编辑术语",
+    "saved": "术语已保存",
+    "saveFailed": "术语保存失败",
+    "archive": "归档",
+    "archived": "术语已归档",
+    "restore": "恢复启用",
+    "restorePrimaryOnly": "只有当前主源语言的术语可以恢复启用",
+    "restored": "术语已恢复启用",
+    "delete": "删除术语",
+    "deleteConfirm": "确认永久删除此术语？此操作不可撤销。",
+    "deleted": "术语已删除",
+    "deleteFailed": "术语删除失败",
+    "export": "导出",
+    "exportFailed": "导出失败",
+    "loadMore": "加载更多术语",
+    "empty": "当前范围没有术语",
+    "emptyHint": "切换范围，或由有权限的成员创建、导入术语。",
+    "active": "启用",
+    "sourceLangHint": "使用规范 BCP-47；非当前主源只能保存为归档。",
+    "scopes": {
+      "current": "当前术语",
+      "archived": "已归档",
+      "mixed": "全部"
+    },
+    "fields": {
+      "sourceLang": "源语言",
+      "sourceText": "源文",
+      "translation": "译文",
+      "pos": "词性",
+      "notes": "备注",
+      "archived": "保存为归档",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "import": {
+      "label": "预览确认导入",
+      "termHeading": "导入项目术语",
+      "posHeading": "导入词性预设",
+      "description": "先解析并预览，不会立即写入；预览有效期为 15 分钟，且只能确认一次。",
+      "chooseFile": "选择 CSV 或 JSON 文件",
+      "invalidFile": "请选择 .csv 或 .json 文件",
+      "previewFailed": "导入预览失败",
+      "confirmFailed": "导入确认失败",
+      "confirmed": "导入完成：新建 {created}，更新 {updated}",
+      "termFields": "字段：source_lang, source_text, translation, pos, notes, archived",
+      "posFields": "字段：name_zh_cn, name_en, sort_order",
+      "created": "新建 {count}",
+      "updated": "更新 {count}",
+      "warnings": "警告 {count}",
+      "warningCodes": {
+        "UNKNOWN_POS": "第 {row} 行的词性无法识别，将按未设置词性导入。"
+      },
+      "action": "导入",
+      "preview": "生成预览",
+      "confirm": "确认导入",
+      "actions": {
+        "created": "新建",
+        "updated": "更新"
+      },
+      "previewLimited": "这里只显示前 {count} 行；确认会处理预览中的全部合法行。"
+    },
+    "pos": {
+      "heading": "双语词性预设",
+      "description": "词性在所有项目间共享；只有平台管理员可以创建、修改、导入或删除。",
+      "loadFailed": "词性预设加载失败",
+      "create": "新建词性",
+      "edit": "编辑词性",
+      "saved": "词性预设已保存",
+      "saveFailed": "词性预设保存失败",
+      "delete": "删除词性",
+      "deleteConfirm": "确认删除此词性预设？引用会清空；若会造成术语标识冲突，服务器将拒绝。",
+      "deleted": "词性预设已删除",
+      "deleteFailed": "词性预设删除失败",
+      "empty": "还没有词性预设",
+      "displayName": "当前显示名",
+      "nameZh": "中文名称",
+      "nameEn": "英文名称",
+      "sortOrder": "排序值",
+      "nameRequired": "中文名称与英文名称至少填写一个。"
+    }
+  },
   "home": {
     "title": "欢迎使用 PRTS",
     "subtitle": "开源的公开本地化协作平台",
@@ -300,6 +390,30 @@
     "taskScope": "任务 #{id}"
   },
   "admin": {
+    "title": "管理后台",
+    "platformSettings": "平台设置",
+    "registrationOpen": "开放注册",
+    "registrationOpenHint": "关闭后新用户无法自助注册。",
+    "oauthOnly": "仅 OAuth 登录（禁用账号密码）",
+    "oauthOnlyHint": "开启后仅允许 ZOOT 等 OAuth 登录。",
+    "requireEmail": "要求邮箱验证",
+    "requireEmailHint": "需配置 SMTP 后实际生效（投递功能后续接入）。",
+    "saveSettings": "保存设置",
+    "settingsSaved": "设置已保存",
+    "settingsSaveFailed": "保存失败",
+    "roles": {
+      "title": "角色任免",
+      "description": "按用户 UID 设置平台角色（仅总管理员）。",
+      "superAdmin": "总管理员",
+      "admin": "管理员",
+      "maintainer": "维护者",
+      "ordinary": "普通用户（移除角色）",
+      "userId": "用户 UID",
+      "role": "角色",
+      "apply": "应用",
+      "updated": "角色已更新",
+      "updateFailed": "操作失败"
+    },
     "search": {
       "title": "搜索 / 向量化",
       "subtitle": "配置混合搜索（FTS + trgm + pgvector）行为。",

@@ -4,7 +4,7 @@ import { hasProjectCapability } from './capabilities'
 import { PROJECT_WORKSPACE_SECTIONS } from './projectWorkspace'
 
 describe('project workspace navigation', () => {
-  it('keeps the fixed section order and only placeholders unfinished features', () => {
+  it('keeps the fixed section order with terminology enabled', () => {
     expect(PROJECT_WORKSPACE_SECTIONS.map((section) => section.key)).toEqual([
       'info',
       'files',
@@ -18,7 +18,10 @@ describe('project workspace navigation', () => {
       PROJECT_WORKSPACE_SECTIONS.filter((section) => 'pending' in section).map(
         (section) => section.key,
       ),
-    ).toEqual(['terms'])
+    ).toEqual([])
+    expect(PROJECT_WORKSPACE_SECTIONS.find((section) => section.key === 'terms')?.route).toBe(
+      'project-terms',
+    )
   })
 
   it('does not infer management visibility from a role name', () => {

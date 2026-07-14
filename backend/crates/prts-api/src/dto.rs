@@ -25,6 +25,8 @@ pub struct UserDto {
     pub cp: f64,
     /// 平台角色（super_admin|admin|maintainer），普通用户为 null。
     pub platform_role: Option<String>,
+    /// 显式平台能力；客户端不得从 platform_role 字符串推断授权。
+    pub platform_capabilities: capabilities::PlatformCapabilitiesDto,
     /// 加入时间（RFC3339）。
     pub created_at: String,
 }
@@ -40,6 +42,9 @@ impl From<&User> for UserDto {
             translation_langs: u.translation_langs.clone(),
             cp: u.cp,
             platform_role: u.platform_role.clone(),
+            platform_capabilities: capabilities::PlatformCapabilitiesDto::from_role(
+                u.platform_role.as_deref(),
+            ),
             created_at: u.created_at.to_rfc3339(),
         }
     }

@@ -73,6 +73,22 @@ pub enum Error {
     #[error("project pending deletion")]
     ProjectPendingDeletion,
 
+    /// 导入正文不是稳定 CSV/JSON 格式或缺少必填字段。
+    #[error("invalid import format")]
+    ImportFormatInvalid,
+
+    /// 导入行在 canonical identity 上重复。
+    #[error("duplicate import row")]
+    ImportDuplicateRow,
+
+    /// preview token 已过期、已消费或绑定校验失败。
+    #[error("invalid import preview token")]
+    ImportPreviewTokenInvalid,
+
+    /// POS 名称同时匹配多个预设，无法安全解析。
+    #[error("ambiguous imported part of speech")]
+    ImportPosAmbiguous,
+
     /// 数据库错误。
     #[error("database error")]
     Database(#[source] sqlx_error::SqlxError),
@@ -101,6 +117,10 @@ impl Error {
             Error::DuplicatePosName => "POS_NAME_DUPLICATE",
             Error::PosInUse => "POS_IN_USE",
             Error::ProjectPendingDeletion => "PROJECT_PENDING_DELETION",
+            Error::ImportFormatInvalid => "IMPORT_FORMAT_INVALID",
+            Error::ImportDuplicateRow => "IMPORT_DUPLICATE_ROW",
+            Error::ImportPreviewTokenInvalid => "IMPORT_PREVIEW_TOKEN_INVALID",
+            Error::ImportPosAmbiguous => "IMPORT_POS_AMBIGUOUS",
             Error::Database(_) => "internal",
             Error::Internal(_) => "internal",
         }

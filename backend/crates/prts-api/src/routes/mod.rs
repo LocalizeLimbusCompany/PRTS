@@ -86,6 +86,9 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(pos::list_pos))
         .routes(routes!(pos::create_pos))
         .routes(routes!(pos::update_pos, pos::delete_pos))
+        .routes(routes!(pos::preview_pos_import))
+        .routes(routes!(pos::confirm_pos_import))
+        .routes(routes!(pos::export_pos))
         .routes(routes!(
             admin_settings::get_search_settings,
             admin_settings::put_search_settings
@@ -112,6 +115,9 @@ fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(terms::list_terms, terms::create_term))
         .routes(routes!(terms::match_terms))
+        .routes(routes!(terms::preview_term_import))
+        .routes(routes!(terms::confirm_term_import))
+        .routes(routes!(terms::export_terms))
         .routes(routes!(
             terms::get_term,
             terms::update_term,
@@ -334,13 +340,16 @@ mod tests {
     }
 
     #[test]
-    fn terminology_openapi_documents_crud_keyset_match_and_admin_pos() {
+    fn terminology_openapi_documents_crud_import_export_keyset_match_and_admin_pos() {
         let (_, api) = api_router().split_for_parts();
         let document = serde_json::to_value(api).unwrap();
         for (path, method) in [
             ("/projects/{id}/terms", "get"),
             ("/projects/{id}/terms", "post"),
             ("/projects/{id}/terms/match", "post"),
+            ("/projects/{id}/terms/imports/preview", "post"),
+            ("/projects/{id}/terms/imports/{token}/confirm", "post"),
+            ("/projects/{id}/terms/export", "get"),
             ("/projects/{id}/terms/{term_id}", "get"),
             ("/projects/{id}/terms/{term_id}", "put"),
             ("/projects/{id}/terms/{term_id}", "delete"),
@@ -348,6 +357,9 @@ mod tests {
             ("/admin/pos", "post"),
             ("/admin/pos/{pos_id}", "put"),
             ("/admin/pos/{pos_id}", "delete"),
+            ("/admin/pos/imports/preview", "post"),
+            ("/admin/pos/imports/{token}/confirm", "post"),
+            ("/admin/pos/export", "get"),
         ] {
             assert!(
                 document["paths"][path][method].is_object(),
@@ -403,9 +415,13 @@ mod tests {
             ("/projects/{id}/terms", "post"),
             ("/projects/{id}/terms/{term_id}", "put"),
             ("/projects/{id}/terms/{term_id}", "delete"),
+            ("/projects/{id}/terms/imports/{token}/confirm", "post"),
+            ("/projects/{id}/terms/export", "get"),
             ("/admin/pos", "post"),
             ("/admin/pos/{pos_id}", "put"),
             ("/admin/pos/{pos_id}", "delete"),
+            ("/admin/pos/imports/{token}/confirm", "post"),
+            ("/admin/pos/export", "get"),
             ("/projects/{id}/folders", "post"),
             ("/projects/{id}/files/{file_id}", "patch"),
             ("/projects/{id}/files/{file_id}", "delete"),

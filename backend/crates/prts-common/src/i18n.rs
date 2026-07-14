@@ -89,6 +89,22 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("PROJECT_PENDING_DELETION", Locale::En) => {
             "The project is pending deletion and is currently read-only"
         }
+        ("IMPORT_FORMAT_INVALID", Locale::ZhCn) => "导入文件格式无效或缺少必填字段",
+        ("IMPORT_FORMAT_INVALID", Locale::En) => {
+            "The import file format is invalid or required fields are missing"
+        }
+        ("IMPORT_DUPLICATE_ROW", Locale::ZhCn) => "导入文件包含规范化后重复的行",
+        ("IMPORT_DUPLICATE_ROW", Locale::En) => "The import file contains duplicate canonical rows",
+        ("IMPORT_PREVIEW_TOKEN_INVALID", Locale::ZhCn) => {
+            "导入预览已过期、已使用或与当前请求不匹配"
+        }
+        ("IMPORT_PREVIEW_TOKEN_INVALID", Locale::En) => {
+            "The import preview expired, was already used, or does not match this request"
+        }
+        ("IMPORT_POS_AMBIGUOUS", Locale::ZhCn) => "导入的词性名称匹配多个预设",
+        ("IMPORT_POS_AMBIGUOUS", Locale::En) => {
+            "The imported part-of-speech name matches multiple presets"
+        }
         ("internal", Locale::ZhCn) => "服务器内部错误",
         ("internal", Locale::En) => "Internal server error",
         _ => return None,
