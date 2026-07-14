@@ -23,6 +23,7 @@ const { t, locale } = useI18n()
 const oauthOnly = ref(false)
 const registrationOpen = ref(true)
 const requireEmail = ref(false)
+const deleteChallengeMode = ref<'advanced' | 'simple'>('advanced')
 const savingSettings = ref(false)
 
 async function loadSettings() {
@@ -31,6 +32,7 @@ async function loadSettings() {
     oauthOnly.value = s['auth.oauth_only'] === true
     registrationOpen.value = s['auth.registration_open'] !== false
     requireEmail.value = s['auth.require_email_verification'] === true
+    deleteChallengeMode.value = s.project_delete_challenge_mode === 'simple' ? 'simple' : 'advanced'
   } catch (e) {
     $q.notify({ type: 'negative', message: apiErrorMessage(e) })
   }
@@ -44,6 +46,7 @@ async function saveSettings() {
       'auth.oauth_only': oauthOnly.value,
       'auth.registration_open': registrationOpen.value,
       'auth.require_email_verification': requireEmail.value,
+      project_delete_challenge_mode: deleteChallengeMode.value,
     })
     $q.notify({ type: 'positive', message: t('admin.settingsSaved') })
   } catch (e) {
@@ -464,6 +467,22 @@ async function exportPos(format: TerminologyDocumentFormat) {
       <q-toggle v-model="requireEmail" :label="t('admin.requireEmail')" :disable="savingSettings" />
       <div class="prts-dim" style="font-size: 12px; margin-left: 52px">
         {{ t('admin.requireEmailHint') }}
+      </div>
+      <q-select
+        v-model="deleteChallengeMode"
+        class="q-mt-md"
+        outlined
+        emit-value
+        map-options
+        :options="[
+          { label: t('admin.deleteChallengeAdvanced'), value: 'advanced' },
+          { label: t('admin.deleteChallengeSimple'), value: 'simple' },
+        ]"
+        :label="t('admin.deleteChallengeMode')"
+        :disable="savingSettings"
+      />
+      <div class="prts-dim q-mt-xs" style="font-size: 12px">
+        {{ t('admin.deleteChallengeHint') }}
       </div>
       <div class="q-mt-md">
         <q-btn

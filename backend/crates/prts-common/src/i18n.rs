@@ -79,6 +79,12 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("PROJECT_OWNER_TRANSFER_FORBIDDEN", Locale::En) => {
             "Project ownership cannot be changed through membership management"
         }
+        ("PROJECT_DELETE_CHALLENGE_INVALID", Locale::ZhCn) => {
+            "删除验证题已过期、已使用或答案不正确"
+        }
+        ("PROJECT_DELETE_CHALLENGE_INVALID", Locale::En) => {
+            "The deletion challenge expired, was already used, or has an incorrect answer"
+        }
         ("PROJECT_SEARCH_REBUILDING", Locale::ZhCn) => "项目词法搜索正在重建",
         ("PROJECT_SEARCH_REBUILDING", Locale::En) => "Project lexical search is rebuilding",
         ("PROJECT_SEARCH_FAILED", Locale::ZhCn) => "项目词法搜索重建失败",

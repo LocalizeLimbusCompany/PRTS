@@ -165,3 +165,39 @@ describe('stage 7.2 project membership authorization contracts', () => {
     expect(projectManageSource).not.toContain('auth.role ===')
   })
 })
+
+describe('stage 7.3 delayed owner-only deletion contracts', () => {
+  it('requires all client gates before requesting a server challenge', async () => {
+    const dialogSource = await import('@/components/project/ProjectDeleteDialog.vue?raw').then(
+      (module) => module.default,
+    )
+    for (const required of [
+      'consequencesConfirmed',
+      'slugInput',
+      'slugInput.value === props.slug',
+      'projectsApi.deleteChallenge',
+      'projectsApi.scheduleDeletion',
+      'waitingPeriod',
+      'readonly',
+    ]) {
+      expect(dialogSource).toContain(required)
+    }
+    expect(zhCn.project.deletion.waitingPeriod).toContain('24')
+    expect(en.project.deletion.waitingPeriod).toContain('24')
+    expect(dialogSource.indexOf('consequencesConfirmed')).toBeLessThan(
+      dialogSource.indexOf('projectsApi.deleteChallenge'),
+    )
+    expect(dialogSource.indexOf('slugInput.value === props.slug')).toBeLessThan(
+      dialogSource.indexOf('projectsApi.deleteChallenge'),
+    )
+  })
+
+  it('removes legacy controls and renders pending state from capabilities', () => {
+    expect(projectManageSource).toContain('ProjectDeleteDialog')
+    expect(projectManageSource).toContain('projectsApi.cancelDeletion')
+    expect(projectManageSource).toContain('detail?.project.deletion_scheduled_at')
+    expect(projectManageSource).not.toContain('LegacyProjectControls')
+    expect(apiTypesSource).toContain('DeleteChallengeDto')
+    expect(apiTypesSource).toContain('DeletionStatusDto')
+  })
+})

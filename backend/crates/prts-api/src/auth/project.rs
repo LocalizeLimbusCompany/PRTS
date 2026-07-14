@@ -31,11 +31,17 @@ impl ProjectAccess {
 
     /// 是否可见：公开项目人人可见；私有项目仅成员或平台管理可见。
     pub fn can_view(&self) -> bool {
+        if self.project.deletion_scheduled_at.is_some() {
+            return false;
+        }
         self.project.visibility == "public" || self.effective_role().is_some()
     }
 
     /// 是否拥有某项目权限节点。
     pub fn has_node(&self, node: &str) -> bool {
+        if self.project.deletion_scheduled_at.is_some() {
+            return false;
+        }
         self.effective_role().map(|r| r.has(node)).unwrap_or(false)
     }
 
@@ -44,6 +50,11 @@ impl ProjectAccess {
         &self,
         primary_source_release_ready: bool,
     ) -> prts_core::capabilities::ProjectCapabilities {
+        if self.project.deletion_scheduled_at.is_some() {
+            return prts_core::capabilities::ProjectCapabilities::for_subject(
+                false, None, false, false,
+            );
+        }
         prts_core::capabilities::ProjectCapabilities::for_subject(
             self.can_view(),
             self.effective_role(),
@@ -72,6 +83,13 @@ impl ProjectAccess {
 
     /// 要求某项目权限节点，否则 401（未登录）/ 403（无权）。
     pub fn require_node(&self, node: &str) -> Result<(), ApiError> {
+        if self.project.deletion_scheduled_at.is_some() {
+            return if self.user_id == Some(self.project.owner_id) {
+                Err(Error::ProjectPendingDeletion.into())
+            } else {
+                Err(Error::NotFound.into())
+            };
+        }
         if self.has_node(node) {
             Ok(())
         } else if self.user_id.is_none() {
@@ -92,6 +110,11 @@ pub async fn load(
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
+    if project.deletion_scheduled_at.is_some()
+        && user.is_none_or(|actor| actor.id != project.owner_id)
+    {
+        return Err(Error::NotFound.into());
+    }
 
     let (user_id, platform_role, project_role) = match user {
         Some(u) => {

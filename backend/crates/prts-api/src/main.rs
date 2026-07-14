@@ -99,6 +99,9 @@ async fn main() -> anyhow::Result<()> {
     // 启动后台嵌入 sweep（clones cheap: pool 引用计数，Arc 指针）。
     crate::embed_worker::spawn(db.clone(), embedder.clone(), search_rt.clone());
 
+    let media: Arc<dyn crate::media::MediaStore> = Arc::new(crate::media::LocalMediaStore::new(
+        settings.media.directory.clone(),
+    ));
     // Foundation handlers：legacy 语言 repair 与主源两阶段重建均由同一可恢复 worker 领取。
     let job_registry = crate::jobs::JobRegistry::new(vec![
         Arc::new(crate::jobs::repair_languages::RepairLanguagesHandler::new(
@@ -121,6 +124,11 @@ async fn main() -> anyhow::Result<()> {
             settings.media.upload_temp_directory.clone(),
         )),
         Arc::new(crate::jobs::purge_deleted_files::PurgeDeletedFilesHandler::new(db.clone())),
+        Arc::new(crate::jobs::purge_project::PurgeProjectHandler::new(
+            db.clone(),
+            media.clone(),
+            settings.media.upload_temp_directory.clone().into(),
+        )),
     ]);
     prts_db::jobs::ensure_file_retention_cleanup(&db, chrono::Utc::now())
         .await
@@ -137,13 +145,10 @@ async fn main() -> anyhow::Result<()> {
     let (job_worker, mut job_worker_task) = crate::job_worker::spawn(
         db.clone(),
         job_registry.clone(),
-        Arc::new(crate::job_worker::NoPendingDeletions),
+        Arc::new(crate::job_worker::DatabasePendingDeletions::new(db.clone())),
     );
 
     let addr = settings.server.addr();
-    let media = Arc::new(crate::media::LocalMediaStore::new(
-        settings.media.directory.clone(),
-    ));
     let state = AppState {
         db,
         cache,

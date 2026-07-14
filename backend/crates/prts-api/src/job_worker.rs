@@ -19,11 +19,30 @@ pub trait PendingDeletionSource: Send + Sync {
 }
 
 /// `0014` 前的 dormant gate：当前 schema 尚无待删除项目。
+#[cfg(test)]
+#[allow(dead_code)]
 pub struct NoPendingDeletions;
 
+#[cfg(test)]
 impl PendingDeletionSource for NoPendingDeletions {
     fn project_ids(&self) -> BoxFuture<'_, Result<Vec<i64>, sqlx::Error>> {
         Box::pin(async { Ok(Vec::new()) })
+    }
+}
+
+pub struct DatabasePendingDeletions {
+    db: prts_db::Db,
+}
+
+impl DatabasePendingDeletions {
+    pub fn new(db: prts_db::Db) -> Self {
+        Self { db }
+    }
+}
+
+impl PendingDeletionSource for DatabasePendingDeletions {
+    fn project_ids(&self) -> BoxFuture<'_, Result<Vec<i64>, sqlx::Error>> {
+        Box::pin(prts_db::projects::pending_deletion_ids(&self.db))
     }
 }
 

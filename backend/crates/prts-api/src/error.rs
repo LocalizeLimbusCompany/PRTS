@@ -105,7 +105,8 @@ fn status_for(code: &str) -> StatusCode {
         | "SEARCH_CURSOR_INVALID"
         | "ADMIN_USER_CURSOR_INVALID"
         | "PROJECT_MEMBER_ROLE_INVALID"
-        | "PROJECT_OWNER_TRANSFER_FORBIDDEN" => StatusCode::BAD_REQUEST,
+        | "PROJECT_OWNER_TRANSFER_FORBIDDEN"
+        | "PROJECT_DELETE_CHALLENGE_INVALID" => StatusCode::BAD_REQUEST,
         "unauthorized" => StatusCode::UNAUTHORIZED,
         "forbidden" => StatusCode::FORBIDDEN,
         "not_found" => StatusCode::NOT_FOUND,

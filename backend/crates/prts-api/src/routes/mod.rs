@@ -107,6 +107,9 @@ fn api_router() -> OpenApiRouter<AppState> {
             projects::update_project,
             projects::delete_project
         ))
+        .routes(routes!(projects::create_delete_challenge))
+        .routes(routes!(projects::deletion_status))
+        .routes(routes!(projects::cancel_deletion))
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
         .routes(routes!(projects::change_primary_source))

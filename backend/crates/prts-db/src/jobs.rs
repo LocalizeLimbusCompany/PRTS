@@ -10,7 +10,7 @@ use sqlx::{PgConnection, PgPool};
 use crate::models::Job;
 
 /// 项目永久清除在项目行删除后仍需使用的不可变 snapshot。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct ProjectPurgeSnapshot {
     pub project_id: i64,
     pub slug: String,
@@ -373,6 +373,15 @@ pub async fn pause_for_pending_projects_tx(
 
 /// 取消删除后只恢复由 pending-deletion gate 暂停的任务。
 pub async fn resume_project_jobs(pool: &PgPool, project_id: i64) -> Result<u64, sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    resume_project_jobs_tx(&mut connection, project_id).await
+}
+
+/// 在取消事务内恢复由 pending gate 暂停的普通任务。
+pub async fn resume_project_jobs_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+) -> Result<u64, sqlx::Error> {
     sqlx::query(
         "UPDATE jobs
          SET state = 'queued', pause_reason = NULL, run_after = now(), updated_at = now()
@@ -380,9 +389,67 @@ pub async fn resume_project_jobs(pool: &PgPool, project_id: i64) -> Result<u64, 
            AND pause_reason = 'project_pending_deletion'",
     )
     .bind(project_id)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|result| result.rows_affected())
+}
+
+/// 取消尚未开始的 purge job；调用方持有 project/job 行锁。
+pub async fn cancel_purge_tx(
+    conn: &mut PgConnection,
+    job_id: i64,
+    project_id: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query(
+        "UPDATE jobs SET state = 'cancelled', worker_id = NULL, lease_until = NULL,
+             finished_at = now(), updated_at = now()
+         WHERE id = $1 AND project_id = $2 AND kind = 'project_purge'
+           AND state IN ('queued', 'paused')",
+    )
+    .bind(job_id)
+    .bind(project_id)
+    .execute(conn)
+    .await
+    .map(|result| result.rows_affected() == 1)
+}
+
+/// DB-first purge 开始时取消并 detach 其它项目任务，同时保留当前 purge job。
+pub async fn detach_project_jobs_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+    purge_job_id: i64,
+) -> Result<u64, sqlx::Error> {
+    sqlx::query(
+        "UPDATE jobs SET project_id = NULL,
+             state = CASE WHEN id = $2 THEN state ELSE 'cancelled' END,
+             worker_id = CASE WHEN id = $2 THEN worker_id ELSE NULL END,
+             lease_until = CASE WHEN id = $2 THEN lease_until ELSE NULL END,
+             finished_at = CASE WHEN id = $2 THEN finished_at ELSE now() END,
+             updated_at = now()
+         WHERE project_id = $1",
+    )
+    .bind(project_id)
+    .bind(purge_job_id)
+    .execute(conn)
+    .await
+    .map(|result| result.rows_affected())
+}
+
+/// DB 删除提交前标记 purge job 已进入外部幂等清理阶段。
+pub async fn mark_external_cleanup_pending_tx(
+    conn: &mut PgConnection,
+    job_id: i64,
+    worker_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query(
+        "UPDATE jobs SET stage = 'external_cleanup_pending', updated_at = now()
+         WHERE id = $1 AND state = 'running' AND worker_id = $2",
+    )
+    .bind(job_id)
+    .bind(worker_id)
+    .execute(conn)
+    .await
+    .map(|result| result.rows_affected() == 1)
 }
 
 /// 仅当前且尚未过期的 lease 持有者可以续租。

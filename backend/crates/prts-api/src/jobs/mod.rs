@@ -24,6 +24,7 @@ pub enum JobErrorCode {
     UploadInvalidLanguage,
     UploadSourceLanguageMismatch,
     FilePurgeFailed,
+    ProjectPurgeFailed,
 }
 
 impl JobErrorCode {
@@ -40,6 +41,7 @@ impl JobErrorCode {
             Self::UploadInvalidLanguage => "upload_invalid_language",
             Self::UploadSourceLanguageMismatch => "upload_source_language_mismatch",
             Self::FilePurgeFailed => "file_purge_failed",
+            Self::ProjectPurgeFailed => "project_purge_failed",
         }
     }
 
@@ -58,6 +60,7 @@ impl JobErrorCode {
                 "upload language is not configured for the project"
             }
             Self::FilePurgeFailed => "expired file cleanup failed",
+            Self::ProjectPurgeFailed => "project external cleanup failed",
         }
     }
 }
@@ -65,6 +68,7 @@ impl JobErrorCode {
 pub mod cleanup_uploads;
 pub mod process_upload;
 pub mod purge_deleted_files;
+pub mod purge_project;
 pub mod reindex_project;
 pub mod repair_languages;
 

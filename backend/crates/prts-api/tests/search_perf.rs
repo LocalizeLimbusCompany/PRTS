@@ -134,7 +134,7 @@ async fn search_perf_orchestrator() {
     println!("[perf] N={n} max={max_ms}ms（目标量级 20w；HNSW/GIN 索引 + 有界 top-K）");
 
     // 清理
-    projects::delete(&pool, proj.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE username = 'perf_owner'")
         .execute(&pool)
         .await

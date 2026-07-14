@@ -23,18 +23,24 @@ const detail = ref<ProjectDetailDto | null>(null)
 const loading = ref(true)
 const projectId = computed(() => props.id)
 
-const sections = computed(() =>
-  PROJECT_WORKSPACE_SECTIONS.filter((section) => {
+const sections = computed(() => {
+  if (detail.value?.project.deletion_scheduled_at) {
+    return PROJECT_WORKSPACE_SECTIONS.filter((section) => section.key === 'manage')
+  }
+  return PROJECT_WORKSPACE_SECTIONS.filter((section) => {
     if (!('capability' in section)) return true
     return hasProjectCapability(detail.value?.capabilities, section.capability)
-  }),
-)
+  })
+})
 
 /** Load the project once for all nested workspace views. */
 async function load() {
   loading.value = true
   try {
     detail.value = await projectsApi.get(props.id)
+    if (detail.value.project.deletion_scheduled_at && route.name !== 'project-manage') {
+      await router.replace({ name: 'project-manage', params: { id: props.id } })
+    }
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error, t('project.loadFailed')) })
     await router.replace({ name: 'projects' })
@@ -87,6 +93,7 @@ watch(() => props.id, load)
           </div>
         </div>
         <q-btn
+          v-if="!detail.project.deletion_scheduled_at"
           unelevated
           no-caps
           color="primary"
@@ -113,7 +120,9 @@ watch(() => props.id, load)
           >
             <q-icon :name="section.icon" size="18px" />
             <span>{{ $t(`project.sections.${section.key}`) }}</span>
-            <span v-if="'pending' in section" class="project-shell__soon">{{ $t('project.soon') }}</span>
+            <span v-if="'pending' in section" class="project-shell__soon">{{
+              $t('project.soon')
+            }}</span>
           </button>
         </aside>
         <main class="project-shell__content">

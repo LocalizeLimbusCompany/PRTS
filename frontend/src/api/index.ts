@@ -5,6 +5,8 @@ import type {
   AdminUserListParams,
   AdminUserListResponse,
   CreatedApiKey,
+  DeleteChallengeDto,
+  DeletionStatusDto,
   EntryDto,
   EntryVersionDto,
   ExternalAccountDto,
@@ -141,8 +143,17 @@ export const projectsApi = {
   ) {
     return http.post(`/projects/${id}/language-resolution/resolve`, body)
   },
-  remove(id: number) {
-    return http.delete(`/projects/${id}`)
+  deleteChallenge(id: number) {
+    return http.post<DeleteChallengeDto>(`/projects/${id}/delete-challenge`).then((r) => r.data)
+  },
+  scheduleDeletion(id: number, body: { challenge_id: string; answer: number }) {
+    return http.delete<DeletionStatusDto>(`/projects/${id}`, { data: body }).then((r) => r.data)
+  },
+  deletionStatus(id: number) {
+    return http.get<DeletionStatusDto>(`/projects/${id}/deletion`).then((r) => r.data)
+  },
+  cancelDeletion(id: number) {
+    return http.post(`/projects/${id}/deletion/cancel`)
   },
   members(id: number) {
     return http.get<MemberDto[]>(`/projects/${id}/members`).then((r) => r.data)

@@ -89,6 +89,8 @@ export interface ProjectDto {
   embedding_degraded_reason: string | null
   avatar_url: string | null
   avatar_updated_at: string | null
+  deletion_scheduled_at: string | null
+  deletion_job_id: number | null
   owner_id: number
   created_at: string
   updated_at: string
@@ -137,6 +139,19 @@ export interface MemberCapabilities {
   assignable_roles: string[]
   can_change_role: boolean
   can_remove: boolean
+}
+
+export interface DeleteChallengeDto {
+  challenge_id: string
+  prompt: string
+  expires_in: number
+}
+
+export interface DeletionStatusDto {
+  project_id: number
+  slug: string
+  deletion_scheduled_at: string
+  deletion_job_id: number
 }
 
 export interface FolderDto {

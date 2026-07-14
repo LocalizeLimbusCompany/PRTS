@@ -42,6 +42,8 @@ pub struct ProjectDto {
     pub embedding_degraded_reason: Option<String>,
     pub avatar_url: Option<String>,
     pub avatar_updated_at: Option<String>,
+    pub deletion_scheduled_at: Option<String>,
+    pub deletion_job_id: Option<i64>,
     pub owner_id: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -74,6 +76,8 @@ impl From<&prts_db::models::Project> for ProjectDto {
                 .as_ref()
                 .map(|_| format!("/api/projects/{}/avatar", p.id)),
             avatar_updated_at: p.avatar_updated_at.map(|value| value.to_rfc3339()),
+            deletion_scheduled_at: p.deletion_scheduled_at.map(|value| value.to_rfc3339()),
+            deletion_job_id: p.deletion_job_id,
             owner_id: p.owner_id,
             created_at: p.created_at.to_rfc3339(),
             updated_at: p.updated_at.to_rfc3339(),
@@ -271,7 +275,9 @@ pub async fn get_project(
     Path(id): Path<i64>,
 ) -> Result<Json<ProjectDetailDto>, ApiError> {
     let access = paccess::load(&state, user.as_ref(), id).await?;
-    access.require_view()?;
+    if access.project.deletion_scheduled_at.is_none() {
+        access.require_view()?;
+    }
 
     let stats = prts_db::stats::project(&state.db, id)
         .await
@@ -585,10 +591,121 @@ fn language_error(error: prts_core::LanguageTagError) -> ApiError {
     }
 }
 
+const DELETE_CHALLENGE_TTL_SECONDS: usize = 300;
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeleteChallengeDto {
+    pub challenge_id: String,
+    pub prompt: String,
+    pub expires_in: usize,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeletionStatusDto {
+    pub project_id: i64,
+    pub slug: String,
+    pub deletion_scheduled_at: String,
+    pub deletion_job_id: i64,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct ScheduleDeletionReq {
+    pub challenge_id: String,
+    pub answer: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredDeleteChallenge {
+    user_id: i64,
+    project_id: i64,
+    expected_answer: i64,
+}
+
+fn delete_challenge_key(challenge_id: &str) -> String {
+    format!("prts:project-delete-challenge:{challenge_id}")
+}
+
+async fn consume_delete_challenge(
+    cache: &prts_db::Cache,
+    challenge_id: &str,
+) -> Result<Option<StoredDeleteChallenge>, ApiError> {
+    let mut cache = cache.clone();
+    let raw: Option<String> = redis::cmd("GETDEL")
+        .arg(delete_challenge_key(challenge_id))
+        .query_async(&mut cache)
+        .await
+        .map_err(|_| Error::internal("delete challenge cache unavailable"))?;
+    raw.map(|value| serde_json::from_str(&value))
+        .transpose()
+        .map_err(|_| Error::validation("PROJECT_DELETE_CHALLENGE_INVALID").into())
+}
+
+#[utoipa::path(
+    post,
+    path = "/projects/{id}/delete-challenge",
+    tag = "project",
+    description = "仅唯一 owner 可领取短 TTL、绑定 user/project 的一次性整数数学 challenge。答案不返回、不审计、不写 job。",
+    responses(
+        (status = 200, body = DeleteChallengeDto),
+        (status = 403, body = ErrorResponse),
+        (status = 404, body = ErrorResponse)
+    )
+)]
+pub async fn create_delete_challenge(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<DeleteChallengeDto>, ApiError> {
+    let project = prts_db::projects::find_by_id(&state.db, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    if project.owner_id != user.id || project.deletion_scheduled_at.is_some() {
+        return Err(Error::Forbidden.into());
+    }
+    let mode = match prts_db::settings::get(&state.db, "project_delete_challenge_mode")
+        .await
+        .map_err(db_err)?
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .as_deref()
+    {
+        Some("simple") => prts_core::delete_challenge::ChallengeMode::Simple,
+        _ => prts_core::delete_challenge::ChallengeMode::Advanced,
+    };
+    let challenge_id = prts_auth::token::random_token(40);
+    let seed = challenge_id.bytes().fold(0_u64, |value, byte| {
+        value.wrapping_mul(131).wrapping_add(u64::from(byte))
+    });
+    let plan = prts_core::delete_challenge::generate_challenge(mode, seed);
+    let stored = StoredDeleteChallenge {
+        user_id: user.id,
+        project_id: id,
+        expected_answer: prts_core::delete_challenge::answer(&plan),
+    };
+    let mut cache = state.cache.clone();
+    let _: () = redis::cmd("SET")
+        .arg(delete_challenge_key(&challenge_id))
+        .arg(serde_json::to_string(&stored).map_err(|_| Error::internal("challenge encode"))?)
+        .arg("EX")
+        .arg(DELETE_CHALLENGE_TTL_SECONDS)
+        .arg("NX")
+        .query_async(&mut cache)
+        .await
+        .map_err(|_| Error::internal("delete challenge cache unavailable"))?;
+    Ok(Json(DeleteChallengeDto {
+        challenge_id,
+        prompt: plan.prompt(),
+        expires_in: DELETE_CHALLENGE_TTL_SECONDS,
+    }))
+}
+
 /// 删除项目。需项目「删除」权限。
 #[utoipa::path(delete, path = "/projects/{id}", tag = "project",
+    description = "消费绑定当前 owner/project 的一次性 challenge，并在同一事务创建 project_purge job、设置 24 小时待删除状态和 allowlisted audit。",
+    request_body = ScheduleDeletionReq,
     responses(
-        (status = 204),
+        (status = 202, body = DeletionStatusDto),
+        (status = 400, body = ErrorResponse),
         (status = 403),
         (status = 404),
         (status = 503, description = "审计服务不可用，项目未删除", body = ErrorResponse)
@@ -597,18 +714,57 @@ pub async fn delete_project(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(id): Path<i64>,
-) -> Result<StatusCode, ApiError> {
-    let access = paccess::load(&state, Some(&user), id).await?;
-    access.require_node(nodes::PROJECT_DELETE)?;
+    Json(req): Json<ScheduleDeletionReq>,
+) -> Result<(StatusCode, Json<DeletionStatusDto>), ApiError> {
+    let challenge = consume_delete_challenge(&state.cache, &req.challenge_id)
+        .await?
+        .ok_or_else(|| Error::validation("PROJECT_DELETE_CHALLENGE_INVALID"))?;
+    if challenge.user_id != user.id
+        || challenge.project_id != id
+        || challenge.expected_answer != req.answer
+    {
+        return Err(Error::validation("PROJECT_DELETE_CHALLENGE_INVALID").into());
+    }
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let before = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    paccess::load_locked_tx(&mut tx, &user, before.clone())
-        .await?
-        .require_node(nodes::PROJECT_DELETE)?;
-    prts_db::projects::delete_tx(&mut tx, id)
+    if before.owner_id != user.id {
+        return Err(Error::Forbidden.into());
+    }
+    if before.deletion_scheduled_at.is_some() {
+        return Err(Error::ProjectPendingDeletion.into());
+    }
+    let scheduled_at = chrono::Utc::now() + chrono::Duration::hours(24);
+    let media_keys = before.avatar_key.iter().cloned().collect();
+    let temp_keys = prts_db::projects::purge_temp_keys_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?;
+    let purge_job = prts_db::jobs::create_tx(
+        &mut tx,
+        prts_db::jobs::NewJob {
+            kind: prts_db::jobs::JobKind::ProjectPurge(prts_db::jobs::ProjectPurgeSnapshot {
+                project_id: id,
+                slug: before.slug.clone(),
+                media_keys,
+                temp_keys,
+                deadline: scheduled_at,
+            }),
+            project_id: Some(id),
+            stage: "awaiting_deadline".to_string(),
+            progress_total: None,
+            max_attempts: 10,
+            run_after: scheduled_at,
+        },
+    )
+    .await
+    .map_err(db_err)?;
+    let pending =
+        prts_db::projects::schedule_deletion_tx(&mut tx, id, user.id, purge_job.id, scheduled_at)
+            .await
+            .map_err(db_err)?;
+    prts_db::jobs::pause_for_pending_projects_tx(&mut tx, &[id])
         .await
         .map_err(db_err)?;
     prts_db::audit::append_event_tx(
@@ -618,14 +774,107 @@ pub async fn delete_project(
             kind: AuditActorKind::User,
             ip: None,
         },
-        AuditEvent::ProjectDeleted {
+        AuditEvent::ProjectDeletionScheduled {
             project_id: id,
             slug: &before.slug,
+            deletion_job_id: purge_job.id,
+            scheduled_at,
         },
     )
     .await
     .map_err(|_| Error::AuditUnavailable)?;
     tx.commit().await.map_err(db_err)?;
+    state.job_worker.wake();
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(DeletionStatusDto {
+            project_id: id,
+            slug: pending.slug,
+            deletion_scheduled_at: scheduled_at.to_rfc3339(),
+            deletion_job_id: purge_job.id,
+        }),
+    ))
+}
+
+#[utoipa::path(get, path = "/projects/{id}/deletion", tag = "project",
+    description = "仅唯一 owner 可读取待删除倒计时；其它主体按项目不可见处理。",
+    responses((status = 200, body = DeletionStatusDto), (status = 404, body = ErrorResponse)))]
+pub async fn deletion_status(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<DeletionStatusDto>, ApiError> {
+    let project = prts_db::projects::find_by_id(&state.db, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    if project.owner_id != user.id {
+        return Err(Error::NotFound.into());
+    }
+    let scheduled_at = project.deletion_scheduled_at.ok_or(Error::NotFound)?;
+    let job_id = project.deletion_job_id.ok_or(Error::NotFound)?;
+    Ok(Json(DeletionStatusDto {
+        project_id: id,
+        slug: project.slug,
+        deletion_scheduled_at: scheduled_at.to_rfc3339(),
+        deletion_job_id: job_id,
+    }))
+}
+
+#[utoipa::path(post, path = "/projects/{id}/deletion/cancel", tag = "project",
+    description = "仅唯一 owner 可在 deadline 前取消；事务内锁定 project/job、重验 owner/state，恢复普通 jobs 并写 allowlisted audit。",
+    responses((status = 204), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse)))]
+pub async fn cancel_deletion(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    if project.owner_id != user.id {
+        return Err(Error::Forbidden.into());
+    }
+    let deadline = project.deletion_scheduled_at.ok_or(Error::NotFound)?;
+    if deadline <= chrono::Utc::now() {
+        return Err(Error::Conflict.into());
+    }
+    let job_id = project.deletion_job_id.ok_or(Error::NotFound)?;
+    prts_db::jobs::find_by_id_for_update_tx(&mut tx, job_id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    if !prts_db::jobs::cancel_purge_tx(&mut tx, job_id, id)
+        .await
+        .map_err(db_err)?
+    {
+        return Err(Error::Conflict.into());
+    }
+    prts_db::projects::cancel_deletion_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?;
+    prts_db::jobs::resume_project_jobs_tx(&mut tx, id)
+        .await
+        .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ProjectDeletionCancelled {
+            project_id: id,
+            slug: &project.slug,
+            deletion_job_id: job_id,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    state.job_worker.wake();
     Ok(StatusCode::NO_CONTENT)
 }
 

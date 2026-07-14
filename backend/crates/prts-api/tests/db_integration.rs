@@ -382,8 +382,18 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     },
     AuditedEntrypoint {
         entrypoint: "routes::projects::delete_project",
-        action: "project.deleted",
-        allowed_payload_keys: &["slug"],
+        action: "project.deletion_scheduled",
+        allowed_payload_keys: &["slug", "deletion_job_id", "scheduled_at"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "routes::projects::cancel_deletion",
+        action: "project.deletion_cancelled",
+        allowed_payload_keys: &["slug", "deletion_job_id"],
+    },
+    AuditedEntrypoint {
+        entrypoint: "jobs::purge_project::database",
+        action: "project.purged",
+        allowed_payload_keys: &["slug", "deletion_job_id"],
     },
     AuditedEntrypoint {
         entrypoint: "routes::projects::add_member",
@@ -840,7 +850,21 @@ const AUDIT_ACTION_CONTRACTS: &[AuditActionContract] = &[
         expected_count: 1,
     },
     AuditActionContract {
-        action: "project.deleted",
+        action: "project.deletion_scheduled",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.deletion_cancelled",
+        target_type: "project",
+        target_id_policy: TargetIdPolicy::Numeric,
+        project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
+        expected_count: 1,
+    },
+    AuditActionContract {
+        action: "project.purged",
         target_type: "project",
         target_id_policy: TargetIdPolicy::Numeric,
         project_snapshot_policy: ProjectSnapshotPolicy::SameAsNumericTarget,
@@ -1186,7 +1210,7 @@ const REPOSITORY_WRITERS: &[&str] = &[
     "projects::set_avatar_tx",
     "projects::clear_avatar_tx",
     "projects::change_primary_source_tx",
-    "projects::delete",
+    "projects::delete_test_fixture",
     "files::ensure_file_at_path",
     "files::get_or_create_folder",
     "files::refresh_entry_count",
@@ -1318,10 +1342,10 @@ fn audit_contract_inventory_covers_every_existing_writer_with_typed_payloads() {
         "auth/session writer inventory 发生漂移"
     );
     assert_eq!(UNAUDITED_READS.len(), 33, "普通读取 inventory 发生漂移");
-    assert_eq!(AUDITED_ENTRYPOINTS.len(), 79, "审计入口 inventory 发生漂移");
+    assert_eq!(AUDITED_ENTRYPOINTS.len(), 81, "审计入口 inventory 发生漂移");
     assert_eq!(
         AUDIT_ACTION_CONTRACTS.len(),
-        74,
+        76,
         "action 合同 inventory 发生漂移"
     );
 
@@ -1456,7 +1480,9 @@ async fn audit_contract_project_lock_serializes_membership_upserts_for_missing_r
     first.rollback().await.unwrap();
     second.await.unwrap();
 
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM users WHERE id = ANY($1::BIGINT[])")
         .bind(&[actor.id, member.id][..])
         .execute(&state.db)
@@ -1727,7 +1753,7 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
                 "pub async fn delete_project(",
                 Some("/// 成员对外表示"),
             ),
-            "projects::delete_tx",
+            "projects::schedule_deletion_tx",
         ),
         (
             function_body(
@@ -1788,6 +1814,7 @@ fn audit_contract_project_mutations_reauthorize_inside_locked_transaction() {
         let reauthorization = body
             .find("paccess::load_locked_tx")
             .or_else(|| body.find("authorize_membership_mutation"))
+            .or_else(|| body.find("before.owner_id != user.id"))
             .expect("项目 mutation 必须在锁后重验权限");
         let business_write = body.find(writer).expect("项目 mutation 业务 writer 存在");
         assert!(project_lock < reauthorization);
@@ -2018,7 +2045,9 @@ async fn audit_contract_file_tree_routes_share_project_lock_and_count_deleted_su
     assert_eq!(folder_audit[0].payload["affected_files"], 2);
     assert_eq!(folder_audit[0].payload["affected_entries"], 3);
 
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(actor.id)
         .execute(&state.db)
@@ -2275,7 +2304,9 @@ async fn audit_contract_upload_revalidates_permission_after_project_lock() {
         "revoked translation"
     );
 
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM users WHERE id = ANY($1::BIGINT[])")
         .bind(&[owner.id, manager.id, target.id][..])
         .execute(&state.db)
@@ -4593,7 +4624,7 @@ async fn audit_contract_job_retry_audit_failure_rolls_back_and_returns_503() {
         .execute(&normal_state.db)
         .await
         .unwrap();
-    projects::delete(&normal_state.db, project.id)
+    projects::delete_test_fixture(&normal_state.db, project.id)
         .await
         .unwrap();
     sqlx::query("DELETE FROM users WHERE id = $1")
@@ -5192,10 +5223,35 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
     )
     .await
     .expect_api("移除项目成员成功");
-    projects_routes::delete_project(
+    let challenge = projects_routes::create_delete_challenge(
         State(state.clone()),
         audit_contract_current_user(&actor),
         Path(project.id),
+    )
+    .await
+    .expect_api("领取删除 challenge 成功")
+    .0;
+    let mut cache = state.cache.clone();
+    let stored: String = redis::cmd("GET")
+        .arg(format!(
+            "prts:project-delete-challenge:{}",
+            challenge.challenge_id
+        ))
+        .query_async(&mut cache)
+        .await
+        .unwrap();
+    let expected_answer = serde_json::from_str::<serde_json::Value>(&stored).unwrap()
+        ["expected_answer"]
+        .as_i64()
+        .unwrap();
+    let _scheduled = projects_routes::delete_project(
+        State(state.clone()),
+        audit_contract_current_user(&actor),
+        Path(project.id),
+        Json(projects_routes::ScheduleDeletionReq {
+            challenge_id: challenge.challenge_id,
+            answer: expected_answer,
+        }),
     )
     .await
     .expect_api("删除项目成功");
@@ -5216,7 +5272,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             "folder.deleted",
             "project.updated",
             "membership.removed",
-            "project.deleted",
+            "project.deletion_scheduled",
         ],
     );
     audit_contract_assert_exact_targets(
@@ -5240,7 +5296,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
                 "membership.removed",
                 format!("{}:{}", project.id, member.id),
             ),
-            ("project.deleted", project.id.to_string()),
+            ("project.deletion_scheduled", project.id.to_string()),
         ],
     );
     for row in &rows {
@@ -6712,7 +6768,9 @@ async fn upload_replacement_rejects_cross_project_job_binding() {
         .execute(&pool)
         .await
         .unwrap();
-    projects::delete(&pool, other_project.id).await.unwrap();
+    projects::delete_test_fixture(&pool, other_project.id)
+        .await
+        .unwrap();
     replacement_test_cleanup(&pool, user_id, project_id, &temp_root).await;
 }
 
@@ -7108,8 +7166,11 @@ async fn audit_jobs_manual_retry_reuses_same_id_and_increments_attempts() {
         .unwrap()
         .unwrap();
     let delete_pool = pool.clone();
-    let mut delete_task =
-        tokio::spawn(async move { projects::delete(&delete_pool, project_id).await.unwrap() });
+    let mut delete_task = tokio::spawn(async move {
+        projects::delete_test_fixture(&delete_pool, project_id)
+            .await
+            .unwrap()
+    });
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(100), &mut delete_task)
             .await
@@ -8586,7 +8647,7 @@ async fn projects_files_entries_roundtrip() {
     assert_eq!(export.len(), 2);
 
     // 级联清理
-    projects::delete(&pool, proj.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE username = 'itest_owner'")
         .execute(&pool)
         .await
@@ -8671,7 +8732,7 @@ async fn migration_0004_trigger_populates_source_text_and_zhparser_tsv() {
     );
 
     // —— 级联清理 ——
-    projects::delete(&pool, proj.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE username = 'itest_zh_owner'")
         .execute(&pool)
         .await
@@ -8785,7 +8846,7 @@ async fn search_trgm_and_fts_recall() {
     );
 
     // —— 级联清理 ——
-    projects::delete(&pool, proj.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE username = 'itest_search_owner'")
         .execute(&pool)
         .await
@@ -8907,7 +8968,7 @@ async fn search_orchestrator_returns_ranked_hits() {
     );
 
     // —— 级联清理 ——
-    projects::delete(&pool, proj.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE username = 'itest_orch_owner'")
         .execute(&pool)
         .await
@@ -9039,7 +9100,7 @@ async fn vector_search_returns_nearest_first() {
     );
 
     // —— 级联清理 ——
-    projects::delete(&pool, proj.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj.id).await.unwrap();
     sqlx::query("DELETE FROM users WHERE username = 'itest_vec_owner'")
         .execute(&pool)
         .await
@@ -9398,8 +9459,12 @@ async fn suggestions_trgm_membership_scoped() {
     );
 
     // —— 级联清理 ——
-    projects::delete(&pool, proj_a.id).await.unwrap();
-    projects::delete(&pool, proj_b.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj_a.id)
+        .await
+        .unwrap();
+    projects::delete_test_fixture(&pool, proj_b.id)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(proj_c_id)
         .execute(&pool)
@@ -9510,7 +9575,7 @@ async fn poke_membership_gate_and_notification_created() {
     );
 
     // —— 级联清理 ——
-    projects::delete(&pool, proj.id).await.unwrap();
+    projects::delete_test_fixture(&pool, proj.id).await.unwrap();
     for uname in ["itest_poke_a", "itest_poke_b", "itest_poke_c"] {
         sqlx::query("DELETE FROM users WHERE username = $1")
             .bind(uname)
@@ -9716,8 +9781,8 @@ async fn messages_share_project_gate() {
     assert_eq!(convo[0].content, "hello from A");
 
     // —— 级联清理 ——
-    projects::delete(&pool, p1.id).await.unwrap();
-    projects::delete(&pool, p2.id).await.unwrap();
+    projects::delete_test_fixture(&pool, p1.id).await.unwrap();
+    projects::delete_test_fixture(&pool, p2.id).await.unwrap();
     for uname in ["itest_msg_ga", "itest_msg_gb", "itest_msg_gc"] {
         sqlx::query("DELETE FROM users WHERE username = $1")
             .bind(uname)
@@ -9941,7 +10006,9 @@ async fn file_history_soft_delete_restore_preserves_operation_boundaries_and_sta
     .await
     .unwrap();
     assert_eq!(tombstone_after, (true, tombstone_before.1));
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
 }
 
 /// rollback 逆放 target 之后的 file deltas，追加新 change set/entry versions，旧历史不改。
@@ -10112,7 +10179,9 @@ async fn file_history_rollback_materializes_target_and_appends_versions() {
         rollback_metadata["source_change_set_id"],
         target_change_set.to_string()
     );
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
 }
 
 /// folder move/rename 与 rollback 使用递归树 ID，而不是可被复用的字符串 path；目标版本
@@ -10266,7 +10335,9 @@ async fn file_history_folder_move_and_rollback_rewrite_current_tree_paths() {
             .await
             .unwrap();
     assert_eq!(rollback_operation, "rollback");
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
 }
 
 /// 到期 purge 显式 detach live refs、清 versions/业务树/history payload，并保留 audit。
@@ -10428,7 +10499,9 @@ async fn file_history_retention_purge_uses_explicit_cleanup_order() {
             .await
             .unwrap();
     assert_eq!(audit_after, audit_before);
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
 }
 
 /// `0011` 必须一次性声明任务、active file、immutable baseline 与物化统计的完整契约。
@@ -10766,8 +10839,12 @@ async fn tasks_api_enforces_visibility_manage_capability_binding_and_redacted_au
     assert_eq!(deleted_payload["file_count"], 1);
     assert_eq!(deleted_payload["baseline_entry_count"], 1);
 
-    projects::delete(&state.db, other_project.id).await.unwrap();
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, other_project.id)
+        .await
+        .unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
 }
 
 /// 任务 mutation 与审计同事务；audit INSERT 失败时 Markdown 与 baseline 均不得提交。
@@ -10820,7 +10897,9 @@ async fn tasks_api_fails_closed_without_persisting_body_or_baseline_when_audit_f
     .await
     .unwrap();
     assert_eq!(persisted, 0);
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
 }
 
 /// 任务 baseline 只在新增 task_file 时建立；之后所有进度变化只消费 immutable IDs 的
@@ -11491,8 +11570,12 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
         Some((0, 0))
     );
 
-    projects::delete(&state.db, other_project.id).await.unwrap();
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, other_project.id)
+        .await
+        .unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
 }
 
 // ======================== Task 5.1 terminology contracts ========================
@@ -12285,8 +12368,12 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
         .fetch_all(&state.db)
         .await
         .unwrap();
-    projects::delete(&state.db, project.id).await.unwrap();
-    projects::delete(&state.db, other_project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
+    projects::delete_test_fixture(&state.db, other_project.id)
+        .await
+        .unwrap();
     pos_routes::delete_pos(
         State(state.clone()),
         audit_contract_current_user(&admin),
@@ -12475,7 +12562,9 @@ async fn terminology_mutations_roll_back_when_audit_is_unavailable() {
             .unwrap();
     assert_eq!(imported_pos, 0);
 
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
         .bind(owner.id)
         .bind(admin.id)
@@ -13051,8 +13140,12 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
         audit_contract_assert_json_has_no_sensitive_keys(payload);
     }
 
-    projects::delete(&state.db, other_project.id).await.unwrap();
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, other_project.id)
+        .await
+        .unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM users WHERE id IN ($1, $2)")
         .bind(owner.id)
         .bind(reviewer.id)
@@ -13256,7 +13349,9 @@ async fn terminology_pos_import_export_is_admin_only_kind_bound_and_redacted() {
         audit_contract_assert_json_has_no_sensitive_keys(payload);
     }
 
-    projects::delete(&state.db, project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
     sqlx::query("DELETE FROM pos_presets WHERE id IN ($1, $2)")
         .bind(existing.id)
         .bind(new_id)
@@ -14225,7 +14320,9 @@ async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_a
     let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(envelope["items"].as_array().unwrap().len() > 1);
 
-    projects::delete(&state.db, other_project.id).await.unwrap();
+    projects::delete_test_fixture(&state.db, other_project.id)
+        .await
+        .unwrap();
     replacement_test_cleanup(
         &state.db,
         owner.id,
@@ -15920,4 +16017,531 @@ async fn stage7_membership_cross_project_binding_statuses_and_audit_rollback_are
             .as_deref(),
         Some("reviewer")
     );
+}
+
+// ======================== Task 7.3 delayed deletion RED contracts ========================
+
+/// 删除 challenge、pending gate 与 DB-first purge 必须落在独立 typed 模块和固定路由中；
+/// 0014 已冻结，本任务不得再创建或修改 migration。
+#[test]
+fn stage7_delayed_deletion_source_contract_is_complete() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let challenge =
+        std::fs::read_to_string(root.join("backend/crates/prts-core/src/delete_challenge.rs"))
+            .expect("Task 7.3 必须提供 typed delete challenge");
+    for required in [
+        "pub enum ChallengeMode",
+        "pub enum ChallengePlan",
+        "pub fn generate_challenge",
+        "pub fn answer",
+        "Simple",
+        "Advanced",
+    ] {
+        assert!(challenge.contains(required), "challenge 缺少 {required}");
+    }
+    assert!(!challenge.contains("eval("), "challenge 禁止 eval 字符串");
+
+    let projects =
+        std::fs::read_to_string(root.join("backend/crates/prts-api/src/routes/projects.rs"))
+            .unwrap();
+    for required in [
+        "pub async fn create_delete_challenge(",
+        "pub async fn deletion_status(",
+        "pub async fn cancel_deletion(",
+        "StatusCode::ACCEPTED",
+        "PROJECT_DELETE_CHALLENGE_INVALID",
+        "Duration::hours(24)",
+        "jobs::create_tx",
+        "projects::schedule_deletion_tx",
+        "AuditEvent::ProjectDeletionScheduled",
+        "projects::cancel_deletion_tx",
+        "AuditEvent::ProjectDeletionCancelled",
+    ] {
+        assert!(projects.contains(required), "删除 route 缺少 {required}");
+    }
+    let purge =
+        std::fs::read_to_string(root.join("backend/crates/prts-api/src/jobs/purge_project.rs"))
+            .expect("Task 7.3 必须提供 purge handler");
+    for ordered in [
+        "detach_project_jobs_tx",
+        "detach_live_refs_tx",
+        "delete_entry_versions_tx",
+        "delete_entries_files_folders_tx",
+        "delete_file_history_tx",
+        "delete_tasks_tx",
+        "delete_terms_tx",
+        "delete_project_metadata_tx",
+        "delete_project_row_tx",
+        "external_cleanup_pending",
+    ] {
+        assert!(purge.contains(ordered), "purge 固定顺序缺少 {ordered}");
+    }
+    assert!(purge.find("delete_project_row_tx").unwrap() < purge.find("media.delete").unwrap());
+
+    let migration =
+        std::fs::read_to_string(root.join("backend/migrations/0014_admin_delete_cp.sql")).unwrap();
+    assert!(migration.contains("ON DELETE SET NULL"));
+    assert_eq!(
+        std::fs::read_dir(root.join("backend/migrations"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("0015"))
+            .count(),
+        0,
+        "Task 7.3 不得新增 migration"
+    );
+}
+
+async fn stage7_delete_challenge_answer(state: &state::AppState, challenge_id: &str) -> i64 {
+    let mut cache = state.cache.clone();
+    let stored: String = redis::cmd("GET")
+        .arg(format!("prts:project-delete-challenge:{challenge_id}"))
+        .query_async(&mut cache)
+        .await
+        .expect("测试可读取隔离 challenge");
+    serde_json::from_str::<serde_json::Value>(&stored).unwrap()["expected_answer"]
+        .as_i64()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn stage7_delete_challenge_binding_one_time_pending_visibility_and_cancel_restore() {
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "delete-owner", Some("maintainer")).await;
+    let outsider =
+        audit_contract_create_user(&state.db, "delete-outsider", Some("super_admin")).await;
+    let project = projects::create(
+        &state.db,
+        &format!("delete-pending-{}", owner.id),
+        "Delayed deletion",
+        "",
+        "public",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+
+    let outsider_challenge = projects_routes::create_delete_challenge(
+        State(state.clone()),
+        audit_contract_current_user(&outsider),
+        Path(project.id),
+    )
+    .await
+    .expect_err_api("非 owner 不得领取 challenge");
+    assert_eq!(
+        outsider_challenge.into_response().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+
+    let cross_user = projects_routes::create_delete_challenge(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_api("owner challenge 用于跨用户绑定测试")
+    .0;
+    let cross_answer = stage7_delete_challenge_answer(&state, &cross_user.challenge_id).await;
+    let cross_denied = projects_routes::delete_project(
+        State(state.clone()),
+        audit_contract_current_user(&outsider),
+        Path(project.id),
+        Json(projects_routes::ScheduleDeletionReq {
+            challenge_id: cross_user.challenge_id,
+            answer: cross_answer,
+        }),
+    )
+    .await
+    .expect_err_api("challenge 绑定领取用户");
+    assert_eq!(
+        cross_denied.into_response().status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+
+    let expired = projects_routes::create_delete_challenge(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_api("owner challenge 用于 TTL 测试")
+    .0;
+    let expired_answer = stage7_delete_challenge_answer(&state, &expired.challenge_id).await;
+    let mut cache = state.cache.clone();
+    let _: i64 = redis::cmd("DEL")
+        .arg(format!(
+            "prts:project-delete-challenge:{}",
+            expired.challenge_id
+        ))
+        .query_async(&mut cache)
+        .await
+        .unwrap();
+    let expired_denied = projects_routes::delete_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ScheduleDeletionReq {
+            challenge_id: expired.challenge_id,
+            answer: expired_answer,
+        }),
+    )
+    .await
+    .expect_err_api("过期 challenge 拒绝");
+    assert_eq!(
+        expired_denied.into_response().status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+
+    let wrong = projects_routes::create_delete_challenge(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_api("owner 可领取 challenge")
+    .0;
+    let expected = stage7_delete_challenge_answer(&state, &wrong.challenge_id).await;
+    let denied = projects_routes::delete_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ScheduleDeletionReq {
+            challenge_id: wrong.challenge_id.clone(),
+            answer: expected + 1,
+        }),
+    )
+    .await
+    .expect_err_api("错误答案拒绝");
+    assert_eq!(
+        denied.into_response().status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+    let replay = projects_routes::delete_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ScheduleDeletionReq {
+            challenge_id: wrong.challenge_id,
+            answer: expected,
+        }),
+    )
+    .await
+    .expect_err_api("错误尝试后 challenge 已消费");
+    assert_eq!(
+        replay.into_response().status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+
+    let challenge = projects_routes::create_delete_challenge(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_api("重新领取 challenge")
+    .0;
+    let answer = stage7_delete_challenge_answer(&state, &challenge.challenge_id).await;
+    let (status, scheduled) = projects_routes::delete_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ScheduleDeletionReq {
+            challenge_id: challenge.challenge_id,
+            answer,
+        }),
+    )
+    .await
+    .expect_api("正确答案进入 pending");
+    assert_eq!(status, axum::http::StatusCode::ACCEPTED);
+    let deadline = chrono::DateTime::parse_from_rfc3339(&scheduled.0.deletion_scheduled_at)
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert!(deadline > chrono::Utc::now() + chrono::Duration::hours(23));
+    assert!(deadline < chrono::Utc::now() + chrono::Duration::hours(25));
+    assert!(
+        projects::find_by_id(&state.db, project.id)
+            .await
+            .unwrap()
+            .is_some(),
+        "24 小时前不得清除"
+    );
+
+    let hidden = projects_routes::get_project(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&outsider))),
+        Path(project.id),
+    )
+    .await
+    .expect_err_api("pending 对非 owner 不可见");
+    assert_eq!(
+        hidden.into_response().status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+    let owner_view = projects_routes::get_project(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+    )
+    .await
+    .expect_api("owner 可见倒计时")
+    .0;
+    assert!(owner_view.project.deletion_scheduled_at.is_some());
+    assert!(!owner_view.capabilities.manage_project);
+    let ordinary_read = projects_routes::list_members(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+    )
+    .await
+    .expect_err_api("pending owner 普通读取 fail closed");
+    assert_eq!(
+        ordinary_read.into_response().status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    projects_routes::cancel_deletion(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_api("owner 可取消");
+    let restored = projects::find_by_id(&state.db, project.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(restored.deletion_scheduled_at.is_none());
+    let _members = projects_routes::list_members(
+        State(state),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+    )
+    .await
+    .expect_api("取消后恢复普通读取");
+}
+
+#[tokio::test]
+async fn stage7_due_purge_is_db_first_retains_job_and_retries_external_cleanup_idempotently() {
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "purge-owner", Some("maintainer")).await;
+    let project = projects::create(
+        &state.db,
+        &format!("purge-project-{}", owner.id),
+        "Purge project",
+        "",
+        "private",
+        &["en".to_string()],
+        "zh-Hans",
+        owner.id,
+    )
+    .await
+    .unwrap();
+    let media_root = std::env::temp_dir().join(format!("prts-purge-media-{}", project.id));
+    let avatar_key = media::project_avatar_key(project.id);
+    let avatar_path = media_root.join(&avatar_key);
+    tokio::fs::create_dir_all(&avatar_path).await.unwrap();
+    let mut tx = state.db.begin().await.unwrap();
+    prts_db::projects::set_avatar_tx(&mut tx, project.id, &avatar_key, "image/webp")
+        .await
+        .unwrap();
+    let folder_id: i64 = sqlx::query_scalar(
+        "INSERT INTO folders (project_id,name,path) VALUES ($1,'tree','tree') RETURNING id",
+    )
+    .bind(project.id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let file_id: i64 = sqlx::query_scalar(
+        "INSERT INTO files (project_id,folder_id,name,path) VALUES ($1,$2,'a.json','tree/a.json') RETURNING id",
+    )
+    .bind(project.id)
+    .bind(folder_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let entry_id: i64 = sqlx::query_scalar(
+        "INSERT INTO entries (file_id,project_id,key,original,translation) VALUES ($1,$2,'k','{\"en\":\"source\"}','translated') RETURNING id",
+    )
+    .bind(file_id)
+    .bind(project.id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO entry_versions (entry_id,version,kind,translation,state,editor_id) VALUES ($1,1,'translate','translated','translated',$2)")
+        .bind(entry_id).bind(owner.id).execute(&mut *tx).await.unwrap();
+    let change_set_id = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO file_change_sets (id,project_id,file_id,actor_id,operation,path_snapshot) VALUES ($1,$2,$3,$4,'move','tree/a.json')")
+        .bind(change_set_id).bind(project.id).bind(file_id).bind(owner.id).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO file_change_items (change_set_id,entity_type,entity_id_snapshot,operation,before_value,ordinal) VALUES ($1,'file',$2,'move','{}',0)")
+        .bind(change_set_id).bind(file_id).execute(&mut *tx).await.unwrap();
+    let task_id: i64 = sqlx::query_scalar(
+        "INSERT INTO tasks (project_id,title,created_by) VALUES ($1,'Purge task',$2) RETURNING id",
+    )
+    .bind(project.id)
+    .bind(owner.id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let task_file_id: i64 = sqlx::query_scalar("INSERT INTO task_files (task_id,file_id_snapshot,live_file_id) VALUES ($1,$2,$2) RETURNING id")
+        .bind(task_id).bind(file_id).fetch_one(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO task_baseline_entries (task_file_id,entry_id_snapshot,live_entry_id) VALUES ($1,$2,$2)")
+        .bind(task_file_id).bind(entry_id).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO terms (project_id,source_lang,source_text,translation,created_by,updated_by) VALUES ($1,'en','term','术语',$2,$2)")
+        .bind(project.id).bind(owner.id).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO language_resolution_issues (project_id,entity_type,entity_id_snapshot,issue_kind,raw_tag) VALUES ($1,'project',$1::TEXT,'invalid_tag','legacy')")
+        .bind(project.id).execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let challenge = projects_routes::create_delete_challenge(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_api("领取 purge challenge")
+    .0;
+    let answer = stage7_delete_challenge_answer(&state, &challenge.challenge_id).await;
+    let (_, scheduled) = projects_routes::delete_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::ScheduleDeletionReq {
+            challenge_id: challenge.challenge_id,
+            answer,
+        }),
+    )
+    .await
+    .expect_api("schedule purge");
+    let job_id = scheduled.0.deletion_job_id;
+    sqlx::query("UPDATE projects SET deletion_scheduled_at=now()-interval '1 second' WHERE id=$1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET run_after=now()-interval '1 second' WHERE id=$1")
+        .bind(job_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+    let late_cancel = projects_routes::cancel_deletion(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+    )
+    .await
+    .expect_err_api("deadline 到期后不能再取消");
+    assert_eq!(
+        late_cancel.into_response().status(),
+        axum::http::StatusCode::CONFLICT
+    );
+
+    let worker_id = format!("purge-test-{}", project.id);
+    let claimed = prts_db::jobs::claim_next_for_ids_and_kinds(
+        &state.db,
+        &worker_id,
+        120,
+        &[project.id],
+        &["project_purge".to_string()],
+        &[job_id],
+    )
+    .await
+    .unwrap()
+    .expect("到期 purge 可领取");
+    let handler = jobs::purge_project::PurgeProjectHandler::new(
+        state.db.clone(),
+        std::sync::Arc::new(media::LocalMediaStore::new(&media_root)),
+        std::env::temp_dir(),
+    );
+    let first = jobs::JobHandler::execute(&handler, &claimed).await;
+    assert!(first.is_err(), "外部目录删除应失败并触发同 job 重试");
+    assert!(
+        projects::find_by_id(&state.db, project.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "外部失败不得复活 DB 项目"
+    );
+    let detached = prts_db::jobs::find_by_id(&state.db, job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(detached.project_id, None, "purge job 必须在项目删除后保留");
+    assert_eq!(detached.stage, "external_cleanup_pending");
+    prts_db::jobs::fail_attempt(
+        &state.db,
+        job_id,
+        &worker_id,
+        "project_purge_failed",
+        "project external cleanup failed",
+        true,
+        0,
+    )
+    .await
+    .unwrap();
+
+    tokio::fs::remove_dir_all(&avatar_path).await.unwrap();
+    let retry_worker = format!("purge-retry-{}", project.id);
+    let retry = prts_db::jobs::claim_next_for_ids_and_kinds(
+        &state.db,
+        &retry_worker,
+        120,
+        &[],
+        &["project_purge".to_string()],
+        &[job_id],
+    )
+    .await
+    .unwrap()
+    .expect("同一 detached purge job 可重试");
+    let result = jobs::JobHandler::execute(&handler, &retry)
+        .await
+        .expect("幂等外部清理成功");
+    prts_db::jobs::complete(&state.db, job_id, &retry_worker, result)
+        .await
+        .unwrap()
+        .expect("purge job 完成");
+    assert!(projects::find_by_id(&state.db, project.id)
+        .await
+        .unwrap()
+        .is_none());
+    let completed = prts_db::jobs::find_by_id(&state.db, job_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(completed.state, "succeeded");
+    assert_eq!(completed.project_id, None);
+    let remaining_business_rows: i64 = sqlx::query_scalar(
+        "SELECT
+            (SELECT count(*) FROM folders WHERE project_id=$1)
+          + (SELECT count(*) FROM files WHERE project_id=$1)
+          + (SELECT count(*) FROM entries WHERE project_id=$1)
+          + (SELECT count(*) FROM file_change_sets WHERE project_id=$1)
+          + (SELECT count(*) FROM tasks WHERE project_id=$1)
+          + (SELECT count(*) FROM terms WHERE project_id=$1)
+          + (SELECT count(*) FROM memberships WHERE project_id=$1)",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(remaining_business_rows, 0);
+    let purge_audit: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action='project.purged' AND project_id_snapshot=$1",
+    )
+    .bind(project.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(purge_audit, 1, "purge audit 元数据必须在项目删除后保留");
+    let _ = tokio::fs::remove_dir_all(&media_root).await;
 }

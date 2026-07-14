@@ -269,6 +269,22 @@ pub enum AuditEvent<'a> {
         project_id: i64,
         slug: &'a str,
     },
+    ProjectDeletionScheduled {
+        project_id: i64,
+        slug: &'a str,
+        deletion_job_id: i64,
+        scheduled_at: chrono::DateTime<chrono::Utc>,
+    },
+    ProjectDeletionCancelled {
+        project_id: i64,
+        slug: &'a str,
+        deletion_job_id: i64,
+    },
+    ProjectPurged {
+        project_id: i64,
+        slug: &'a str,
+        deletion_job_id: i64,
+    },
     MembershipUpserted {
         project_id: i64,
         member_id: i64,
@@ -814,6 +830,44 @@ pub async fn append_event_tx(
             project_id.to_string(),
             Some(project_id),
             serde_json::json!({"slug": slug}),
+        ),
+        AuditEvent::ProjectDeletionScheduled {
+            project_id,
+            slug,
+            deletion_job_id,
+            scheduled_at,
+        } => (
+            "project.deletion_scheduled",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "slug": slug,
+                "deletion_job_id": deletion_job_id,
+                "scheduled_at": scheduled_at,
+            }),
+        ),
+        AuditEvent::ProjectDeletionCancelled {
+            project_id,
+            slug,
+            deletion_job_id,
+        } => (
+            "project.deletion_cancelled",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"slug": slug, "deletion_job_id": deletion_job_id}),
+        ),
+        AuditEvent::ProjectPurged {
+            project_id,
+            slug,
+            deletion_job_id,
+        } => (
+            "project.purged",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"slug": slug, "deletion_job_id": deletion_job_id}),
         ),
         AuditEvent::MembershipUpserted {
             project_id,
