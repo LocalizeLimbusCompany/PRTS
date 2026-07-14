@@ -70,6 +70,8 @@ mod terms_routes;
 mod uploads_routes;
 #[path = "../src/routes/users.rs"]
 mod users_routes;
+#[path = "../src/routes/ws.rs"]
+mod ws_routes;
 
 /// 将数据库错误映射为真实 handler 使用的统一 API 错误。
 fn db_err(error: prts_db::DbError) -> error::ApiError {
@@ -590,6 +592,7 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
             "new_version",
             "previous_state",
             "new_state",
+            "forced_presence",
         ],
     },
     AuditedEntrypoint {
@@ -2213,6 +2216,7 @@ async fn audit_contract_upload_revalidates_permission_after_project_lock() {
             translation: "revoked translation".to_string(),
             state: "translated".to_string(),
             version: entry.version,
+            force_presence: false,
         }),
     ));
     audit_contract_wait_for_postgres_block(
@@ -5056,6 +5060,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             translation: updated_translation_marker.to_string(),
             state: "translated".to_string(),
             version: entry.version,
+            force_presence: false,
         }),
     )
     .await
@@ -10937,6 +10942,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             translation: "完成".to_string(),
             state: "translated".to_string(),
             version: current.version,
+            force_presence: false,
         }),
     )
     .await
@@ -10960,6 +10966,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             translation: current.translation,
             state: "untranslated".to_string(),
             version: current.version,
+            force_presence: false,
         }),
     )
     .await
@@ -14198,6 +14205,322 @@ async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_a
     .await;
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(translator.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// Presence force 只由显式 capability 放行，仍然携带并严格校验 expected version。
+#[tokio::test]
+async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_conflict() {
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "force-owner", Some("maintainer")).await;
+    let translator = audit_contract_create_user(&state.db, "force-translator", None).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Force presence {}", owner.id),
+            slug: Some(format!("force-presence-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建 force presence 项目");
+    projects_routes::add_member(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: translator.username.clone(),
+            role: "translator".to_string(),
+        }),
+    )
+    .await
+    .expect_api("添加 force presence translator");
+    let Json(uploaded) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "force/main.json",
+            &[("force-key", "Force source")],
+        )),
+    )
+    .await
+    .expect_api("创建 force presence 词条");
+    let entry: prts_db::models::Entry = sqlx::query_as(
+        "SELECT * FROM entries WHERE project_id = $1 AND file_id = $2 AND key = 'force-key'",
+    )
+    .bind(project.id)
+    .bind(uploaded.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+
+    let forbidden = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "translator force".to_string(),
+            state: "translated".to_string(),
+            version: entry.version,
+            force_presence: true,
+        }),
+    )
+    .await
+    .expect_err_api("translator 不具备 force_save_presence capability");
+    assert_eq!(
+        forbidden.into_response().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+
+    let Json(updated) = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "owner force".to_string(),
+            state: "translated".to_string(),
+            version: entry.version,
+            force_presence: true,
+        }),
+    )
+    .await
+    .expect_api("owner 通过 capability force save");
+    assert_eq!(updated.version, entry.version + 1);
+
+    let conflict = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "stale force".to_string(),
+            state: "translated".to_string(),
+            version: entry.version,
+            force_presence: true,
+        }),
+    )
+    .await
+    .expect_err_api("force 不得绕过真实 version conflict");
+    assert_eq!(
+        conflict.into_response().status(),
+        axum::http::StatusCode::CONFLICT
+    );
+
+    let Json(checked) = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: updated.translation,
+            state: "checked".to_string(),
+            version: updated.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_api("owner 将 translated 推进为 checked");
+    let Json(preserved) = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "translator edits checked text".to_string(),
+            state: "checked".to_string(),
+            version: checked.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_api("translator 脏保存时保持 checked 状态");
+    assert_eq!(preserved.state, "checked");
+    let Json(downgraded) = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: preserved.translation,
+            state: "translated".to_string(),
+            version: preserved.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_api("owner 将状态恢复为 translated");
+    let denied_review = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: downgraded.translation,
+            state: "checked".to_string(),
+            version: downgraded.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_err_api("translator 不得推进到 checked");
+    assert_eq!(
+        denied_review.into_response().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+
+    replacement_test_cleanup(
+        &state.db,
+        owner.id,
+        project.id,
+        &std::env::temp_dir().join("prts-force-presence-no-temp"),
+    )
+    .await;
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(translator.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// 公开 editor 的游客只使用可读 REST；私有项目仍隐藏，外部用户不得加入可写 presence。
+#[tokio::test]
+async fn public_editor_is_anonymous_read_only_and_private_editor_fails_closed() {
+    use axum::extract::{Path, Query, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let state = audit_contract_state().await;
+    let owner =
+        audit_contract_create_user(&state.db, "guest-editor-owner", Some("maintainer")).await;
+    let outsider = audit_contract_create_user(&state.db, "guest-editor-outsider", None).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Guest editor {}", owner.id),
+            slug: Some(format!("guest-editor-{}", owner.id)),
+            description: None,
+            visibility: Some("public".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建公开游客 editor 项目");
+    let Json(uploaded) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "guest/main.json",
+            &[("guest-key", "Guest source")],
+        )),
+    )
+    .await
+    .expect_api("创建游客 editor 词条");
+    let (_, Json(term)) = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: "Guest".to_string(),
+            translation: "游客".to_string(),
+            notes: String::new(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_api("创建游客可读 active term");
+
+    let Json(detail) = projects_routes::get_project(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path(project.id),
+    )
+    .await
+    .expect_api("匿名读取公开项目详情");
+    assert!(detail.capabilities.view_project);
+    assert!(!detail.capabilities.edit_entry);
+    assert!(!detail.capabilities.force_save_presence);
+    assert!(!detail.capabilities.collaborate);
+    let Json(tree) = files_routes::get_tree(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path(project.id),
+    )
+    .await
+    .expect_api("匿名读取公开项目 tree");
+    assert!(tree.files.iter().any(|file| file.id == uploaded.file_id));
+    let Json(entries) = entries_routes::list_entries(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path(project.id),
+        Query(entries_routes::EntryListQuery {
+            file_id: Some(uploaded.file_id),
+            task_id: None,
+            state: None,
+            q: None,
+            after: None,
+            limit: Some(50),
+            include_hidden: false,
+        }),
+    )
+    .await
+    .expect_api("匿名读取公开项目 entries");
+    assert_eq!(entries.len(), 1);
+    let Json(matched_terms) = terms_routes::match_terms(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path(project.id),
+        Json(terms_routes::TermMatchRequest {
+            source_text: "Guest source".to_string(),
+            limit: Some(20),
+        }),
+    )
+    .await
+    .expect_api("匿名匹配当前主源 active terms");
+    assert_eq!(matched_terms.len(), 1);
+    assert_eq!(matched_terms[0].id, term.id);
+
+    assert!(ws_routes::can_access(&state, project.id, owner.id).await);
+    assert!(!ws_routes::can_access(&state, project.id, outsider.id).await);
+
+    sqlx::query("UPDATE projects SET visibility = 'private' WHERE id = $1")
+        .bind(project.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let hidden = projects_routes::get_project(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path(project.id),
+    )
+    .await
+    .expect_err_api("匿名不得进入私有 editor");
+    assert_eq!(
+        hidden.into_response().status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+
+    replacement_test_cleanup(
+        &state.db,
+        owner.id,
+        project.id,
+        &std::env::temp_dir().join("prts-guest-editor-no-temp"),
+    )
+    .await;
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(outsider.id)
         .execute(&state.db)
         .await
         .unwrap();

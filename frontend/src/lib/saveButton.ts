@@ -1,99 +1,98 @@
-// frontend/src/lib/saveButton.ts
-// 上下文感知保存按钮的纯决策逻辑（无 Vue/DOM 依赖，便于单测）。
+import type { EntryState } from '@/api/types'
 
-/** 工作流推进目标：未改译文时「保存」按钮的下一步。 */
-export interface AdvanceTarget {
-  nextState: string
-  /** i18n label key 后缀（editor.btn<Pascal>），见下表。 */
-  labelKey: 'check' | 'review' | 'translated'
-  /** 所需权限：'edit'=任何成员，'review'=校对/管理/拥有者。 */
-  perm: 'edit' | 'review'
-}
-
-export function advanceOf(state: string): AdvanceTarget | null {
-  switch (state) {
-    case 'translated':
-      return { nextState: 'checked', labelKey: 'check', perm: 'review' }
-    case 'questioned':
-      return { nextState: 'translated', labelKey: 'translated', perm: 'edit' }
-    case 'checked':
-      return { nextState: 'reviewed', labelKey: 'review', perm: 'review' }
-    default:
-      return null // reviewed（终态）/ untranslated（无可推进）
-  }
-}
-
-export interface SaveCtx {
-  isMember: boolean
+/** 智能按钮只消费后端下发的 capability，不接触角色名称。 */
+export interface SaveContext {
+  canEdit: boolean
+  canReview: boolean
+  canEditLocked: boolean
+  canForcePresence: boolean
   locked: boolean
-  canEditLocked: boolean // owner/manager
-  isManager: boolean // owner/manager（与 canEditLocked 同集合）
-  canReview: boolean // owner/manager/reviewer
-  canEdit: boolean // 任何成员（拥有 PROJECT_ENTRY_EDIT）
-  state: string // 已保存状态
-  dirty: boolean // 译文或下拉状态相对已保存值有变化
-  othersEditing: boolean // 他人正在编辑此词条（在场）
+  state: EntryState
+  /** 译文正文相对服务端快照变化。 */
+  dirty: boolean
+  /** 用户显式改变状态下拉；优先尊重所选状态。 */
+  stateChanged: boolean
+  presenceConflict: boolean
 }
 
-export type SaveMode = 'save' | 'advance' | 'force' | 'none'
+export type SaveMode = 'translate' | 'save' | 'check' | 'review' | 'force' | 'none'
 
 export interface SaveButton {
-  /** i18n label key 后缀：'save' | 'force' | 'check' | 'review' | 'translated'。 */
-  labelKey: string
-  /** Quasar color：'primary' | 'negative'(红) | undefined(灰)。 */
-  color?: string
+  labelKey: 'translate' | 'save' | 'check' | 'review' | 'force'
+  color?: 'primary' | 'negative'
   disabled: boolean
   mode: SaveMode
-  /** 推进/强制推进时的目标状态；为空时调用方用 draftState。 */
-  nextState?: string
+  /** 请求必须保存的目标状态；force 只覆盖 presence，不覆盖版本。 */
+  targetState?: EntryState
 }
 
-function advanceAllowed(adv: AdvanceTarget | null, ctx: SaveCtx): boolean {
-  if (!adv) return false
-  return adv.perm === 'review' ? ctx.canReview : ctx.canEdit
+const disabledButton: SaveButton = {
+  labelKey: 'save',
+  disabled: true,
+  mode: 'none',
 }
 
-/** 决定保存按钮形态。首个匹配的分支胜出（对应 spec §2.2 优先级表）。 */
-export function computeSaveButton(ctx: SaveCtx): SaveButton {
-  // 1. 无编辑权限（非成员 / 锁定且非 owner/manager）
-  if (!ctx.isMember || (ctx.locked && !ctx.canEditLocked)) {
-    return { labelKey: 'save', disabled: true, mode: 'none' }
-  }
-
-  const adv = advanceOf(ctx.state)
-  const canAdvance = advanceAllowed(adv, ctx)
-  const hasContent = ctx.dirty || canAdvance
-
-  // 2/3. 他人正在编辑此词条
-  if (ctx.othersEditing) {
-    if (ctx.isManager) {
-      return {
-        labelKey: 'force',
-        color: 'negative',
-        disabled: !hasContent,
-        mode: 'force',
-        nextState: ctx.dirty ? undefined : adv?.nextState,
-      }
-    }
-    return { labelKey: 'save', disabled: true, mode: 'none' }
-  }
-
-  // 4. 脏 → 普通保存
-  if (ctx.dirty) {
-    return { labelKey: 'save', color: 'primary', disabled: false, mode: 'save' }
-  }
-
-  // 5. 未改 + 可推进
-  if (canAdvance && adv) {
+function ordinaryAction(ctx: SaveContext): SaveButton {
+  if (ctx.stateChanged) {
     return {
-      labelKey: adv.labelKey,
+      labelKey: 'save',
       color: 'primary',
       disabled: false,
-      mode: 'advance',
-      nextState: adv.nextState,
+      mode: 'save',
+      targetState: ctx.state,
     }
   }
+  if (ctx.dirty) {
+    if (ctx.state === 'untranslated') {
+      return {
+        labelKey: 'translate',
+        color: 'primary',
+        disabled: false,
+        mode: 'translate',
+        targetState: 'translated',
+      }
+    }
+    return {
+      labelKey: 'save',
+      color: 'primary',
+      disabled: false,
+      mode: 'save',
+      targetState: ctx.state,
+    }
+  }
+  if (ctx.canReview && ctx.state === 'translated') {
+    return {
+      labelKey: 'check',
+      color: 'primary',
+      disabled: false,
+      mode: 'check',
+      targetState: 'checked',
+    }
+  }
+  if (ctx.canReview && ctx.state === 'checked') {
+    return {
+      labelKey: 'review',
+      color: 'primary',
+      disabled: false,
+      mode: 'review',
+      targetState: 'reviewed',
+    }
+  }
+  return disabledButton
+}
 
-  // 6. 其余（终态 / 无推进权 / 未翻译且未改）→ 灰
-  return { labelKey: 'save', disabled: true, mode: 'none' }
+/** 根据 dirty/state/presence/capabilities 返回唯一智能动作。 */
+export function computeSaveButton(ctx: SaveContext): SaveButton {
+  if (!ctx.canEdit || (ctx.locked && !ctx.canEditLocked)) return disabledButton
+
+  const ordinary = ordinaryAction(ctx)
+  if (!ctx.presenceConflict) return ordinary
+  if (!ctx.canForcePresence || ordinary.disabled || !ordinary.targetState) return disabledButton
+  return {
+    labelKey: 'force',
+    color: 'negative',
+    disabled: false,
+    mode: 'force',
+    targetState: ordinary.targetState,
+  }
 }

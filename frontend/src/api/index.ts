@@ -17,7 +17,8 @@ import type {
   ProjectDto,
   ProjectTree,
   SearchConfigDto,
-  SearchHitDto,
+  StructuredSearchRequest,
+  StructuredSearchResponse,
   SearchSettingsDto,
   SuggestionDto,
   TokenResponse,
@@ -248,7 +249,7 @@ export const entriesApi = {
   update(
     id: number,
     entryId: number,
-    body: { translation: string; state: string; version: number },
+    body: { translation: string; state: string; version: number; force_presence?: boolean },
   ) {
     return http.put<EntryDto>(`/projects/${id}/entries/${entryId}`, body).then((r) => r.data)
   },
@@ -264,21 +265,12 @@ export const entriesApi = {
   },
 }
 
-/** 混合全文搜索（FTS + trgm + RRF）。 */
+/** 结构化项目搜索（POST + 签名键集 cursor）。 */
 export const searchApi = {
-  search(
-    id: number,
-    params: {
-      q?: string
-      file_id?: number
-      state?: string
-      sort?: string
-      offset?: number
-      limit?: number
-      include_hidden?: boolean
-    } = {},
-  ) {
-    return http.get<SearchHitDto[]>(`/projects/${id}/search`, { params }).then((r) => r.data)
+  search(id: number, body: StructuredSearchRequest) {
+    return http
+      .post<StructuredSearchResponse>(`/projects/${id}/search`, body)
+      .then((response) => response.data)
   },
 }
 

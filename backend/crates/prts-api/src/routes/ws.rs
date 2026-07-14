@@ -46,16 +46,18 @@ fn authenticate(state: &AppState, token: Option<&str>) -> Option<i64> {
     Some(claims.sub)
 }
 
-/// 公开项目任何登录用户可加入；私有项目需成员或平台管理。
-async fn can_access(state: &AppState, project_id: i64, user_id: i64) -> bool {
+/// 项目 presence 是可写协作通道：仅项目成员或平台全局项目管理员可加入。
+pub(crate) async fn can_access(state: &AppState, project_id: i64, user_id: i64) -> bool {
     match prts_db::projects::find_by_id(&state.db, project_id).await {
-        Ok(Some(p)) if p.visibility == "public" => true,
         Ok(Some(_)) => {
             if let Ok(Some(u)) = prts_db::users::find_by_id(&state.db, user_id).await {
-                if matches!(
-                    u.platform_role.as_deref(),
-                    Some("super_admin") | Some("admin")
-                ) {
+                if u.platform_role
+                    .as_deref()
+                    .and_then(prts_core::PlatformRole::parse)
+                    .is_some_and(|role| {
+                        role.has(prts_core::permission::nodes::PLATFORM_PROJECT_MANAGE_ALL)
+                    })
+                {
                     return true;
                 }
             }
@@ -149,5 +151,23 @@ async fn handle_user_socket(socket: WebSocket, state: AppState, user_id: i64) {
     tokio::select! {
         _ = &mut send_task => recv_task.abort(),
         _ = &mut recv_task => send_task.abort(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn project_presence_access_uses_permission_projection_without_role_name_comparisons() {
+        let source = include_str!("ws.rs");
+        let access = source
+            .split("async fn can_access")
+            .nth(1)
+            .and_then(|section| section.split("async fn handle_socket").next())
+            .expect("project presence access section exists");
+        assert!(access.contains("PLATFORM_PROJECT_MANAGE_ALL"));
+        assert!(!access.contains("\"super_admin\""));
+        assert!(!access.contains("\"admin\""));
+        assert!(!access.contains("\"owner\""));
+        assert!(!access.contains("\"manager\""));
     }
 }

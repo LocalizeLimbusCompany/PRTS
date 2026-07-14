@@ -64,8 +64,11 @@ export interface ProjectCapabilities {
   download: boolean
   edit_entry: boolean
   review_entry: boolean
+  lock_entry: boolean
+  hide_entry: boolean
   edit_locked_entry: boolean
   force_save_presence: boolean
+  collaborate: boolean
   resolve_languages: boolean
   change_primary_source: boolean
   delete_project: boolean
@@ -149,7 +152,7 @@ export interface EntryDto {
   key: string
   original: Record<string, string>
   translation: string
-  state: string
+  state: EntryState
   locked: boolean
   hidden: boolean
   version: number
@@ -253,9 +256,40 @@ export const ENTRY_STATES = [
 ] as const
 export type EntryState = (typeof ENTRY_STATES)[number]
 
-/** 混合搜索结果（EntryDto + RRF 相关度分值）。 */
+export type SearchOperator = 'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'equals'
+
+export interface SearchCondition {
+  field: string
+  operator: SearchOperator
+  value: string
+}
+
+export type SearchScope =
+  | { type: 'all' }
+  | { type: 'path'; path: string }
+  | { type: 'file'; file_id: number }
+  | { type: 'current_file'; file_id: number }
+  | { type: 'current_task'; task_id: number }
+
+export interface StructuredSearchRequest {
+  query?: string
+  conditions: SearchCondition[]
+  scope: SearchScope
+  states: EntryState[]
+  include_hidden: boolean
+  vector: boolean
+  after?: string
+  limit?: number
+}
+
+/** 结构化搜索结果（EntryDto + RRF 相关度分值）。 */
 export interface SearchHitDto extends EntryDto {
-  relevance: number
+  rrf_score: number
+}
+
+export interface StructuredSearchResponse {
+  items: SearchHitDto[]
+  next_after: string | null
 }
 
 /** 搜索 / 向量化配置（可写部分）。 */

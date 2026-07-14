@@ -67,6 +67,5 @@ export const projectRoutes: RouteRecordRaw[] = [
     name: 'editor',
     component: () => import('@/views/EditorView.vue'),
     props: (route) => ({ id: Number(route.params.id) }),
-    meta: { requiresAuth: true },
   },
 ]

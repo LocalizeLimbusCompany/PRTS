@@ -253,6 +253,8 @@ fn legacy_replacement_entries(
 
 #[cfg(test)]
 mod mutation_lock_tests {
+    use super::UpdateEntryReq;
+
     #[test]
     fn upload_locks_project_before_touching_file_tree() {
         let source = include_str!("entries.rs");
@@ -267,6 +269,29 @@ mod mutation_lock_tests {
             .find("files::ensure_file_at_path_tx")
             .expect("upload file-tree write exists");
         assert!(project_lock < file_tree_write);
+    }
+
+    #[test]
+    fn update_defaults_presence_force_off_and_uses_capabilities_not_role_names() {
+        let request: UpdateEntryReq = serde_json::from_value(serde_json::json!({
+            "translation": "translated",
+            "state": "translated",
+            "version": 7
+        }))
+        .unwrap();
+        assert!(!request.force_presence);
+
+        let source = include_str!("entries.rs");
+        let update = source
+            .rsplit(concat!("pub async fn ", "update_entry("))
+            .next()
+            .and_then(|section| section.split("/// 设置标志请求").next())
+            .expect("entry update section exists");
+        assert!(update.contains("force_save_presence"));
+        assert!(update.contains("edit_locked_entry"));
+        assert!(!update.contains("effective_role"));
+        assert!(!update.contains("\"owner\""));
+        assert!(!update.contains("\"manager\""));
     }
 }
 
@@ -383,9 +408,13 @@ pub struct UpdateEntryReq {
     pub translation: String,
     pub state: String,
     pub version: i64,
+    /// 只覆盖客户端检测到的 presence 冲突；绝不绕过 expected version。
+    #[serde(default)]
+    pub force_presence: bool,
 }
 
-/// 更新词条译文与状态。按目标状态校验权限；锁定词条仅管理/拥有者可改；版本冲突返回 409。
+/// 更新词条译文与状态。状态变化按目标状态校验 capability；锁定词条与 presence force
+/// 分别要求显式 capability；无论是否 force，expected version 冲突都返回 409。
 #[utoipa::path(put, path = "/projects/{id}/entries/{entry_id}", tag = "entry", request_body = UpdateEntryReq,
     responses(
         (status = 200, body = EntryDto),
@@ -403,31 +432,37 @@ pub async fn update_entry(
     let access = paccess::load(&state, Some(&user), id).await?;
     let target =
         EntryState::parse(&req.state).ok_or_else(|| Error::bad_request("非法的目标状态"))?;
-    access.require_node(node_for_state(target))?;
-
-    let kind = if matches!(target, EntryState::Checked | EntryState::Reviewed) {
-        "review"
-    } else {
-        "edit"
-    };
+    access.require_node(nodes::PROJECT_ENTRY_EDIT)?;
+    if req.force_presence && !access.capabilities(false).force_save_presence {
+        return Err(Error::Forbidden.into());
+    }
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let project = prts_db::projects::find_by_id_for_update_tx(&mut tx, id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
     let access = paccess::load_locked_tx(&mut tx, &user, project).await?;
-    access.require_node(node_for_state(target))?;
+    access.require_node(nodes::PROJECT_ENTRY_EDIT)?;
+    if req.force_presence && !access.capabilities(false).force_save_presence {
+        return Err(Error::Forbidden.into());
+    }
     let entry = prts_db::entries::get_for_update_tx(&mut tx, id, entry_id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    if entry.locked
-        && !access
-            .effective_role()
-            .is_some_and(|role| role.can_edit_locked())
-    {
+    if entry.locked && !access.capabilities(false).edit_locked_entry {
         return Err(Error::Forbidden.into());
     }
+    if entry.state != target.as_str() {
+        access.require_node(node_for_state(target))?;
+    }
+    let kind = if entry.state != target.as_str()
+        && matches!(target, EntryState::Checked | EntryState::Reviewed)
+    {
+        "review"
+    } else {
+        "edit"
+    };
     let updated = prts_db::entries::update_translation_tx(
         &mut tx,
         entry_id,
@@ -456,6 +491,7 @@ pub async fn update_entry(
                     new_version: e.version,
                     previous_state: &entry.state,
                     new_state: &e.state,
+                    forced_presence: req.force_presence,
                 },
             )
             .await

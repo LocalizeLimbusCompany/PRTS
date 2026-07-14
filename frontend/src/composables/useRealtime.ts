@@ -1,4 +1,4 @@
-import { onUnmounted, ref } from 'vue'
+import { onUnmounted, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 
 import { getAccessToken } from '@/api/session'
 
@@ -16,20 +16,41 @@ export interface RealtimeOptions {
   onEntryUpdated?: (entryId: number, version: number, by: number) => void
 }
 
+export function shouldConnectProjectRealtime(
+  authenticated: boolean,
+  collaborate: boolean,
+): boolean {
+  return authenticated && collaborate
+}
+
+export function canOpenPresenceMenu(
+  presenceUserId: number,
+  currentUserId: number | null | undefined,
+  collaborate: boolean,
+): boolean {
+  return collaborate && currentUserId != null && presenceUserId !== currentUserId
+}
+
 /**
  * 连接项目实时房间（WebSocket）。返回在线用户、正在编辑映射与「正在编辑」上报方法。
  * 自动重连；组件卸载时断开。
  */
-export function useRealtime(projectId: number, opts: RealtimeOptions = {}) {
+export function useRealtime(
+  projectId: number,
+  opts: RealtimeOptions = {},
+  enabled: MaybeRefOrGetter<boolean> = true,
+) {
   const online = ref<number[]>([])
   const editing = ref<Record<number, number>>({}) // entry_id -> user_id
 
   let ws: WebSocket | null = null
+  let active = false
   let manualClose = false
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   const editingTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
   function connect() {
+    if (!active || ws) return
     const token = getAccessToken()
     if (!token) return
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -37,11 +58,13 @@ export function useRealtime(projectId: number, opts: RealtimeOptions = {}) {
     ws = new WebSocket(url)
     ws.onmessage = (ev) => handle(String(ev.data))
     ws.onclose = () => {
+      ws = null
       if (!manualClose) scheduleReconnect()
     }
   }
 
   function scheduleReconnect() {
+    if (!active) return
     clearTimeout(reconnectTimer)
     reconnectTimer = setTimeout(connect, 3000)
   }
@@ -106,7 +129,19 @@ export function useRealtime(projectId: number, opts: RealtimeOptions = {}) {
     ws = null
   }
 
-  connect()
+  watch(
+    () => toValue(enabled),
+    (value) => {
+      active = value
+      if (value) {
+        manualClose = false
+        connect()
+      } else {
+        disconnect()
+      }
+    },
+    { immediate: true },
+  )
   onUnmounted(disconnect)
 
   return { online, editing, sendEditing, disconnect }

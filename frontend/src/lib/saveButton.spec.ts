@@ -1,69 +1,127 @@
-// frontend/src/lib/saveButton.spec.ts
-import { describe, it, expect } from 'vitest'
-import { computeSaveButton, advanceOf, type SaveCtx } from './saveButton'
+import { describe, expect, it } from 'vitest'
 
-const base: SaveCtx = {
-  isMember: true,
-  locked: false,
-  canEditLocked: false,
-  isManager: false,
-  canReview: false,
+import editorSource from '@/views/EditorView.vue?raw'
+
+import { computeSaveButton, type SaveContext } from './saveButton'
+import saveSource from './saveButton.ts?raw'
+
+const base: SaveContext = {
   canEdit: true,
+  canReview: false,
+  canEditLocked: false,
+  canForcePresence: false,
+  locked: false,
   state: 'translated',
   dirty: false,
-  othersEditing: false,
+  stateChanged: false,
+  presenceConflict: false,
 }
 
-describe('advanceOf', () => {
-  it('maps the workflow', () => {
-    expect(advanceOf('translated')).toMatchObject({ nextState: 'checked', perm: 'review' })
-    expect(advanceOf('questioned')).toMatchObject({ nextState: 'translated', perm: 'edit' })
-    expect(advanceOf('checked')).toMatchObject({ nextState: 'reviewed', perm: 'review' })
-    expect(advanceOf('reviewed')).toBeNull()
-    expect(advanceOf('untranslated')).toBeNull()
-  })
-})
-
 describe('computeSaveButton', () => {
-  it('disables for non-members', () => {
-    expect(computeSaveButton({ ...base, isMember: false })).toMatchObject({ disabled: true, mode: 'none' })
+  it('dirty untranslated translates instead of preserving untranslated', () => {
+    expect(computeSaveButton({ ...base, state: 'untranslated', dirty: true })).toEqual({
+      mode: 'translate',
+      labelKey: 'translate',
+      color: 'primary',
+      disabled: false,
+      targetState: 'translated',
+    })
   })
-  it('disables on locked entry without lock permission', () => {
-    expect(computeSaveButton({ ...base, locked: true, canEditLocked: false })).toMatchObject({ disabled: true })
+
+  it.each(['translated', 'questioned', 'checked', 'reviewed'] as const)(
+    'dirty %s saves while preserving the current state',
+    (state) => {
+      expect(computeSaveButton({ ...base, state, dirty: true })).toEqual({
+        mode: 'save',
+        labelKey: 'save',
+        color: 'primary',
+        disabled: false,
+        targetState: state,
+      })
+    },
+  )
+
+  it('preserves an explicitly selected untranslated state instead of auto-translating it', () => {
+    expect(
+      computeSaveButton({
+        ...base,
+        state: 'untranslated',
+        dirty: false,
+        stateChanged: true,
+      }),
+    ).toMatchObject({ mode: 'save', targetState: 'untranslated' })
   })
-  it('dirty → primary save', () => {
-    expect(computeSaveButton({ ...base, dirty: true })).toMatchObject({ mode: 'save', color: 'primary', disabled: false })
+
+  it('clean translated checks only with review_entry capability', () => {
+    expect(computeSaveButton({ ...base, state: 'translated', canReview: true })).toEqual({
+      mode: 'check',
+      labelKey: 'check',
+      color: 'primary',
+      disabled: false,
+      targetState: 'checked',
+    })
+    expect(computeSaveButton({ ...base, state: 'translated', canReview: false })).toMatchObject({
+      mode: 'none',
+      disabled: true,
+    })
   })
-  it('unchanged translated as reviewer → advance to checked (检查)', () => {
-    expect(computeSaveButton({ ...base, canReview: true, state: 'translated' }))
-      .toMatchObject({ mode: 'advance', labelKey: 'check', nextState: 'checked', disabled: false })
+
+  it('clean checked reviews only with review_entry capability', () => {
+    expect(computeSaveButton({ ...base, state: 'checked', canReview: true })).toEqual({
+      mode: 'review',
+      labelKey: 'review',
+      color: 'primary',
+      disabled: false,
+      targetState: 'reviewed',
+    })
+    expect(computeSaveButton({ ...base, state: 'checked', canReview: false })).toMatchObject({
+      mode: 'none',
+      disabled: true,
+    })
   })
-  it('unchanged translated as translator → grayed (no review perm)', () => {
-    expect(computeSaveButton({ ...base, canReview: false, state: 'translated' }))
-      .toMatchObject({ mode: 'none', disabled: true })
+
+  it('presence conflict exposes force only through force_save_presence capability', () => {
+    expect(
+      computeSaveButton({
+        ...base,
+        state: 'untranslated',
+        dirty: true,
+        presenceConflict: true,
+        canForcePresence: true,
+      }),
+    ).toEqual({
+      mode: 'force',
+      labelKey: 'force',
+      color: 'negative',
+      disabled: false,
+      targetState: 'translated',
+    })
+    expect(
+      computeSaveButton({
+        ...base,
+        dirty: true,
+        presenceConflict: true,
+        canForcePresence: false,
+      }),
+    ).toMatchObject({ mode: 'none', disabled: true })
   })
-  it('unchanged questioned as translator → advance to translated (已翻译)', () => {
-    expect(computeSaveButton({ ...base, canEdit: true, canReview: false, state: 'questioned' }))
-      .toMatchObject({ mode: 'advance', labelKey: 'translated', nextState: 'translated', disabled: false })
+
+  it.each([
+    { canEdit: false },
+    { locked: true, canEditLocked: false },
+    { state: 'untranslated' as const, dirty: false },
+    { state: 'questioned' as const, dirty: false },
+    { state: 'reviewed' as const, dirty: false, canReview: true },
+  ])('disables non-actionable context %#', (overrides) => {
+    expect(computeSaveButton({ ...base, ...overrides })).toMatchObject({
+      mode: 'none',
+      disabled: true,
+    })
   })
-  it('unchanged checked as reviewer → advance to reviewed (审核)', () => {
-    expect(computeSaveButton({ ...base, canReview: true, state: 'checked' }))
-      .toMatchObject({ mode: 'advance', labelKey: 'review', nextState: 'reviewed' })
-  })
-  it('unchanged reviewed → grayed terminal', () => {
-    expect(computeSaveButton({ ...base, canReview: true, state: 'reviewed' }))
-      .toMatchObject({ mode: 'none', disabled: true })
-  })
-  it('others editing + manager + dirty → red force (uses draftState)', () => {
-    expect(computeSaveButton({ ...base, othersEditing: true, isManager: true, canEditLocked: true, dirty: true }))
-      .toMatchObject({ mode: 'force', color: 'negative', disabled: false, nextState: undefined })
-  })
-  it('others editing + manager + unchanged advanceable → red force advancing', () => {
-    expect(computeSaveButton({ ...base, othersEditing: true, isManager: true, canEditLocked: true, canReview: true, state: 'translated' }))
-      .toMatchObject({ mode: 'force', color: 'negative', disabled: false, nextState: 'checked' })
-  })
-  it('others editing + non-manager → grayed', () => {
-    expect(computeSaveButton({ ...base, othersEditing: true, isManager: false, dirty: true }))
-      .toMatchObject({ mode: 'none', disabled: true })
+
+  it('contains no role-name inference in the smart action or editor', () => {
+    expect(saveSource).not.toContain('isManager')
+    expect(editorSource).not.toContain('const myRole')
+    expect(editorSource).not.toMatch(/\[['"]owner['"],\s*['"]manager['"]\]/)
   })
 })

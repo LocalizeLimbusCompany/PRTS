@@ -1,0 +1,143 @@
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { http, searchApi, type StructuredSearchRequest } from '@/api'
+import { projectRoutes } from '@/router/projectRoutes'
+import { canOpenPresenceMenu, shouldConnectProjectRealtime } from '@/composables/useRealtime'
+import en from '@/i18n/locales/en.json'
+import zhCn from '@/i18n/locales/zh-CN.json'
+import editorSource from '@/views/EditorView.vue?raw'
+
+import { buildAdvancedSearchRequest } from './AdvancedFilterDialog.vue'
+import { quickSearchRequest } from './SearchBar.vue'
+import { insertTermSuggestion, termPosName } from './TermSuggestions.vue'
+
+afterEach(() => vi.restoreAllMocks())
+
+describe('editor structured search workflow', () => {
+  it('ignores Enter while IME is composing', () => {
+    expect(quickSearchRequest('正文', false, true, 41)).toBeNull()
+  })
+
+  it('maps Enter to all and Shift+Enter to the explicit current file id', () => {
+    expect(quickSearchRequest(' weather ', false, false, 41)).toMatchObject({
+      query: 'weather',
+      scope: { type: 'all' },
+      vector: false,
+    })
+    expect(quickSearchRequest(' weather ', true, false, 41)).toMatchObject({
+      query: 'weather',
+      scope: { type: 'current_file', file_id: 41 },
+      vector: false,
+    })
+    expect(quickSearchRequest('weather', true, false, null)).toBeNull()
+  })
+
+  it.each([
+    [{ scopeType: 'all' as const }, { type: 'all' }],
+    [
+      { scopeType: 'path' as const, path: 'chapter/01' },
+      { type: 'path', path: 'chapter/01' },
+    ],
+    [
+      { scopeType: 'file' as const, fileId: 41 },
+      { type: 'file', file_id: 41 },
+    ],
+    [
+      { scopeType: 'current_file' as const, currentFileId: 41 },
+      { type: 'current_file', file_id: 41 },
+    ],
+    [
+      { scopeType: 'current_task' as const, taskId: 73 },
+      { type: 'current_task', task_id: 73 },
+    ],
+  ])('builds exact advanced scope payload %#', (scopeDraft, scope) => {
+    expect(
+      buildAdvancedSearchRequest({
+        query: 'needle',
+        conditions: [{ field: 'translation', operator: 'contains', value: 'x' }],
+        states: ['translated', 'checked'],
+        includeHidden: true,
+        vector: false,
+        ...scopeDraft,
+      }),
+    ).toEqual({
+      query: 'needle',
+      conditions: [{ field: 'translation', operator: 'contains', value: 'x' }],
+      scope,
+      states: ['translated', 'checked'],
+      include_hidden: true,
+      vector: false,
+      limit: 50,
+    })
+  })
+
+  it('uses POST structured search and preserves the next_after envelope', async () => {
+    const request: StructuredSearchRequest = {
+      query: 'needle',
+      conditions: [],
+      scope: { type: 'all' },
+      states: [],
+      include_hidden: false,
+      vector: false,
+      limit: 50,
+    }
+    const response = { items: [], next_after: 'signed.cursor' }
+    const post = vi.spyOn(http, 'post').mockResolvedValue({ data: response })
+    await expect(searchApi.search(7, request)).resolves.toEqual(response)
+    expect(post).toHaveBeenCalledWith('/projects/7/search', request)
+  })
+})
+
+describe('term suggestions', () => {
+  it('replaces a selection or inserts at the cursor without saving', () => {
+    expect(insertTermSuggestion('hello world', 6, 11, 'PRTS')).toEqual({
+      value: 'hello PRTS',
+      cursor: 10,
+    })
+    expect(insertTermSuggestion('hello world', 5, 5, ' PRTS')).toEqual({
+      value: 'hello PRTS world',
+      cursor: 10,
+    })
+
+    const applyBody = editorSource.split('function onApplyTermSuggestion')[1]?.split('\n}')[0] ?? ''
+    expect(applyBody).not.toContain('entriesApi.update')
+    expect(applyBody).not.toContain('draftState')
+  })
+
+  it('uses current locale POS name with the other locale as fallback', () => {
+    const term = { pos_name_zh_cn: '名词', pos_name_en: 'Noun' }
+    expect(termPosName(term, 'zh-CN')).toBe('名词')
+    expect(termPosName(term, 'en')).toBe('Noun')
+    expect(termPosName({ ...term, pos_name_en: null }, 'en')).toBe('名词')
+  })
+})
+
+describe('guest and presence boundaries', () => {
+  it('keeps the public editor route available without authentication', () => {
+    const editor = projectRoutes.find((route) => route.name === 'editor')
+    expect(editor?.meta?.requiresAuth).not.toBe(true)
+  })
+
+  it('does not connect project realtime for guests or non-collaborating viewers', () => {
+    expect(shouldConnectProjectRealtime(false, false)).toBe(false)
+    expect(shouldConnectProjectRealtime(true, false)).toBe(false)
+    expect(shouldConnectProjectRealtime(true, true)).toBe(true)
+  })
+
+  it('shows own presence but never opens poke or DM actions for self', () => {
+    expect(canOpenPresenceMenu(5, 5, true)).toBe(false)
+    expect(canOpenPresenceMenu(6, 5, false)).toBe(false)
+    expect(canOpenPresenceMenu(6, 5, true)).toBe(true)
+    expect(editorSource).toContain('if (uid === auth.user?.id)')
+    expect(editorSource).not.toContain('uid === undefined || uid === auth.user?.id')
+  })
+})
+
+describe('editor locale contract', () => {
+  it('keeps Chinese and English editor/common action keys synchronized', () => {
+    expect(Object.keys(zhCn.editor).sort()).toEqual(Object.keys(en.editor).sort())
+    expect(Object.keys(zhCn.common).sort()).toEqual(Object.keys(en.common).sort())
+  })
+})

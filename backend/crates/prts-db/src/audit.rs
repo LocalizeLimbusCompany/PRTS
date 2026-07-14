@@ -432,6 +432,7 @@ pub enum AuditEvent<'a> {
         new_version: i64,
         previous_state: &'a str,
         new_state: &'a str,
+        forced_presence: bool,
     },
     EntryFlagsUpdated {
         project_id: i64,
@@ -1229,6 +1230,7 @@ pub async fn append_event_tx(
             new_version,
             previous_state,
             new_state,
+            forced_presence,
         } => (
             "entry.updated",
             "entry",
@@ -1239,6 +1241,7 @@ pub async fn append_event_tx(
                 "new_version": new_version,
                 "previous_state": previous_state,
                 "new_state": new_state,
+                "forced_presence": forced_presence,
             }),
         ),
         AuditEvent::EntryFlagsUpdated {

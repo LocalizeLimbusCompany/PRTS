@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
@@ -11,20 +11,29 @@ import {
   projectsApi,
   searchApi,
   suggestionsApi,
+  termsApi,
   type EntryDto,
   type EntryVersionDto,
   type FileDto,
   type MemberDto,
+  type ProjectCapabilities,
   type ProjectDto,
+  type EntryState,
   type SearchHitDto,
+  type StructuredSearchRequest,
   type SuggestionDto,
+  type TermDto,
 } from '@/api'
 import { STATE_LABELS, STATE_ORDER, stateLabel } from '@/lib/states'
-import { useRealtime } from '@/composables/useRealtime'
+import {
+  canOpenPresenceMenu,
+  shouldConnectProjectRealtime,
+  useRealtime,
+} from '@/composables/useRealtime'
 import { useAuthStore } from '@/stores/auth'
 import SearchFilters from '@/components/SearchFilters.vue'
+import TermSuggestions, { insertTermSuggestion } from '@/components/editor/TermSuggestions.vue'
 import SuggestionsPanel from '@/components/SuggestionsPanel.vue'
-import type { SearchParams } from '@/components/SearchFilters.vue'
 import { computeSaveButton } from '@/lib/saveButton'
 
 const props = defineProps<{ id: number }>()
@@ -38,22 +47,23 @@ const isNarrow = computed(() => $q.screen.lt.md)
 const mobilePanel = ref(false)
 
 const project = ref<ProjectDto | null>(null)
+const capabilities = ref<ProjectCapabilities | null>(null)
 const files = ref<FileDto[]>([])
 const members = ref<MemberDto[]>([])
 
 /* —— 权限 —— */
-const myRole = computed(() => {
-  if (auth.isAdmin) return 'owner'
-  return members.value.find((m) => m.user_id === auth.user?.id)?.role ?? null
-})
-const isMember = computed(() => myRole.value !== null)
-const canReview = computed(() => ['owner', 'manager', 'reviewer'].includes(myRole.value ?? ''))
-const canEditLocked = computed(() => ['owner', 'manager'].includes(myRole.value ?? ''))
-const canFlag = computed(() => ['owner', 'manager'].includes(myRole.value ?? ''))
-const isManager = computed(() => ['owner', 'manager'].includes(myRole.value ?? ''))
-const canEdit = computed(() => isMember.value) // 任何成员都有 PROJECT_ENTRY_EDIT
-const availableStates = computed(() =>
-  canReview.value ? STATE_ORDER : ['untranslated', 'translated', 'questioned'],
+const canReview = computed(() => capabilities.value?.review_entry === true)
+const canEditLocked = computed(() => capabilities.value?.edit_locked_entry === true)
+const canLock = computed(() => capabilities.value?.lock_entry === true)
+const canHide = computed(() => capabilities.value?.hide_entry === true)
+const canEdit = computed(() => capabilities.value?.edit_entry === true)
+const canForcePresence = computed(() => capabilities.value?.force_save_presence === true)
+const stateOptions = computed(() =>
+  STATE_ORDER.map((state) => ({
+    label: STATE_LABELS[state] ?? state,
+    value: state,
+    disable: ['checked', 'reviewed'].includes(state) ? !canReview.value : !canEdit.value,
+  })),
 )
 
 /* —— 筛选 —— */
@@ -67,12 +77,10 @@ const fileOptions = computed(() => [
 ])
 
 /* —— 搜索模式（search）vs 浏览模式（browse）—— */
-/** 当前搜索参数；null 表示浏览模式。 */
-const activeSearchParams = ref<SearchParams | null>(null)
-const isSearchMode = computed(() => activeSearchParams.value !== null)
-
-/** SearchFilters 组件实例引用，用于在切换文件时外部调用 clearAll。 */
-const searchFiltersRef = ref<InstanceType<typeof SearchFilters> | null>(null)
+/** 当前结构化请求；null 表示普通浏览模式。 */
+const activeSearchRequest = ref<StructuredSearchRequest | null>(null)
+const searchAfter = ref<string | null>(null)
+const isSearchMode = computed(() => activeSearchRequest.value !== null)
 
 /* —— 列表（浏览模式：键集分页累加；搜索模式：一次性结果）—— */
 const entries = ref<(EntryDto | SearchHitDto)[]>([])
@@ -88,6 +96,10 @@ async function resetAndLoad() {
 }
 async function loadMore() {
   if (listLoading.value || !hasMore.value) return
+  if (activeSearchRequest.value) {
+    await loadMoreSearch()
+    return
+  }
   listLoading.value = true
   try {
     const after = entries.value.length ? entries.value[entries.value.length - 1].id : undefined
@@ -107,20 +119,27 @@ async function loadMore() {
   }
 }
 
-/** 搜索模式：调用混合搜索接口，结果含 relevance。 */
-async function runSearch(params: SearchParams) {
-  listLoading.value = true
+/** 搜索模式复用 POST envelope 与签名 cursor 做键集累加。 */
+async function runSearch(request: StructuredSearchRequest) {
+  activeSearchRequest.value = { ...request, after: undefined }
+  searchAfter.value = null
   entries.value = []
-  hasMore.value = false
+  hasMore.value = true
+  await loadMoreSearch()
+}
+
+async function loadMoreSearch() {
+  if (listLoading.value || !activeSearchRequest.value || !hasMore.value) return
+  listLoading.value = true
   try {
-    const hits = await searchApi.search(props.id, {
-      q: params.q,
-      file_id: params.file_id,
-      state: params.state,
-      sort: params.sort,
-      include_hidden: params.include_hidden ?? includeHidden.value,
+    const response = await searchApi.search(props.id, {
+      ...activeSearchRequest.value,
+      after: searchAfter.value ?? undefined,
+      limit: PAGE,
     })
-    entries.value = hits
+    entries.value.push(...response.items)
+    searchAfter.value = response.next_after
+    hasMore.value = response.next_after !== null
   } catch (e) {
     $q.notify({ type: 'negative', message: apiErrorMessage(e) })
   } finally {
@@ -128,30 +147,24 @@ async function runSearch(params: SearchParams) {
   }
 }
 
-/** SearchFilters 发出 @search 事件：切换到搜索模式。 */
-function onSearch(params: SearchParams) {
-  activeSearchParams.value = params
-  runSearch(params)
+function onSearch(request: StructuredSearchRequest) {
+  void runSearch(request)
 }
 
 /** SearchFilters 发出 @clear 事件：恢复浏览模式。 */
 function onSearchClear() {
-  activeSearchParams.value = null
-  resetAndLoad()
+  activeSearchRequest.value = null
+  searchAfter.value = null
+  void resetAndLoad()
 }
 
 watch([currentFileId, includeHidden], () => {
-  if (isSearchMode.value && activeSearchParams.value) {
-    // 文件/隐藏切换时，SearchFilters 内部 watch 也会触发重新搜索，
-    // 此处仅在浏览模式下重置列表。
-    return
-  }
-  resetAndLoad()
+  if (!isSearchMode.value) void resetAndLoad()
 })
 
-/** 辅助：判断列表项是否含 relevance 字段（搜索结果）。 */
+/** 辅助：判断列表项是否含 RRF score（搜索结果）。 */
 function isHit(e: EntryDto | SearchHitDto): e is SearchHitDto {
-  return 'relevance' in e
+  return 'rrf_score' in e
 }
 
 /** 把 RRF 相关度值（0-1 浮点）转为百分比整数，便于展示。 */
@@ -170,11 +183,13 @@ function onScroll(details: VScrollDetails) {
 /* —— 选中与编辑 —— */
 const selected = ref<EntryDto | null>(null)
 const draft = ref('')
-const draftState = ref('untranslated')
+const draftState = ref<EntryState>('untranslated')
 const saving = ref(false)
 
 /* —— TM 翻译建议 —— */
 const suggestions = ref<SuggestionDto[]>([])
+const termSuggestions = ref<TermDto[]>([])
+const translationElement = ref<HTMLTextAreaElement | null>(null)
 
 /** 应用某条 TM 建议到译文草稿（不自动保存）。 */
 function onApplySuggestion(translation: string) {
@@ -190,16 +205,48 @@ async function fetchSuggestions(entryId: number) {
   }
 }
 
+/** 只把当前 primary source 正文交给 active-term match；失败时静默降级。 */
+async function fetchTermSuggestions(entry: EntryDto) {
+  const primary = project.value?.primary_source_lang
+  const sourceText = primary ? entry.original[primary] : undefined
+  if (!primary || !sourceText) {
+    termSuggestions.value = []
+    return
+  }
+  try {
+    termSuggestions.value = (await termsApi.match(props.id, sourceText, 20)).filter(
+      (term) => !term.archived && term.source_lang === primary,
+    )
+  } catch {
+    termSuggestions.value = []
+  }
+}
+
+function captureTranslationElement(event: Event) {
+  translationElement.value = event.target as HTMLTextAreaElement
+}
+
+/** 术语只改本地 draft；不保存、不改变状态。 */
+function onApplyTermSuggestion(translation: string) {
+  const element = translationElement.value
+  const start = element?.selectionStart ?? draft.value.length
+  const end = element?.selectionEnd ?? start
+  const inserted = insertTermSuggestion(draft.value, start, end, translation)
+  draft.value = inserted.value
+  void nextTick(() => {
+    element?.focus()
+    element?.setSelectionRange(inserted.cursor, inserted.cursor)
+  })
+}
+
 const panelReadOnly = computed(
-  () => !isMember.value || (selected.value?.locked === true && !canEditLocked.value),
+  () => !canEdit.value || (selected.value?.locked === true && !canEditLocked.value),
 )
 
-/** 译文或状态相对已保存值有变化。 */
-const dirty = computed(
-  () =>
-    !!selected.value &&
-    (draft.value !== selected.value.translation || draftState.value !== selected.value.state),
+const translationDirty = computed(
+  () => !!selected.value && draft.value !== selected.value.translation,
 )
+const stateChanged = computed(() => !!selected.value && draftState.value !== selected.value.state)
 
 /** 当前选中词条是否有他人正在编辑。 */
 const othersEditingSelected = computed(() =>
@@ -209,15 +256,15 @@ const othersEditingSelected = computed(() =>
 /** 保存按钮形态（标签 / 颜色 / 禁用 / 模式）。 */
 const saveBtn = computed(() =>
   computeSaveButton({
-    isMember: isMember.value,
-    locked: selected.value?.locked === true,
-    canEditLocked: canEditLocked.value,
-    isManager: isManager.value,
-    canReview: canReview.value,
     canEdit: canEdit.value,
-    state: selected.value?.state ?? 'untranslated',
-    dirty: dirty.value,
-    othersEditing: othersEditingSelected.value,
+    canReview: canReview.value,
+    canEditLocked: canEditLocked.value,
+    canForcePresence: canForcePresence.value,
+    locked: selected.value?.locked === true,
+    state: draftState.value,
+    dirty: translationDirty.value,
+    stateChanged: stateChanged.value,
+    presenceConflict: othersEditingSelected.value,
   }),
 )
 
@@ -228,19 +275,21 @@ function select(e: EntryDto | SearchHitDto) {
   if (isNarrow.value) mobilePanel.value = true
   sendEditing(e.id)
   void fetchSuggestions(e.id)
+  void fetchTermSuggestions(e)
 }
 
 const sourceLangs = computed(() => project.value?.source_langs ?? [])
 
 async function save() {
   if (!selected.value || saveBtn.value.disabled) return
-  const targetState = saveBtn.value.nextState ?? draftState.value
+  const targetState = saveBtn.value.targetState ?? draftState.value
   saving.value = true
   try {
     const updated = await entriesApi.update(props.id, selected.value.id, {
       translation: draft.value,
       state: targetState,
       version: selected.value.version,
+      force_presence: saveBtn.value.mode === 'force',
     })
     draftState.value = targetState // 推进后同步下拉
     applyUpdated(updated)
@@ -276,6 +325,7 @@ function selectNext() {
     draft.value = next.translation
     draftState.value = next.state
     void fetchSuggestions(next.id)
+    void fetchTermSuggestions(next)
   }
 }
 
@@ -293,7 +343,9 @@ const {
   online: onlineUsers,
   editing: editingMap,
   sendEditing,
-} = useRealtime(props.id, { onEntryUpdated: handleRemoteUpdate })
+} = useRealtime(props.id, { onEntryUpdated: handleRemoteUpdate }, () =>
+  shouldConnectProjectRealtime(auth.isAuthed, capabilities.value?.collaborate === true),
+)
 const onlineNames = computed(() =>
   onlineUsers.value
     .filter((uid) => uid !== auth.user?.id)
@@ -304,11 +356,32 @@ function otherEditing(entryId: number): boolean {
   return uid !== undefined && uid !== auth.user?.id
 }
 
-/** 返回正在编辑指定词条的成员（排除自己）；未找到时返回 null。 */
-function editorOf(entryId: number): MemberDto | null {
+interface PresenceUser {
+  user_id: number
+  username: string
+  avatar_url: string | null
+}
+
+/** 返回正在编辑指定词条的成员（包含自己）；未找到时返回 null。 */
+function editorOf(entryId: number): PresenceUser | null {
   const uid = editingMap.value[entryId]
-  if (uid === undefined || uid === auth.user?.id) return null
-  return members.value.find((m) => m.user_id === uid) ?? null
+  if (uid === undefined) return null
+  const member = members.value.find((candidate) => candidate.user_id === uid)
+  if (member) return member
+  if (uid === auth.user?.id) {
+    return {
+      user_id: auth.user.id,
+      username: auth.user.username,
+      avatar_url: auth.user.avatar_url,
+    }
+  }
+  return null
+}
+
+function presenceMenuAllowed(target: PresenceUser | null): boolean {
+  return target
+    ? canOpenPresenceMenu(target.user_id, auth.user?.id, capabilities.value?.collaborate === true)
+    : false
 }
 
 /* —— 戳一下（点击在场头像 → 发即时提示）—— */
@@ -316,15 +389,15 @@ const pokeText = ref('')
 const pokeSending = ref(false)
 
 /** 跳转到与该成员的私信会话页（编辑器在场头像菜单里的「发私信」）。 */
-function openDm(target: MemberDto | null) {
-  if (!target) return
+function openDm(target: PresenceUser | null) {
+  if (!target || !presenceMenuAllowed(target)) return
   router.push({ name: 'message-thread', params: { userId: target.user_id } })
 }
 
 /** 发送戳一下：对准该头像对应的成员，成功后清空输入并 toast 提示。 */
-async function sendPoke(target: MemberDto | null) {
+async function sendPoke(target: PresenceUser | null) {
   const text = pokeText.value.trim()
-  if (!target || !text) return
+  if (!target || !presenceMenuAllowed(target) || !text) return
   pokeSending.value = true
   try {
     await pokeApi.send(props.id, target.user_id, text)
@@ -370,6 +443,7 @@ onMounted(async () => {
       projectsApi.members(props.id),
     ])
     project.value = p.project
+    capabilities.value = p.capabilities
     files.value = tree.files
     members.value = mem
   } catch (e) {
@@ -383,7 +457,13 @@ onMounted(async () => {
   <q-page class="editor-page">
     <!-- toolbar -->
     <div class="editor-bar">
-      <q-btn flat dense round icon="mdi-arrow-left" :to="{ name: 'project-info', params: { id: props.id } }">
+      <q-btn
+        flat
+        dense
+        round
+        icon="mdi-arrow-left"
+        :to="{ name: 'project-info', params: { id: props.id } }"
+      >
         <q-tooltip>返回项目</q-tooltip>
       </q-btn>
       <div class="prts-display ellipsis editor-title">{{ project?.name ?? '…' }}</div>
@@ -408,18 +488,16 @@ onMounted(async () => {
       >
         {{ $t('editor.taskScope', { id: currentTaskId }) }}
       </q-chip>
-      <!-- 高级搜索控件：含搜索词时切搜索模式，清空时恢复浏览 -->
-      <SearchFilters
-        v-if="!isTaskScope"
-        ref="searchFiltersRef"
-        :file-id="currentFileId"
-        :include-hidden="includeHidden"
-        @search="onSearch"
-        @clear="onSearchClear"
-      />
-      <q-toggle v-if="isMember && !isTaskScope" v-model="includeHidden" label="含隐藏" dense />
+      <q-toggle v-if="canHide && !isTaskScope" v-model="includeHidden" label="含隐藏" dense />
       <!-- 搜索模式指示徽标 -->
-      <q-chip v-if="isSearchMode" dense square color="secondary" text-color="dark" icon="mdi-file-search-outline">
+      <q-chip
+        v-if="isSearchMode"
+        dense
+        square
+        color="secondary"
+        text-color="dark"
+        icon="mdi-file-search-outline"
+      >
         搜索中
       </q-chip>
       <q-chip
@@ -439,9 +517,22 @@ onMounted(async () => {
     <div class="editor-body">
       <!-- list pane -->
       <div v-show="!isNarrow || !mobilePanel" class="ed-pane ed-pane--list">
+        <SearchFilters
+          :files="files"
+          :source-langs="sourceLangs"
+          :current-file-id="currentFileId"
+          :current-task-id="currentTaskId"
+          :can-include-hidden="canHide"
+          @search="onSearch"
+          @clear="onSearchClear"
+        />
         <q-virtual-scroll :items="entries" class="entry-list" @virtual-scroll="onScroll">
           <template #default="{ item }">
-            <div class="entry-row" :class="{ active: item.id === selected?.id }" @click="select(item)">
+            <div
+              class="entry-row"
+              :class="{ active: item.id === selected?.id }"
+              @click="select(item)"
+            >
               <span class="state-dot" :class="'state-' + item.state" />
               <div class="entry-row__body">
                 <div class="entry-row__key prts-mono">{{ item.key }}</div>
@@ -450,72 +541,44 @@ onMounted(async () => {
                 </div>
               </div>
               <!-- 搜索模式：显示相关度百分比 -->
-              <span v-if="isHit(item)" class="relevance-badge" :title="'相关度 ' + relevancePct(item.relevance) + '%'">
-                {{ relevancePct(item.relevance) }}%
+              <span
+                v-if="isHit(item)"
+                class="relevance-badge"
+                :title="'相关度 ' + relevancePct(item.rrf_score) + '%'"
+              >
+                {{ relevancePct(item.rrf_score) }}%
               </span>
               <q-icon v-if="item.locked" name="mdi-lock-outline" size="14px" class="prts-dim" />
               <q-icon v-if="item.hidden" name="mdi-eye-off-outline" size="14px" class="prts-dim" />
-              <template v-if="otherEditing(item.id)">
+              <template v-if="editingMap[item.id] !== undefined">
                 <q-avatar
-                  v-if="editorOf(item.id)?.avatar_url"
-                  size="18px"
-                  class="poke-avatar"
-                  @click.stop
-                >
-                  <img :src="editorOf(item.id)!.avatar_url!" :alt="editorOf(item.id)!.username" />
-                  <q-tooltip>{{ editorOf(item.id)!.username }} · {{ editorOf(item.id)!.role }} · {{ t('editor.editingNow') }}</q-tooltip>
-                  <q-menu anchor="top right" self="bottom right">
-                    <div class="poke-compose" @click.stop>
-                      <div class="prts-label q-mb-xs">{{ t('poke.composeTitle', { name: editorOf(item.id)!.username }) }}</div>
-                      <q-input
-                        v-model="pokeText"
-                        dense
-                        outlined
-                        autofocus
-                        counter
-                        maxlength="140"
-                        :placeholder="t('poke.placeholder')"
-                        @keyup.enter="sendPoke(editorOf(item.id))"
-                      />
-                      <div class="row justify-end q-mt-sm q-gutter-xs">
-                        <q-btn
-                          v-close-popup
-                          flat
-                          no-caps
-                          dense
-                          icon="mdi-email-outline"
-                          :label="t('dm.entry')"
-                          @click="openDm(editorOf(item.id))"
-                        />
-                        <q-btn
-                          v-close-popup
-                          unelevated
-                          no-caps
-                          dense
-                          color="primary"
-                          text-color="dark"
-                          :label="t('poke.send')"
-                          :loading="pokeSending"
-                          :disable="!pokeText.trim()"
-                          @click="sendPoke(editorOf(item.id))"
-                        />
-                      </div>
-                    </div>
-                  </q-menu>
-                </q-avatar>
-                <q-avatar
-                  v-else-if="editorOf(item.id)"
+                  v-if="editorOf(item.id)"
                   size="18px"
                   color="amber"
                   text-color="dark"
                   class="poke-avatar"
                   @click.stop
                 >
-                  {{ editorOf(item.id)!.username.charAt(0).toUpperCase() }}
-                  <q-tooltip>{{ editorOf(item.id)!.username }} · {{ editorOf(item.id)!.role }} · {{ t('editor.editingNow') }}</q-tooltip>
-                  <q-menu anchor="top right" self="bottom right">
+                  <img
+                    v-if="editorOf(item.id)!.avatar_url"
+                    :src="editorOf(item.id)!.avatar_url!"
+                    :alt="editorOf(item.id)!.username"
+                  />
+                  <template v-else>{{
+                    editorOf(item.id)!.username.charAt(0).toUpperCase()
+                  }}</template>
+                  <q-tooltip
+                    >{{ editorOf(item.id)!.username }} · {{ t('editor.editingNow') }}</q-tooltip
+                  >
+                  <q-menu
+                    v-if="presenceMenuAllowed(editorOf(item.id))"
+                    anchor="top right"
+                    self="bottom right"
+                  >
                     <div class="poke-compose" @click.stop>
-                      <div class="prts-label q-mb-xs">{{ t('poke.composeTitle', { name: editorOf(item.id)!.username }) }}</div>
+                      <div class="prts-label q-mb-xs">
+                        {{ t('poke.composeTitle', { name: editorOf(item.id)!.username }) }}
+                      </div>
                       <q-input
                         v-model="pokeText"
                         dense
@@ -593,7 +656,7 @@ onMounted(async () => {
               <q-tooltip>历史</q-tooltip>
             </q-btn>
             <q-btn
-              v-if="canFlag"
+              v-if="canLock"
               flat
               dense
               round
@@ -605,7 +668,7 @@ onMounted(async () => {
               <q-tooltip>{{ selected.locked ? '解锁' : '锁定' }}</q-tooltip>
             </q-btn>
             <q-btn
-              v-if="canFlag"
+              v-if="canHide"
               flat
               dense
               round
@@ -633,16 +696,26 @@ onMounted(async () => {
             :readonly="panelReadOnly"
             input-class="prts-translation"
             :input-style="{ minHeight: '120px' }"
+            @focus="captureTranslationElement"
+          />
+
+          <TermSuggestions
+            v-if="!panelReadOnly"
+            :terms="termSuggestions"
+            @apply="onApplyTermSuggestion"
           />
 
           <!-- TM 翻译建议面板（无建议时不渲染）-->
-          <SuggestionsPanel :suggestions="suggestions" @apply="onApplySuggestion" />
+          <SuggestionsPanel
+            v-if="!panelReadOnly"
+            :suggestions="suggestions"
+            @apply="onApplySuggestion"
+          />
 
-          <div class="row items-center q-mt-md q-gutter-sm">
+          <div v-if="canEdit" class="row items-center justify-end q-mt-md q-gutter-sm">
             <q-select
               v-model="draftState"
-              :options="availableStates"
-              :option-label="(s) => STATE_LABELS[s] ?? s"
+              :options="stateOptions"
               dense
               outlined
               emit-value
@@ -650,10 +723,6 @@ onMounted(async () => {
               :disable="panelReadOnly"
               style="min-width: 130px"
             />
-            <q-space />
-            <span v-if="panelReadOnly" class="prts-dim prts-mono" style="font-size: 12px">
-              {{ selected.locked ? '已锁定 · 只读' : '无编辑权限' }}
-            </span>
             <q-btn
               unelevated
               no-caps
@@ -666,10 +735,15 @@ onMounted(async () => {
               @click="save"
             >
               <q-tooltip v-if="saveBtn.mode === 'force'">{{ t('editor.forceHint') }}</q-tooltip>
-              <q-tooltip v-else-if="saveBtn.disabled && saveBtn.mode === 'none' && othersEditingSelected">
+              <q-tooltip
+                v-else-if="saveBtn.disabled && saveBtn.mode === 'none' && othersEditingSelected"
+              >
                 {{ t('editor.othersEditingHint') }}
               </q-tooltip>
             </q-btn>
+          </div>
+          <div v-else class="prts-dim prts-mono q-mt-md text-right" style="font-size: 12px">
+            {{ t('editor.readOnlyGuest') }}
           </div>
         </div>
       </div>
@@ -687,7 +761,9 @@ onMounted(async () => {
               :subtitle="new Date(h.created_at).toLocaleString()"
             >
               <template #title>
-                <span class="prts-mono" style="font-size: 13px">v{{ h.version }} · {{ h.kind }}</span>
+                <span class="prts-mono" style="font-size: 13px"
+                  >v{{ h.version }} · {{ h.kind }}</span
+                >
                 <q-badge v-if="h.state" outline class="q-ml-sm" :label="stateLabel(h.state)" />
               </template>
               <div v-if="h.translation" class="prts-translation">{{ h.translation }}</div>
@@ -695,7 +771,9 @@ onMounted(async () => {
           </q-timeline>
           <div v-else class="prts-empty">暂无历史</div>
         </q-card-section>
-        <q-card-actions align="right"><q-btn v-close-popup flat no-caps label="关闭" /></q-card-actions>
+        <q-card-actions align="right"
+          ><q-btn v-close-popup flat no-caps label="关闭"
+        /></q-card-actions>
       </q-card>
     </q-dialog>
   </q-page>

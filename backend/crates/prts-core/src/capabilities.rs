@@ -19,8 +19,11 @@ pub struct ProjectCapabilities {
     pub download: bool,
     pub edit_entry: bool,
     pub review_entry: bool,
+    pub lock_entry: bool,
+    pub hide_entry: bool,
     pub edit_locked_entry: bool,
     pub force_save_presence: bool,
+    pub collaborate: bool,
     pub resolve_languages: bool,
     pub change_primary_source: bool,
     pub delete_project: bool,
@@ -48,8 +51,11 @@ impl ProjectCapabilities {
             download: has(nodes::PROJECT_DOWNLOAD),
             edit_entry: has(nodes::PROJECT_ENTRY_EDIT),
             review_entry: has(nodes::PROJECT_ENTRY_REVIEW),
+            lock_entry: has(nodes::PROJECT_ENTRY_LOCK),
+            hide_entry: has(nodes::PROJECT_ENTRY_HIDE),
             edit_locked_entry: elevated_editor,
             force_save_presence: elevated_editor,
+            collaborate: role.is_some(),
             resolve_languages: is_owner,
             change_primary_source: is_owner && primary_source_release_ready,
             delete_project: is_owner,
@@ -67,6 +73,9 @@ mod tests {
             ProjectCapabilities::for_subject(true, Some(ProjectRole::Manager), false, true);
         assert!(manager.edit_locked_entry);
         assert!(manager.force_save_presence);
+        assert!(manager.lock_entry);
+        assert!(manager.hide_entry);
+        assert!(manager.collaborate);
         assert!(manager.view_file_history);
         assert!(manager.rollback_file_history);
         assert!(manager.manage_tasks);
@@ -76,6 +85,8 @@ mod tests {
         assert!(!manager.delete_project);
 
         let owner = ProjectCapabilities::for_subject(true, Some(ProjectRole::Owner), true, false);
+        assert!(owner.force_save_presence);
+        assert!(owner.collaborate);
         assert!(owner.resolve_languages);
         assert!(owner.delete_project);
         assert!(!owner.change_primary_source);
@@ -88,5 +99,12 @@ mod tests {
         let translator =
             ProjectCapabilities::for_subject(true, Some(ProjectRole::Translator), false, true);
         assert!(!translator.manage_terms);
+        assert!(translator.collaborate);
+        assert!(!translator.lock_entry);
+
+        let guest = ProjectCapabilities::for_subject(true, None, false, true);
+        assert!(guest.view_project);
+        assert!(!guest.edit_entry);
+        assert!(!guest.collaborate);
     }
 }

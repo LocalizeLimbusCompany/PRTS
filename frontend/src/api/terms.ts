@@ -92,6 +92,15 @@ export interface ImportConfirmDto {
 }
 
 export const termsApi = {
+  /** 只匹配服务端当前 primary source 的 active terms；正文放 JSON body。 */
+  match(projectId: number, sourceText: string, limit = 20) {
+    return http
+      .post<TermDto[]>(`/projects/${projectId}/terms/match`, {
+        source_text: sourceText,
+        limit,
+      })
+      .then((response) => response.data)
+  },
   list(
     projectId: number,
     params: { scope: TermScope; after?: number; limit?: number },
@@ -101,7 +110,9 @@ export const termsApi = {
       .then((response) => response.data)
   },
   create(projectId: number, body: TermWriteRequest) {
-    return http.post<TermDto>(`/projects/${projectId}/terms`, body).then((response) => response.data)
+    return http
+      .post<TermDto>(`/projects/${projectId}/terms`, body)
+      .then((response) => response.data)
   },
   update(projectId: number, termId: number, body: TermWriteRequest) {
     return http
