@@ -399,28 +399,14 @@ pub async fn receive_attempt(
         .parent()
         .ok_or_else(|| Error::internal("upload temp path has no parent"))?;
     if tokio::fs::create_dir_all(parent).await.is_err() {
-        record_attempt_failure(
-            &state,
-            &user,
-            identity,
-            "upload_temp_storage_unavailable",
-            0,
-        )
-        .await?;
+        record_attempt_failure(&state, &user, identity, "upload_temp_unavailable", 0).await?;
         return Err(Error::internal("upload temp storage unavailable").into());
     }
     let partial = destination.with_extension("part");
     let mut output = match tokio::fs::File::create(&partial).await {
         Ok(output) => output,
         Err(_) => {
-            record_attempt_failure(
-                &state,
-                &user,
-                identity,
-                "upload_temp_storage_unavailable",
-                0,
-            )
-            .await?;
+            record_attempt_failure(&state, &user, identity, "upload_temp_unavailable", 0).await?;
             return Err(Error::internal("upload temp storage unavailable").into());
         }
     };
@@ -473,28 +459,16 @@ pub async fn receive_attempt(
         if output.write_all(&chunk).await.is_err() {
             drop(output);
             let _ = tokio::fs::remove_file(&partial).await;
-            record_attempt_failure(
-                &state,
-                &user,
-                identity,
-                "upload_temp_storage_unavailable",
-                received,
-            )
-            .await?;
+            record_attempt_failure(&state, &user, identity, "upload_temp_unavailable", received)
+                .await?;
             return Err(Error::internal("upload temp storage unavailable").into());
         }
     }
     if output.flush().await.is_err() {
         drop(output);
         let _ = tokio::fs::remove_file(&partial).await;
-        record_attempt_failure(
-            &state,
-            &user,
-            identity,
-            "upload_temp_storage_unavailable",
-            received,
-        )
-        .await?;
+        record_attempt_failure(&state, &user, identity, "upload_temp_unavailable", received)
+            .await?;
         return Err(Error::internal("upload temp storage unavailable").into());
     }
     drop(output);
@@ -512,14 +486,8 @@ pub async fn receive_attempt(
     }
     if tokio::fs::rename(&partial, &destination).await.is_err() {
         let _ = tokio::fs::remove_file(&partial).await;
-        record_attempt_failure(
-            &state,
-            &user,
-            identity,
-            "upload_temp_storage_unavailable",
-            received,
-        )
-        .await?;
+        record_attempt_failure(&state, &user, identity, "upload_temp_unavailable", received)
+            .await?;
         return Err(Error::internal("upload temp storage unavailable").into());
     }
     let finalize = async {

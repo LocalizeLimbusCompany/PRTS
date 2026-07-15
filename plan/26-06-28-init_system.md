@@ -325,7 +325,7 @@ trait AuthProvider {
 ]
 ```
 
-- 最终 UI 上传原始 JSON 文件/文件夹，不提供粘贴文本框；浏览器不解析内容。上传四项限制由设置 API 下发。V1 不支持 Range/offset 续传；重试在同 logical file 新建 attempt 并从 byte zero 开始，batch 可取消，未完成 batch 默认 24h 过期并由 durable cleanup 清 temp。
+- 最终 UI 选择一个或多个本地原始 JSON 文件，并从项目现有文件夹中选择目标目录（可选项目根目录）；不提供本地目录选择器或粘贴文本框，浏览器不解析内容。上传四项限制由设置 API 下发。V1 不支持 Range/offset 续传；重试在同 logical file 新建 attempt 并从 byte zero 开始，batch 可取消，未完成 batch 默认 24h 过期并由 durable cleanup 清 temp。
 - 同路径重传是完整 replacement：缺失旧 key 可恢复软删除；既有平台译文保留；源文变化时状态重置未翻译；上传 translation/state 只 seed 从未存在的新 key。
 - 每文件流式解析并原子提交，batch 允许部分成功；重复 key 拒绝该文件并返回位置。原始上传文件只作临时任务输入，不进入历史。
 - `0008` foundation 仅预建 nullable deletion columns；legacy delete 仍硬删除并维护 stats，deletion_change_set_id 全 NULL，不提供恢复。`0010` 断言全 NULL并创建历史/FK后才切换：文件夹删除以同一 change-set 标记 subtree/descendant files，restore 只清本操作标记且不清 entry tombstone。FK 使用 RESTRICT/SET NULL；软删除默认 30 天，到期按业务行叶到根→items→sets 清除。

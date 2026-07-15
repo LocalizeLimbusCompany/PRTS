@@ -165,6 +165,7 @@ onMounted(load)
       v-if="canUpload"
       v-model="showUpload"
       :project-id="projectId"
+      :folders="folders"
       @completed="refresh"
     />
     <FileMoveDialog

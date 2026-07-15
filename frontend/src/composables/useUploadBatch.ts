@@ -34,14 +34,14 @@ export function useUploadBatch(projectId: () => number) {
   const totalLoaded = computed(() => queue.value.reduce((sum, item) => sum + item.loaded, 0))
   const totalBytes = computed(() => queue.value.reduce((sum, item) => sum + item.file.size, 0))
 
-  async function start(files: File[]) {
+  async function start(files: File[], destinationPath: string | null = null) {
     cancelRequested.value = false
     const config = await getUploadConfig()
     if (files.length === 0 || files.length > config.max_files_per_batch) {
       throw new Error('upload_file_count_exceeded')
     }
     const declared = files.map((file) => ({
-      path: file.webkitRelativePath || file.name,
+      path: destinationPath ? `${destinationPath}/${file.name}` : file.name,
       size: file.size,
     }))
     if (declared.some((file) => file.size > config.max_bytes_per_file)) {

@@ -35,7 +35,7 @@ describe('streaming upload client contract', () => {
         {
           id: 11,
           ordinal: 0,
-          path: 'raw.json',
+          path: 'chapter/01/raw.json',
           declared_bytes: file.size,
           state: 'uploading',
           processing_job_id: null,
@@ -68,9 +68,12 @@ describe('streaming upload client contract', () => {
     vi.mocked(uploadsApi.complete).mockResolvedValue({ ...batch, state: 'queued' })
 
     const upload = useUploadBatch(() => 3)
-    await upload.start([file])
+    await upload.start([file], 'chapter/01')
 
     expect(file.text).not.toHaveBeenCalled()
+    expect(uploadsApi.createBatch).toHaveBeenCalledWith(3, [
+      { path: 'chapter/01/raw.json', size: file.size },
+    ])
     expect(uploadsApi.receiveAttempt).toHaveBeenCalledWith(
       3,
       7,

@@ -14,13 +14,16 @@ WORKDIR /app
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl libssl3 \
  && rm -rf /var/lib/apt/lists/* \
- && useradd -r -u 10001 prts
+ && useradd -r -u 10001 prts \
+ && install -d -o prts -g prts /app/data/media /app/data/upload-temp
 # 二进制 + 默认配置（迁移已在编译期嵌入二进制）
 COPY --from=builder /app/backend/target/release/prts-api /usr/local/bin/prts-api
 COPY backend/config ./config
-USER prts
+COPY deploy/backend-entrypoint.sh /usr/local/bin/prts-entrypoint
+RUN chmod 0755 /usr/local/bin/prts-entrypoint
 EXPOSE 3000
 # 容器健康检查：命中存活探针
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=5 \
   CMD curl -fsS http://localhost:3000/health || exit 1
+ENTRYPOINT ["prts-entrypoint"]
 CMD ["prts-api"]

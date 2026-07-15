@@ -146,7 +146,7 @@ effective_visible(entries, files, include_hidden) =
 
 ### 5.1 上传批次、尝试与清理
 
-- 最终体验只接受原始 JSON 文件/文件夹，不提供粘贴文本框。浏览器不解析内容，只保留相对路径并流式上传。
+- 最终体验选择一个或多个本地原始 JSON 文件，并从项目当前 active 文件夹中选择目标目录（可选项目根目录）；不提供本地目录选择器或粘贴文本框。浏览器不解析内容，声明路径由项目目标目录与文件名组成并流式上传。
 - 每批 500 文件、每文件 100MB、每批 2GB、浏览器并发 3 是数据库运行时设置及默认值；服务端在声明、接收和提交阶段校验，前端从配置 DTO 读取。
 - V1 不提供 HTTP Range、offset 或分块续传协议。失败/断流重试必须从 byte zero 开始，在同一 logical batch file 下创建新的 `upload_file_attempt`；旧 attempt 的阶段、字节数、错误码和时间保留到 batch/文件生命周期清理。处理 job id 复用，attempt id 递增。
 - batch 状态为 `draft|uploading|queued|processing|cancelling|cancelled|partially_succeeded|succeeded|failed|expired`；file/attempt 至少区分 `uploading|queued|processing|succeeded|failed|cancelled|expired`。`POST /projects/{id}/upload-batches/{batch_id}/cancel` 把 batch 置 `cancelling`，取消 queued jobs 与未处理/temp attempts。已进入单文件数据库事务的 worker 可原子完成或回滚，不在半事务中断；全部 active attempts 终止后 batch 置 `cancelled`，已成功文件保持成功。

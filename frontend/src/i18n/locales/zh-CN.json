@@ -137,11 +137,11 @@
     },
     "upload": {
       "label": "流式上传",
-      "heading": "上传 JSON 文件或文件夹",
-      "description": "浏览器只传输原始文件，不会读取或解析 JSON 内容。文件夹选择会保留相对路径。",
+      "heading": "上传 JSON 文件",
+      "description": "选择本地 JSON 文件和项目内的目标文件夹。浏览器只传输原始文件，不会读取或解析 JSON 内容。",
       "action": "上传文件",
       "chooseFiles": "选择 JSON 文件",
-      "chooseFolder": "选择文件夹",
+      "destinationFolder": "上传到项目文件夹",
       "start": "开始上传",
       "newBatch": "新建批次",
       "cancelBatch": "取消批次",
@@ -165,6 +165,7 @@
       },
       "errors": {
         "upload_temp_unavailable": "临时文件不可用",
+        "upload_temp_storage_unavailable": "上传临时存储不可用",
         "upload_invalid_json": "JSON 格式无效",
         "upload_invalid_entry": "词条结构或状态无效",
         "upload_duplicate_key": "存在重复词条键",

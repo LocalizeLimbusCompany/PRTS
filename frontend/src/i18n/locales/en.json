@@ -137,11 +137,11 @@
     },
     "upload": {
       "label": "Streaming upload",
-      "heading": "Upload JSON files or a folder",
-      "description": "The browser transfers raw files without reading or parsing their JSON contents. Folder selection preserves relative paths.",
+      "heading": "Upload JSON files",
+      "description": "Choose local JSON files and their destination folder in the project. The browser transfers raw files without reading or parsing their contents.",
       "action": "Upload files",
       "chooseFiles": "Choose JSON files",
-      "chooseFolder": "Choose folder",
+      "destinationFolder": "Upload to project folder",
       "start": "Start upload",
       "newBatch": "New batch",
       "cancelBatch": "Cancel batch",
@@ -165,6 +165,7 @@
       },
       "errors": {
         "upload_temp_unavailable": "Temporary file unavailable",
+        "upload_temp_storage_unavailable": "Upload temporary storage unavailable",
         "upload_invalid_json": "Invalid JSON format",
         "upload_invalid_entry": "Invalid entry shape or state",
         "upload_duplicate_key": "Duplicate entry key",

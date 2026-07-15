@@ -6,11 +6,11 @@
 | 校准日期 | 2026-07-10 |
 | 规范总纲 | [`2026-07-10-project-workspace-overhaul-design.md`](./2026-07-10-project-workspace-overhaul-design.md) |
 
-> 2026-07-01 版本确定了多文件/文件夹上传、相对路径和文件维护方向。本文件保留上传/文件 UI 细节；精确 batch/attempt 状态、删除继承、恢复和历史保留真值以规范总纲 §3、§5 为准。
+> 2026-07-01 版本最初确定了多文件/文件夹上传、相对路径和文件维护方向。2026-07-15 作者改为“选择本地 JSON 文件 + 选择项目内目标文件夹”，本文件据此同步 UI 细节；精确 batch/attempt 状态、删除继承、恢复和历史保留真值以规范总纲 §3、§5 为准。
 
 ## 1. 范围
 
-工作流 B 完成原始 JSON 文件/文件夹上传、持久化 batch 进度、同路径完整替换、建夹/移动/重命名/软删除/恢复、成员可读历史、owner/manager 回滚，以及删除保留期清理。
+工作流 B 完成原始 JSON 多文件上传与项目目标文件夹选择、持久化 batch 进度、同路径完整替换、建夹/移动/重命名/软删除/恢复、成员可读历史、owner/manager 回滚，以及删除保留期清理。
 
 最终 UI 不提供粘贴 JSON 文本框。旧 `/projects/{id}/upload` 在新链路稳定后仍保留一个兼容周期并标 deprecated；旧控件只在替代 UI 可用后移除。
 
@@ -21,7 +21,7 @@
 ### 2.1 运行时限制与路径
 
 - 每 batch 500 文件、每文件 100MB、每 batch 2GB、客户端/浏览器并发 3 四项均为平台数据库运行时设置及默认值。`GET/PUT /admin/settings/upload` 读写四项，普通上传客户端通过 `GET /meta/upload-config` 的只读 `UploadConfigDto` 获取当前值；并发不能是前端固定常量。
-- 浏览器不读取或解析内容，只上传原始 `File` 流。文件夹上传保留相对路径，并以用户当前文件夹为根。
+- 浏览器不读取或解析内容，只上传原始 `File` 流。用户从项目 active 文件夹列表中选择目标目录（或项目根目录），声明路径由该目录 path 与本地文件名组成；不打开浏览器本地目录选择器。
 - 服务端规范化路径，拒绝绝对路径、`..` 越界、空段、保留段和同项目 path 冲突。
 - V1 不支持 Range/offset 续传。断流或失败后在同一 logical batch file 下创建新 attempt，并从 byte zero 重新上传；旧 attempt/error 保留。
 - 原始文件写入 upload temp 持久卷；成功处理后立即清理，取消/失败/过期由 durable cleanup 幂等清理。未完成或 abandoned batch 默认 24 小时过期（可运行时配置）；原始文件不进入项目历史或导出。
@@ -101,7 +101,7 @@ worker 使用 `FOR UPDATE SKIP LOCKED` 与租约；重启从同一 job 恢复。
 
 ## 7. 前端
 
-- `UploadBatchDialog` 支持多文件、拖拽和 `webkitdirectory`；只持有元数据/File handle，不调用 `File.text()` 或 `JSON.parse()`。
+- `UploadBatchDialog` 支持多文件与项目 active 文件夹选择；只持有元数据/File handle，不调用 `File.text()` 或 `JSON.parse()`，且不使用 `webkitdirectory` 打开本地目录选择器。
 - 显示总进度及每 file attempt 的上传、排队、解析、提交、成功、失败/取消/过期；失败文件可从 byte zero 单独重试，batch 可取消。
 - 文件管理工具栏与行菜单提供新建、移动、重命名、删除、恢复、历史和回滚。
 - 删除说明明确 30 天恢复期；回滚说明明确会产生新版本且不影响历史 CP。

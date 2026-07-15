@@ -4,12 +4,14 @@ import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
 import { apiErrorMessage } from '@/api'
+import type { FolderDto } from '@/api'
 import type { UploadBatchFileDto } from '@/api/uploads'
 import { UPLOAD_BATCH_TERMINAL_STATES, useUploadBatch } from '@/composables/useUploadBatch'
 
 const props = defineProps<{
   modelValue: boolean
   projectId: number
+  folders: FolderDto[]
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +22,7 @@ const emit = defineEmits<{
 const $q = useQuasar()
 const { t, te } = useI18n()
 const pickedFiles = ref<File[]>([])
+const destinationFolderId = ref<number | null>(null)
 const upload = useUploadBatch(() => props.projectId)
 const pollTimer = ref<number | null>(null)
 
@@ -38,8 +41,15 @@ const canCancel = computed(
 const progress = computed(() =>
   upload.totalBytes.value > 0 ? upload.totalLoaded.value / upload.totalBytes.value : 0,
 )
+const destinationOptions = computed(() => [
+  { label: t('project.files.root'), value: null },
+  ...props.folders.map((folder) => ({ label: folder.path, value: folder.id })),
+])
+const destinationPath = computed(
+  () => props.folders.find((folder) => folder.id === destinationFolderId.value)?.path ?? null,
+)
 
-/** Keep file/folder selection limited to raw JSON files without reading their bytes. */
+/** Keep local file selection limited to raw JSON files without reading their bytes. */
 function jsonFileFilter(files: readonly File[] | FileList) {
   return Array.from(files).filter((file) => file.name.toLocaleLowerCase().endsWith('.json'))
 }
@@ -111,7 +121,7 @@ async function poll() {
 async function start() {
   if (pickedFiles.value.length === 0) return
   try {
-    await upload.start(pickedFiles.value)
+    await upload.start(pickedFiles.value, destinationPath.value)
     await poll()
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error) })
@@ -141,6 +151,7 @@ async function cancel() {
 /** Release a terminal snapshot and retain no file bytes beyond this dialog instance. */
 function newBatch() {
   pickedFiles.value = []
+  destinationFolderId.value = null
   upload.reset()
 }
 
@@ -188,23 +199,23 @@ onBeforeUnmount(() => {
           >
             <template #prepend><q-icon name="mdi-file-upload-outline" /></template>
           </q-file>
-          <q-file
-            v-model="pickedFiles"
+          <q-select
+            v-model="destinationFolderId"
             outlined
-            multiple
-            webkitdirectory
-            accept=".json,application/json"
-            :filter="jsonFileFilter"
-            :label="$t('project.upload.chooseFolder')"
+            emit-value
+            map-options
+            :options="destinationOptions"
+            :display-value="destinationPath ?? $t('project.files.root')"
+            :label="$t('project.upload.destinationFolder')"
           >
-            <template #prepend><q-icon name="mdi-folder-upload-outline" /></template>
-          </q-file>
+            <template #prepend><q-icon name="mdi-folder-outline" /></template>
+          </q-select>
         </div>
         <q-list v-if="pickedFiles.length" bordered separator>
           <q-item v-for="file in pickedFiles" :key="file.webkitRelativePath || file.name">
             <q-item-section>
               <q-item-label class="prts-mono">
-                {{ file.webkitRelativePath || file.name }}
+                {{ destinationPath ? `${destinationPath}/${file.name}` : file.name }}
               </q-item-label>
             </q-item-section>
             <q-item-section side>{{ formatBytes(file.size) }}</q-item-section>

@@ -110,7 +110,7 @@ ZOOT 字段见 [`external/oauth_integration.md`](./external/oauth_integration.md
 
 ### 3.5 上传、完整替换与文件历史
 
-最终 UI 上传原始 JSON 文件/文件夹，不粘贴 JSON，浏览器不解析内容。上传限制来自 `UploadConfigDto`，不内置浏览器并发常量。
+最终 UI 选择本地原始 JSON 文件，并从项目现有文件夹中选择目标目录（可选项目根目录）；不打开本地目录选择器、不粘贴 JSON，浏览器不解析内容。上传限制来自 `UploadConfigDto`，不内置浏览器并发常量。
 
 ```text
 create logical batch/files
