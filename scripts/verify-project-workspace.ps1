@@ -148,7 +148,7 @@ function Test-Contracts {
     Assert-NotContains 'frontend/src/api/types.ts' '^\s*context\s*:' 'Frontend entry schema does not expose context'
     Assert-Contains 'backend/migrations/0013_editor_search.sql' "before_value - 'context'" 'Migration scrubs context from history before drop'
     Assert-Contains 'backend/migrations/0013_editor_search.sql' 'DROP COLUMN context' 'Migration removes entries.context'
-    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0014_admin_delete_cp.sql') '0014 remains the newest migration'
+    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0015_contribution_events.sql') '0015 contribution ledger is the newest migration'
 }
 
 function Test-ScaleRecoverySecurityContracts {

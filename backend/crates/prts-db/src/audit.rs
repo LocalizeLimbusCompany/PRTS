@@ -459,6 +459,7 @@ pub enum AuditEvent<'a> {
         previous_state: &'a str,
         new_state: &'a str,
         forced_presence: bool,
+        cp_tenths_awarded: i64,
     },
     EntryFlagsUpdated {
         project_id: i64,
@@ -1323,6 +1324,7 @@ pub async fn append_event_tx(
             previous_state,
             new_state,
             forced_presence,
+            cp_tenths_awarded,
         } => (
             "entry.updated",
             "entry",
@@ -1334,6 +1336,7 @@ pub async fn append_event_tx(
                 "previous_state": previous_state,
                 "new_state": new_state,
                 "forced_presence": forced_presence,
+                "cp_tenths_awarded": cp_tenths_awarded,
             }),
         ),
         AuditEvent::EntryFlagsUpdated {

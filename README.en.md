@@ -10,7 +10,7 @@
 
 ---
 
-PRTS is a **public, extensible, high-concurrency** online translation platform for localization teams — an open-source counterpart to [Paratranz](https://paratranz.cn). Contributors **translate, review, and approve** text online, backed by role-based permissions, a complete audit history, and hybrid search, with exact storage reserved for future contribution points (CP).
+PRTS is a **public, extensible, high-concurrency** online translation platform for localization teams — an open-source counterpart to [Paratranz](https://paratranz.cn). Contributors **translate, review, and approve** text online, backed by role-based permissions, a complete audit history, hybrid search, and contribution points (CP).
 
 > 🚧 The functional phases of the project-workspace overhaul are complete; final verification and release preparation are in progress. See [`plan/26-06-28-init_system.md`](./plan/26-06-28-init_system.md) and [`docs/architecture.md`](./docs/architecture.md) for the authoritative scope and verification boundaries.
 
@@ -23,7 +23,7 @@ PRTS is a **public, extensible, high-concurrency** online translation platform f
 - **Structured hybrid search**: POST tagged scopes, PostgreSQL full-text + trigram fuzzy + optional vector semantics (pgvector), RRF, and signed keyset cursors.
 - **Durable streaming uploads**: 500-file / 2GB batch contract, 100MB per-file limit, byte-zero retries, per-file atomic replacement, cancellation/expiry cleanup, and 30-day recoverable history.
 - **Permission-node RBAC**: platform roles (super admin / admin / maintainer) + project roles (owner / manager / reviewer / translator).
-- **Contribution-point foundation**: exact-tenths `BIGINT` storage for future scoring; this release neither awards CP nor renders a fake leaderboard.
+- **Contribution points and leaderboards**: online translations/edits award Levenshtein distance × 1.0, reviews/approvals × 0.3, with project all-time and platform all-time/UTC month/week rankings.
 - **Pluggable auth providers**: password + OAuth2 (PKCE), with built-in ZOOT integration; supports OAuth-only mode.
 - **History and audit**: business mutations and allowlisted redacted audit commit together and fail closed; file change sets support rollback/restore, while project deletion uses an owner-only challenge and a 24-hour delay.
 - **Internationalization**: bilingual (zh-CN / en) frontend; backend localizes messages via `Accept-Language`.
@@ -138,7 +138,7 @@ Commits follow [Conventional Commits](https://www.conventionalcommits.org); code
 
 ## 📄 License
 
-TBD.
+[MIT](./LICENSE)
 
 ---
 

@@ -67,6 +67,7 @@ impl PurgeProjectHandler {
         .await?;
         prts_db::jobs::detach_project_jobs_tx(&mut tx, snapshot.project_id, job.id).await?;
         prts_db::projects::detach_live_refs_tx(&mut tx, snapshot.project_id).await?;
+        prts_db::contributions::delete_project_events_tx(&mut tx, snapshot.project_id).await?;
         prts_db::projects::delete_entry_versions_tx(&mut tx, snapshot.project_id).await?;
         let anchor =
             prts_db::projects::delete_entries_files_folders_tx(&mut tx, snapshot.project_id)

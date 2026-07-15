@@ -5,6 +5,7 @@
     "passwordChangeRequired": "This account was created by an administrator. Please change the initial password soon; the reminder does not block other features.",
     "changePassword": "Change password",
     "projects": "Projects",
+    "leaderboard": "Leaderboard",
     "admin": "Admin",
     "messages": "Messages",
     "switchToLightTheme": "Switch to light theme",
@@ -84,6 +85,7 @@
   },
   "profile": {
     "title": "Profile",
+    "cp": "Contribution points",
     "description": "Profile description",
     "translationLanguages": "Preferred translation languages",
     "save": "Save profile",
@@ -324,8 +326,8 @@
       "noPermission": "You do not have permission to export this project."
     },
     "leaderboard": {
-      "heading": "Contribution leaderboard is not available yet",
-      "description": "Contribution statistics will open after the scoring model is complete. This page will not show a meaningless all-zero ranking."
+      "heading": "Project contribution leaderboard",
+      "description": "Ranks current project members by all-time contribution points; ties use user UID."
     },
     "manage": {
       "heading": "Project management",
@@ -674,6 +676,19 @@
     "hoursAgo": "{n} hr ago",
     "daysAgo": "{n} d ago",
     "received": "New notification received"
+  },
+  "leaderboard": {
+    "platformTitle": "Platform contribution leaderboard",
+    "platformDescription": "View platform all-time, current UTC calendar-month, and calendar-week rankings.",
+    "all": "All time",
+    "month": "This month",
+    "week": "This week",
+    "rank": "Rank",
+    "contributor": "Contributor",
+    "cp": "CP",
+    "empty": "No contributions in this ranking yet",
+    "loadFailed": "Failed to load leaderboard",
+    "utcPeriod": "Period (UTC): {start} to {end}"
   },
   "poke": {
     "composeTitle": "Send a poke to {name}",

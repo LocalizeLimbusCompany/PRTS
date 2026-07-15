@@ -1668,6 +1668,7 @@ dependencies = [
 name = "prts-core"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "language-tags",
  "prts-common",
  "serde",

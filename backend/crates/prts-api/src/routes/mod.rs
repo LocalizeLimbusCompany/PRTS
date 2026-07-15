@@ -9,6 +9,7 @@ pub mod files;
 pub mod health;
 pub mod jobs;
 pub mod language_resolution;
+pub mod leaderboards;
 pub mod messages;
 pub mod meta;
 pub mod notifications;
@@ -83,6 +84,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(users::my_accounts))
         .routes(routes!(users::create_api_key, users::list_api_keys))
         .routes(routes!(users::revoke_api_key))
+        .routes(routes!(leaderboards::platform_leaderboard))
         // 平台管理
         .routes(routes!(admin::get_settings, admin::update_settings))
         .routes(routes!(admin::list_users, admin::create_user))
@@ -114,6 +116,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
         .routes(routes!(projects::change_primary_source))
+        .routes(routes!(leaderboards::project_leaderboard))
         .routes(routes!(tasks::list_tasks, tasks::create_task))
         .routes(routes!(
             tasks::get_task,

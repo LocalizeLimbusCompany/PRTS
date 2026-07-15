@@ -107,6 +107,10 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("AUDIT_UNAVAILABLE", Locale::En) => "Audit service unavailable",
         ("INVALID_LANGUAGE_TAG", Locale::ZhCn) => "语言标签不是有效的 BCP-47 格式",
         ("INVALID_LANGUAGE_TAG", Locale::En) => "Invalid BCP-47 language tag",
+        ("LEADERBOARD_PERIOD_INVALID", Locale::ZhCn) => "排行榜周期必须是总榜、月榜或周榜",
+        ("LEADERBOARD_PERIOD_INVALID", Locale::En) => {
+            "Leaderboard period must be all, month, or week"
+        }
         ("DUPLICATE_LANGUAGE_TAG", Locale::ZhCn) => "语言标签规范化后重复",
         ("DUPLICATE_LANGUAGE_TAG", Locale::En) => "Duplicate canonical language tag",
         ("PROJECT_LANGUAGE_RESOLUTION_REQUIRED", Locale::ZhCn) => {

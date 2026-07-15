@@ -147,6 +147,17 @@ async function revokeKey(id: number) {
             />
           </div>
         </div>
+        <q-space />
+        <div class="text-center">
+          <div class="prts-display text-accent" style="font-size: 28px">
+            {{
+              ((auth.user?.cp_tenths ?? 0) / 10).toLocaleString(undefined, {
+                maximumFractionDigits: 1,
+              })
+            }}
+          </div>
+          <div class="prts-label">{{ t('profile.cp') }}</div>
+        </div>
       </div>
 
       <q-separator class="q-my-lg" />

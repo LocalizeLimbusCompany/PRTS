@@ -15,6 +15,8 @@ import type {
   FileOperationDto,
   MemberDto,
   JobDto,
+  LeaderboardPeriod,
+  LeaderboardResponse,
   ProjectLanguageResolutionDto,
   MessageDto,
   NotificationDto,
@@ -98,6 +100,20 @@ export const usersApi = {
   /** 公开用户资料（不含 email）：私信会话页展示对话方头名/头像。 */
   getUser(id: number) {
     return http.get<UserDto>(`/users/${id}`).then((r) => r.data)
+  },
+}
+
+/** 公开贡献排行榜。 */
+export const leaderboardsApi = {
+  platform(period: LeaderboardPeriod) {
+    return http
+      .get<LeaderboardResponse>('/leaderboards/platform', { params: { period } })
+      .then((response) => response.data)
+  },
+  project(projectId: number) {
+    return http
+      .get<LeaderboardResponse>(`/projects/${projectId}/leaderboard`)
+      .then((response) => response.data)
   },
 }
 

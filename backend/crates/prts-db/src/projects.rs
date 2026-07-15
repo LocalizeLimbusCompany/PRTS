@@ -510,6 +510,7 @@ pub async fn delete_test_fixture(pool: &PgPool, id: i64) -> Result<bool, sqlx::E
 /// 再删业务树、history payload、anchor 与项目；anchor 状态绝不提交。
 #[doc(hidden)]
 pub async fn delete_test_fixture_tx(conn: &mut PgConnection, id: i64) -> Result<bool, sqlx::Error> {
+    super::contributions::delete_project_events_tx(conn, id).await?;
     let history_exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM file_change_sets WHERE project_id = $1)")
             .bind(id)

@@ -38,6 +38,7 @@
 | D13 | i18n 范围 | 前端 zh-CN / en；后端按 `Accept-Language` 返回本地化消息 |
 | D14 | 部署 | 全程 Docker 化（compose + 各服务 Dockerfile），镜像推 GHCR |
 | D15 | 词条状态 | 工作流枚举 + `locked`/`hidden` 正交标志位（见 §6） |
+| D16 | 排行榜口径 | 项目当前成员累计榜；平台累计总榜、UTC 自然月榜、周一开始的 UTC 自然周榜 |
 
 ---
 
@@ -135,7 +136,7 @@ PRTS/
 
 ### 5.1 核心实体
 
-- `user`：`id`、`username`、`email`、`password_hash?`、`password_change_required`、`avatar_url`、`description`、`uid`(展示用)、`joined_at`、`cp_tenths`（未来贡献分的精确 0.1 单位，`BIGINT`）。
+- `user`：`id`、`username`、`email`、`password_hash?`、`password_change_required`、`avatar_url`、`description`、`uid`(展示用)、`joined_at`、`cp_tenths`（贡献分的精确 0.1 单位，`BIGINT`）。
 - `external_account`：`user_id`、`provider`(github/zoot…)、`external_id`、`raw`(JSONB)；用于"关联账号"。
 - `api_key`：`user_id`、`name`、`key_hash`、`scopes`、`created_at`、`last_used_at`（明文仅创建时展示一次）。
 - `project`：`id`、`slug`、`name`、`visibility`(public/private)、`source_langs`(BCP-47 数组)、`primary_source_lang`、`target_lang`(BCP-47)、唯一 `owner_id`、搜索重建状态、头像 key、待删除时间、`created_at`。
@@ -147,7 +148,7 @@ PRTS/
   - `version`(乐观锁递增)、`updated_by`、`updated_at`。
 - `entry_version`：每次改动的快照（`entry_id`、`version`、`translation`、`state`、`editor_id`、`diff`、`created_at`）。
 - `audit_log`：追加式、action allowlisted 的安全审计（见 §8）。
-- `membership`：`project_id`、`user_id`、`role`(owner/manager/reviewer/translator)、`cp_tenths BIGINT NOT NULL DEFAULT 0`（本轮只建未来基础，不评分）。
+- `membership`：`project_id`、`user_id`、`role`(owner/manager/reviewer/translator)、`cp_tenths BIGINT NOT NULL DEFAULT 0`（当前成员的项目累计贡献分）。
 - `platform_role`：`user_id`、`role`(super_admin/admin/maintainer)。
 - `setting`：平台运行时配置（SMTP、注册开关、OAuth 模式、Embedding 开关、上传的文件数/单文件大小/批次大小/浏览器并发等），分类存储。
 - `job`：上传、主源 lexical、Embedding、文件清理与项目清除的持久化状态/阶段/进度/租约/重试；`project_id` 可空并 `ON DELETE SET NULL`，删除后所需 project/media snapshot 存 payload。
@@ -259,7 +260,7 @@ trait AuthProvider {
 
 - 自身：描述、API-Key（创建/吊销，明文仅一次）、翻译语言偏好、修改密码。
 - 管理员直接建号带持久化初始密码提醒；提醒不阻止使用，成功修改密码后清除。
-- 展示：参与的项目、关联账号（先支持 GitHub）、UID、加入时间。CP 在真实计分阶段上线前不显示虚假 0 列/榜单。
+- 展示：参与的项目、关联账号（先支持 GitHub）、UID、加入时间与真实累计 CP；管理列表不展示无业务意义的 CP 列。
 
 ---
 
@@ -269,8 +270,8 @@ trait AuthProvider {
   - 首次翻译：`prev` 视为空串，`d = len(new_translation)`。
   - 权重：翻译/编辑 `1.0`，校对 `0.3`。
 - **不设任何抗刷分机制**（无封顶、无短时合并、无每日上限）—— 按作者要求保持纯线性。
-- 2026-07-10 大改造本轮只把平台/项目 CP 存储统一为 exact tenths integer：`users.cp_tenths BIGINT` 与 `memberships.cp_tenths BIGINT NOT NULL DEFAULT 0`，一单位代表 0.1 CP；不接入评分、不生成真实排行榜、不增加全为 0 的管理列，也不引入十进制 crate/sqlx decimal feature。
-- 未来排序直接使用 `cp_tenths`，UI 显示时四舍五入为整数。回滚与恢复固定 0 CP，不追扣旧 CP。
+- 平台/项目累计 CP 使用 exact tenths integer：`users.cp_tenths BIGINT` 与 `memberships.cp_tenths BIGINT NOT NULL DEFAULT 0`，一单位代表 0.1 CP；只追加 `contribution_events` 支撑 UTC 自然月榜/周榜，不引入十进制 crate/sqlx decimal feature。
+- 在线词条保存计分：目标状态为 `checked/reviewed` 时权重 0.3，其它状态为翻译/编辑权重 1.0；批量上传、回滚、恢复、系统任务固定 0 CP。项目展示当前成员累计榜；平台展示总榜、UTC 月榜和周一开始的 UTC 周榜。
 
 ---
 
@@ -397,7 +398,7 @@ trait AuthProvider {
 | **P3 实时编辑器** | 词条列表（键集分页 + 搜索）、翻译面板、WebSocket 实时协作与在线状态、乐观锁 |
 | **P4 混合搜索** | FTS + pg_trgm + pgvector（Qwen Embedding 可插拔）+ RRF + 高级筛选 |
 | **P5 历史与审计** | 追加式安全审计、词条历史、文件行为 change set/delta 与保留期内可逆回滚 |
-| **P6 CP 与贡献** | 未来按既定编辑距离公式计分并上线项目贡献榜；工作区大改造本轮仅准备精确存储 |
+| **P6 CP 与贡献** | 按既定编辑距离公式原子计分；项目累计榜，以及平台总榜、UTC 自然月榜与自然周榜 |
 | **P7 完善** | i18n 全量、文档（README 中英 + docs）、安全加固、20w 词条性能压测、verify |
 
 当前项目工作区改造已完成 foundation 与 A–F（阶段 1–7.3）的实现和特性分支 CI；阶段 8 依次完成契约/文档、规模/故障恢复/安全验证与兼容发布准备。生产结果只以实际保存的 verify、CI、Docker health、Swagger 和部署冒烟输出为准。
@@ -407,7 +408,7 @@ trait AuthProvider {
 ## 20. 后续范围边界
 
 - 权限节点以服务端 capabilities 和 2026-07-10 owner/manager/terms/tasks/history 规则为当前基线；扩大能力须另作作者决定。
-- 排行榜本轮只显示明确功能占位；时间范围、项目/平台口径在真实 CP 计分阶段单独设计。
+- 排行榜口径已确认：项目当前成员累计榜；平台累计总榜、UTC 自然月榜、周一开始的 UTC 自然周榜。
 - 工作区上传本轮只支持 PRTS JSON 文件；properties/PO/其它格式属于独立导入器范围。
 - SMTP 邮件模板与更广泛的通知策略不属于本轮工作区改造；现有通知/私信功能不得回退。
 - 当前搜索使用 HNSW 与 1024 维 Qwen 配置；更换索引或维度须迁移数据并单列 ADR。

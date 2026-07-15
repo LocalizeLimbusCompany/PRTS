@@ -12,6 +12,7 @@ use utoipa::ToSchema;
 use zip::write::SimpleFileOptions;
 
 use prts_common::Error;
+use prts_core::contribution::{calculate_contribution, ContributionKind};
 use prts_core::permission::{node_for_state, nodes};
 use prts_core::EntryState;
 use prts_db::audit::{AuditActor, AuditActorKind, AuditEvent};
@@ -462,13 +463,11 @@ pub async fn update_entry(
     if entry.state != target.as_str() {
         access.require_node(node_for_state(target))?;
     }
-    let kind = if entry.state != target.as_str()
-        && matches!(target, EntryState::Checked | EntryState::Reviewed)
-    {
-        "review"
-    } else {
-        "edit"
-    };
+    let contribution_kind = ContributionKind::for_target_state(target);
+    let kind = contribution_kind.as_str();
+    let contribution =
+        calculate_contribution(&entry.translation, &req.translation, contribution_kind)
+            .map_err(|_| Error::internal("contribution score overflow"))?;
     let updated = prts_db::entries::update_translation_tx(
         &mut tx,
         entry_id,
@@ -483,6 +482,9 @@ pub async fn update_entry(
 
     match updated {
         Some(e) => {
+            prts_db::contributions::award_tx(&mut tx, user.id, id, e.id, e.version, contribution)
+                .await
+                .map_err(db_err)?;
             prts_db::audit::append_event_tx(
                 &mut tx,
                 AuditActor {
@@ -498,6 +500,7 @@ pub async fn update_entry(
                     previous_state: &entry.state,
                     new_state: &e.state,
                     forced_presence: req.force_presence,
+                    cp_tenths_awarded: contribution.cp_tenths,
                 },
             )
             .await

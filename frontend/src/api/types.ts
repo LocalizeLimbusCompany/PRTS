@@ -77,6 +77,23 @@ export interface AuthConfigDto {
   oauth_providers: string[]
 }
 
+export type LeaderboardPeriod = 'all' | 'month' | 'week'
+
+export interface LeaderboardEntryDto {
+  rank: number
+  user_id: number
+  username: string
+  avatar_url: string | null
+  cp_tenths: number
+}
+
+export interface LeaderboardResponse {
+  period: LeaderboardPeriod
+  period_start: string | null
+  period_end: string | null
+  items: LeaderboardEntryDto[]
+}
+
 export interface ProjectDto {
   id: number
   slug: string

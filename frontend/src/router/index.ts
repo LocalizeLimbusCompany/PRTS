@@ -31,6 +31,11 @@ const router = createRouter({
       name: 'projects',
       component: () => import('@/views/ProjectsView.vue'),
     },
+    {
+      path: '/leaderboard',
+      name: 'platform-leaderboard',
+      component: () => import('@/views/PlatformLeaderboardView.vue'),
+    },
     ...projectRoutes,
     {
       path: '/me',

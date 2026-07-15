@@ -49,7 +49,7 @@ describe('frontend localization contracts', () => {
     expect(roleLabel('reviewer', (key) => `reviewer:${key}`)).toBe('reviewer:roles.reviewer')
   })
 
-  it('keeps future CP hidden until real scoring is implemented', () => {
-    expect(profileSource).not.toContain('cp_tenths')
+  it('shows exact-tenths CP after real scoring is implemented', () => {
+    expect(profileSource).toContain('cp_tenths')
   })
 })

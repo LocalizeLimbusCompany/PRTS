@@ -184,6 +184,12 @@ locked 修改和“强制保存”由 capability 控制；强制保存只越过 
 
 purge 到期后先在数据库事务中锁 job/project、写 audit metadata、detach/cancel 其它 jobs，再对每棵文件树执行 entries/files/folders 叶到根业务行清理，随后显式删除全部 project-scoped file_change_items/change_sets、tasks/terms/memberships/其它关系与 project，并持久化 `external_cleanup_pending` stage；不得依赖 project cascade 穿过 RESTRICT FK。purge job 以 `project_id=NULL` 存活。提交后按 immutable payload 删除 media/temp，成功后标 job succeeded。外部清理失败只重试同一 job 的 external-cleanup stage，绝不恢复 DB project。精确顺序见总纲 §9.3。
 
+### 3.11 CP 与排行榜
+
+在线词条保存先锁定项目、授权与词条版本，再按目标状态选择权重：`checked/reviewed` 为校对/审核 `0.3`，其它状态为翻译/编辑 `1.0`。`prts-core` 按 Unicode 标量值计算 `Levenshtein(previous_translation, new_translation)`，输出 exact tenths；正分事件、`users.cp_tenths`、当前 `memberships.cp_tenths`、entry version 与 allowlisted audit 在同一事务提交。距离为零不写事件；上传、文件历史回滚/恢复与 worker 固定 0 CP。
+
+`contribution_events` 是周期榜的只追加事实账本，`(entry_id, entry_version)` 唯一防止重复发分。项目榜读取当前成员累计值；移除成员后不展示，重新加入时由事件账本恢复该项目累计值。平台总榜读取用户累计值，月榜与周榜按 UTC `[start,end)` 聚合；周一 00:00 UTC 为周起点。同分均以 user id 升序稳定排序，接口返回明确周期边界。
+
 ## 4. 数据模型摘要
 
 ```text
@@ -211,7 +217,7 @@ audit_log  -- append-only redacted allowlisted event
 setting    -- runtime non-secret configuration
 ```
 
-`entry` 不含 context；entry history payload 只允许总纲 §5.3 列出的字段。`projects.owner_id` 是 owner 真源；CP 使用 `users.cp_tenths/memberships.cp_tenths BIGINT`（一单位 0.1 CP）为未来计分准备，本轮不评分且不引入 decimal 依赖。
+`entry` 不含 context；entry history payload 只允许总纲 §5.3 列出的字段。`projects.owner_id` 是 owner 真源。CP 使用 `users.cp_tenths/memberships.cp_tenths BIGINT`（一单位 0.1 CP）保存累计真源；只追加 `contribution_events` 保存在线词条保存的 actor/project/entry-version/kind/distance/exact tenths，支撑平台 UTC 月榜/周榜且不引入 decimal 依赖。上传、回滚、恢复和系统任务不产生 CP。
 
 ## 5. 权限与能力
 

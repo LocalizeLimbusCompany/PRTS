@@ -8,6 +8,7 @@
 //! - `locked` / `hidden` 是**正交标志位**（[`EntryFlags`]），独立于工作流。
 
 pub mod capabilities;
+pub mod contribution;
 pub mod delete_challenge;
 pub mod entry;
 pub mod file_history;

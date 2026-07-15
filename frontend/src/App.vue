@@ -69,6 +69,14 @@ async function logout() {
           :label="t('app.projects')"
         />
         <q-btn
+          flat
+          no-caps
+          dense
+          class="prts-navbtn"
+          :to="{ name: 'platform-leaderboard' }"
+          :label="t('app.leaderboard')"
+        />
+        <q-btn
           v-if="auth.isAdmin"
           flat
           no-caps

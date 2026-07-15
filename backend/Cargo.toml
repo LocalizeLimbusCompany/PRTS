@@ -6,7 +6,7 @@ members = ["crates/*"]
 
 [workspace.package]
 edition = "2021"
-license = "MIT OR Apache-2.0"            # 许可证待定（见 plan §20）
+license = "MIT"
 authors = ["ZengXiaoPi"]
 repository = "https://github.com/LocalizeLimbusCompany/PRTS"
 rust-version = "1.80"

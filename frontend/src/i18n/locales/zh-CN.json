@@ -5,6 +5,7 @@
     "passwordChangeRequired": "此账号由管理员创建，请尽快修改初始密码。提醒不会阻止你继续使用其它功能。",
     "changePassword": "修改密码",
     "projects": "项目",
+    "leaderboard": "排行榜",
     "admin": "管理",
     "messages": "私信",
     "switchToLightTheme": "切换到浅色主题",
@@ -84,6 +85,7 @@
   },
   "profile": {
     "title": "个人主页",
+    "cp": "贡献分 CP",
     "description": "个人描述",
     "translationLanguages": "翻译语言偏好",
     "save": "保存资料",
@@ -324,8 +326,8 @@
       "noPermission": "你没有导出此项目的权限。"
     },
     "leaderboard": {
-      "heading": "贡献排行榜尚未开放",
-      "description": "贡献统计与排行榜将在评分模型完成后开放；这里不会展示没有实际意义的零分榜单。"
+      "heading": "项目贡献排行榜",
+      "description": "按当前项目成员的累计贡献分排序；同分按用户 UID 排列。"
     },
     "manage": {
       "heading": "项目管理",
@@ -674,6 +676,19 @@
     "hoursAgo": "{n} 小时前",
     "daysAgo": "{n} 天前",
     "received": "收到新通知"
+  },
+  "leaderboard": {
+    "platformTitle": "平台贡献排行榜",
+    "platformDescription": "查看全平台累计、当前 UTC 自然月与自然周贡献排名。",
+    "all": "总榜",
+    "month": "月榜",
+    "week": "周榜",
+    "rank": "名次",
+    "contributor": "贡献者",
+    "cp": "贡献分 CP",
+    "empty": "当前榜单还没有贡献记录",
+    "loadFailed": "排行榜加载失败",
+    "utcPeriod": "统计周期（UTC）：{start} 至 {end}"
   },
   "poke": {
     "composeTitle": "向 {name} 发送提示",

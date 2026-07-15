@@ -47,6 +47,8 @@ mod entries_routes;
 mod files_routes;
 #[path = "../src/routes/language_resolution.rs"]
 mod language_resolution_routes;
+#[path = "../src/routes/leaderboards.rs"]
+mod leaderboards_routes;
 #[path = "../src/routes/messages.rs"]
 mod messages_routes;
 #[path = "../src/routes/meta.rs"]
@@ -105,6 +107,7 @@ static FILE_HISTORY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::cons
 static TASK_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TERMINOLOGY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static STAGE7_ADMIN_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static CONTRIBUTION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn runtime_role() -> String {
     std::env::var("PRTS_TEST_RUNTIME_ROLE").unwrap_or_else(|_| "prts_runtime".to_string())
@@ -615,6 +618,7 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
             "previous_state",
             "new_state",
             "forced_presence",
+            "cp_tenths_awarded",
         ],
     },
     AuditedEntrypoint {
@@ -2507,6 +2511,284 @@ async fn audit_contract_create_user(
     } else {
         user
     }
+}
+
+/// P6 贡献事件 schema 必须只追加正分事件，并为平台周期与项目榜提供有界索引。
+#[tokio::test]
+async fn contribution_schema_has_exact_event_ledger_and_runtime_grants() {
+    let _guard = CONTRIBUTION_TEST_LOCK.lock().await;
+    let pool = pool().await;
+    let columns: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT column_name, udt_name, is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'contribution_events'
+         ORDER BY ordinal_position",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    for required in [
+        ("user_id", "int8", "NO"),
+        ("project_id", "int8", "NO"),
+        ("entry_id", "int8", "YES"),
+        ("entry_version", "int8", "NO"),
+        ("kind", "text", "NO"),
+        ("distance", "int8", "NO"),
+        ("cp_tenths", "int8", "NO"),
+        ("created_at", "timestamptz", "NO"),
+    ] {
+        assert!(columns.iter().any(|column| {
+            column.0 == required.0 && column.1 == required.1 && column.2 == required.2
+        }));
+    }
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes
+         WHERE schemaname = 'public' AND tablename = 'contribution_events'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(indexes.contains(&"contribution_events_platform_period_rank_idx".to_string()));
+    assert!(indexes.contains(&"contribution_events_project_user_idx".to_string()));
+}
+
+/// 在线保存按 Unicode Levenshtein 与目标状态权重原子记入平台/项目累计值及周期事件；
+/// 零距离不制造事件，audit 失败则业务与 CP 一起回滚。
+#[tokio::test]
+async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
+    use axum::extract::{Path, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let _guard = CONTRIBUTION_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "cp-owner", Some("maintainer")).await;
+    let reviewer = audit_contract_create_user(&state.db, "cp-reviewer", None).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("CP project {}", owner.id),
+            slug: Some(format!("cp-project-{}", owner.id)),
+            description: None,
+            visibility: Some("public".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建 CP 项目");
+    projects_routes::add_member(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: reviewer.username.clone(),
+            role: "reviewer".to_string(),
+        }),
+    )
+    .await
+    .expect_api("添加 reviewer");
+    let Json(uploaded) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "cp/main.json",
+            &[("cp-key", "Contribution source")],
+        )),
+    )
+    .await
+    .expect_api("创建 CP 词条");
+    let entry: prts_db::models::Entry =
+        sqlx::query_as("SELECT * FROM entries WHERE project_id=$1 AND file_id=$2 AND key='cp-key'")
+            .bind(project.id)
+            .bind(uploaded.file_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+
+    let Json(translated) = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "abc".to_string(),
+            state: "translated".to_string(),
+            version: entry.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_api("首次翻译得 3 CP");
+    let Json(checked) = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "abcd".to_string(),
+            state: "checked".to_string(),
+            version: translated.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_api("校对一个字符得 0.3 CP");
+    let _ = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: checked.translation.clone(),
+            state: "reviewed".to_string(),
+            version: checked.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_api("零距离状态推进不产生 CP 事件");
+
+    let owner_cp: i64 = sqlx::query_scalar("SELECT cp_tenths FROM users WHERE id=$1")
+        .bind(owner.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let reviewer_cp: i64 = sqlx::query_scalar("SELECT cp_tenths FROM users WHERE id=$1")
+        .bind(reviewer.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(owner_cp, 30);
+    assert_eq!(reviewer_cp, 3);
+    let events: Vec<(i64, String, i64, i64)> = sqlx::query_as(
+        "SELECT user_id, kind, distance, cp_tenths
+         FROM contribution_events WHERE project_id=$1 ORDER BY id",
+    )
+    .bind(project.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        vec![
+            (owner.id, "edit".into(), 3, 30),
+            (reviewer.id, "review".into(), 1, 3)
+        ]
+    );
+
+    let project_board = leaderboards_routes::project_leaderboard(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path(project.id),
+    )
+    .await
+    .expect_api("公开项目榜允许游客读取")
+    .0;
+    assert_eq!(project_board.items[0].user_id, owner.id);
+    assert_eq!(project_board.items[0].cp_tenths, 30);
+    assert_eq!(project_board.items[1].user_id, reviewer.id);
+    let weekly = leaderboards_routes::platform_leaderboard(
+        State(state.clone()),
+        axum::extract::Query(leaderboards_routes::PlatformLeaderboardQuery {
+            period: Some("week".to_string()),
+        }),
+    )
+    .await
+    .expect_api("平台 UTC 周榜")
+    .0;
+    assert_eq!(weekly.period, "week");
+    assert!(weekly.period_start.is_some() && weekly.period_end.is_some());
+    assert!(weekly
+        .items
+        .iter()
+        .any(|item| item.user_id == owner.id && item.cp_tenths == 30));
+    for period in ["month", "all"] {
+        let board = leaderboards_routes::platform_leaderboard(
+            State(state.clone()),
+            axum::extract::Query(leaderboards_routes::PlatformLeaderboardQuery {
+                period: Some(period.to_string()),
+            }),
+        )
+        .await
+        .expect_api("平台月榜或总榜")
+        .0;
+        assert_eq!(board.period, period);
+        assert_eq!(board.period_start.is_some(), period == "month");
+        assert_eq!(board.period_end.is_some(), period == "month");
+        assert!(board
+            .items
+            .iter()
+            .any(|item| item.user_id == owner.id && item.cp_tenths == 30));
+    }
+    let invalid_period = leaderboards_routes::platform_leaderboard(
+        State(state.clone()),
+        axum::extract::Query(leaderboards_routes::PlatformLeaderboardQuery {
+            period: Some("year".to_string()),
+        }),
+    )
+    .await
+    .expect_err_api("平台榜拒绝未知周期");
+    assert_eq!(
+        invalid_period.into_response().status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+
+    let before_failure = users::find_by_id(&state.db, reviewer.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .cp_tenths;
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let current: prts_db::models::Entry = sqlx::query_as("SELECT * FROM entries WHERE id=$1")
+        .bind(entry.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let failure = entries_routes::update_entry(
+        State(failing_state),
+        audit_contract_current_user(&reviewer),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "audit rollback".to_string(),
+            state: "reviewed".to_string(),
+            version: current.version,
+            force_presence: false,
+        }),
+    )
+    .await
+    .expect_err_api("audit 失败必须回滚 CP 与词条");
+    assert_eq!(
+        failure.into_response().status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        users::find_by_id(&state.db, reviewer.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .cp_tenths,
+        before_failure
+    );
+    let unchanged: prts_db::models::Entry = sqlx::query_as("SELECT * FROM entries WHERE id=$1")
+        .bind(entry.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(unchanged.version, current.version);
+
+    replacement_test_cleanup(
+        &state.db,
+        owner.id,
+        project.id,
+        &std::env::temp_dir().join("prts-cp-no-temp"),
+    )
+    .await;
+    sqlx::query("DELETE FROM users WHERE id=$1")
+        .bind(reviewer.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
 }
 
 fn audit_contract_upload_req(
@@ -6448,6 +6730,11 @@ async fn replacement_test_cleanup(
         .await
         .unwrap();
     sqlx::query("DELETE FROM upload_batches WHERE project_id_snapshot = $1")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM contribution_events WHERE project_id = $1")
         .bind(project_id)
         .execute(pool)
         .await
@@ -16096,8 +16383,8 @@ fn stage7_delayed_deletion_source_contract_is_complete() {
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name().to_string_lossy().starts_with("0015"))
             .count(),
-        0,
-        "Task 7.3 不得新增 migration"
+        1,
+        "P6 只允许一个冻结的 0015 contribution ledger migration"
     );
 }
 

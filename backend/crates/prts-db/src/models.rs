@@ -92,7 +92,7 @@ pub struct Membership {
     pub project_id: i64,
     pub user_id: i64,
     pub role: String,
-    /// Exact project-scoped CP tenths; not exposed until a real leaderboard is implemented.
+    /// Exact project-scoped CP tenths; one stored unit equals 0.1 CP.
     pub cp_tenths: i64,
     pub created_at: DateTime<Utc>,
 }
