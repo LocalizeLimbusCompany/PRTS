@@ -17,6 +17,38 @@
     "cancel": "Cancel",
     "search": "Search"
   },
+  "auth": {
+    "required": "Required",
+    "retry": "Retry",
+    "configLoadFailed": "The available sign-in methods could not be loaded. Authentication forms have been disabled for safety.",
+    "login": {
+      "title": "Sign in",
+      "username": "Username / email",
+      "password": "Password",
+      "submit": "Sign in",
+      "failed": "Sign-in failed",
+      "zoot": "Sign in with ZOOT",
+      "zootUnavailable": "ZOOT sign-in is currently unavailable",
+      "or": "or",
+      "noMethods": "No sign-in method is currently available. Contact a platform administrator.",
+      "noAccount": "Need an account? ",
+      "registerLink": "Register"
+    },
+    "register": {
+      "title": "Create account",
+      "username": "Username",
+      "usernameHint": "3–32 characters",
+      "email": "Email (optional)",
+      "password": "Password",
+      "passwordHint": "At least 8 characters",
+      "submit": "Register",
+      "success": "Account created and signed in",
+      "failed": "Registration failed (the username or email may already be in use)",
+      "disabled": "Password registration is not currently available. Use one of the enabled sign-in methods.",
+      "hasAccount": "Already have an account? ",
+      "loginLink": "Sign in"
+    }
+  },
   "profile": {
     "password": {
       "title": "Change password",

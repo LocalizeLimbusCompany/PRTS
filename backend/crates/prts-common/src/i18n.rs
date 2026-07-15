@@ -47,6 +47,12 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
     let msg = match (code, locale) {
         ("bad_request", Locale::ZhCn) => "请求参数有误",
         ("bad_request", Locale::En) => "Bad request",
+        ("AUTH_PASSWORD_DISABLED", Locale::ZhCn) => "当前仅允许使用 OAuth 登录",
+        ("AUTH_PASSWORD_DISABLED", Locale::En) => {
+            "Password authentication is disabled; use an OAuth provider"
+        }
+        ("AUTH_REGISTRATION_CLOSED", Locale::ZhCn) => "当前未开放账号注册",
+        ("AUTH_REGISTRATION_CLOSED", Locale::En) => "Account registration is currently closed",
         ("SEARCH_REQUEST_INVALID", Locale::ZhCn) => "搜索请求格式无效",
         ("SEARCH_REQUEST_INVALID", Locale::En) => "Invalid search request",
         ("SEARCH_LIMIT_INVALID", Locale::ZhCn) => "搜索每页数量必须在 1 到 100 之间",
@@ -173,6 +179,14 @@ mod tests {
     fn localizes_known_and_unknown_codes() {
         assert_eq!(localize("not_found", Locale::En), "Resource not found");
         assert_eq!(localize("not_found", Locale::ZhCn), "资源不存在");
+        assert_eq!(
+            localize("AUTH_PASSWORD_DISABLED", Locale::En),
+            "Password authentication is disabled; use an OAuth provider"
+        );
+        assert_eq!(
+            localize("AUTH_REGISTRATION_CLOSED", Locale::ZhCn),
+            "当前未开放账号注册"
+        );
         // 未知错误码回退到内部错误消息。
         assert_eq!(localize("nope", Locale::En), "Internal server error");
     }

@@ -2845,6 +2845,7 @@ async fn audit_contract_registration_rolls_back_user_and_token_issuance_when_aud
     let password_marker = "REGISTER_PASSWORD_MUST_NEVER_ENTER_AUDIT";
     let result = auth_routes::register(
         State(state.clone()),
+        error::RequestLocale(Default::default()),
         Json(auth_routes::RegisterReq {
             username: username.clone(),
             email: Some(format!("{username}@example.invalid")),
@@ -2946,6 +2947,7 @@ async fn audit_contract_login_commits_active_session_audit_and_outbox_before_ret
 
     let Json(tokens) = auth_routes::login(
         State(state.clone()),
+        error::RequestLocale(Default::default()),
         Json(auth_routes::LoginReq {
             username,
             password: password_marker.to_string(),
@@ -3018,6 +3020,7 @@ async fn audit_contract_login_returns_503_without_active_session_when_audit_fail
         .unwrap();
     let result = auth_routes::login(
         State(state.clone()),
+        error::RequestLocale(Default::default()),
         Json(auth_routes::LoginReq {
             username,
             password: password.to_string(),
@@ -3055,6 +3058,7 @@ async fn audit_contract_failed_password_login_is_audited_and_audit_failure_hides
     let wrong_password = "WRONG_PASSWORD_MUST_NOT_ENTER_AUDIT";
     let denied = auth_routes::login(
         State(state.clone()),
+        error::RequestLocale(Default::default()),
         Json(auth_routes::LoginReq {
             username: username.clone(),
             password: wrong_password.to_string(),
@@ -3076,6 +3080,7 @@ async fn audit_contract_failed_password_login_is_audited_and_audit_failure_hides
     let failing_state = audit_contract_state_with_db(failing_db).await;
     let denied = auth_routes::login(
         State(failing_state.clone()),
+        error::RequestLocale(Default::default()),
         Json(auth_routes::LoginReq {
             username,
             password: wrong_password.to_string(),
@@ -3104,6 +3109,7 @@ async fn audit_contract_login_fixture(
         .unwrap();
     let Json(tokens) = auth_routes::login(
         State(state.clone()),
+        error::RequestLocale(Default::default()),
         Json(auth_routes::LoginReq {
             username,
             password: password.to_string(),
@@ -3719,6 +3725,7 @@ async fn audit_contract_token_issuance_survives_redis_populate_failure_via_durab
         .unwrap();
     let result = auth_routes::login(
         State(state.clone()),
+        error::RequestLocale(Default::default()),
         Json(auth_routes::LoginReq {
             username,
             password: password.to_string(),
@@ -15502,6 +15509,7 @@ async fn stage7_admin_create_and_nonblocking_password_change_are_persistent_and_
 
     let axum::Json(login) = auth_routes::login(
         axum::extract::State(state.clone()),
+        error::RequestLocale(Default::default()),
         axum::Json(auth_routes::LoginReq {
             username: username.clone(),
             password: initial_password.clone(),
@@ -15640,6 +15648,7 @@ async fn stage7_create_and_password_change_audit_failures_roll_back_atomically()
         .unwrap();
     let axum::Json(login) = auth_routes::login(
         axum::extract::State(normal_state.clone()),
+        error::RequestLocale(Default::default()),
         axum::Json(auth_routes::LoginReq {
             username: managed.username,
             password: "audit-contract-password".to_string(),

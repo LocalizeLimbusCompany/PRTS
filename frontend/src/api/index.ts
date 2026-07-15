@@ -4,6 +4,7 @@ import type {
   AdminUserDto,
   AdminUserListParams,
   AdminUserListResponse,
+  AuthConfigDto,
   CreatedApiKey,
   DeleteChallengeDto,
   DeletionStatusDto,
@@ -40,6 +41,9 @@ export { posApi, termsApi } from './terms'
 
 /** 认证。 */
 export const authApi = {
+  config() {
+    return http.get<AuthConfigDto>('/meta/auth-config').then((r) => r.data)
+  },
   register(body: { username: string; email?: string; password: string }) {
     return http.post<TokenResponse>('/auth/register', body).then((r) => r.data)
   },

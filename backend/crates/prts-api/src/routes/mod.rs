@@ -68,6 +68,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(health::readiness))
         .routes(routes!(meta::version))
         .routes(routes!(meta::upload_config))
+        .routes(routes!(meta::auth_config))
         // 认证
         .routes(routes!(auth::register))
         .routes(routes!(auth::login))

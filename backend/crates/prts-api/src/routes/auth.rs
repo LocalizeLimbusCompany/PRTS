@@ -13,7 +13,7 @@ use sqlx::PgConnection;
 
 use crate::auth::session::{self, IssueKind, IssuedTokens};
 use crate::dto::UserDto;
-use crate::error::{ApiError, ErrorResponse};
+use crate::error::{ApiError, ErrorResponse, RequestLocale};
 use crate::state::AppState;
 use crate::{appsettings, db_err};
 
@@ -56,21 +56,32 @@ pub struct RegisterReq {
     request_body = RegisterReq,
     responses(
         (status = 200, description = "注册成功并登录", body = TokenResponse),
-        (status = 400, description = "参数错误 / 仅 OAuth 模式"),
-        (status = 403, description = "注册已关闭"),
+        (status = 400, description = "注册参数错误"),
+        (status = 403, description = "仅 OAuth 模式或注册已关闭"),
         (status = 409, description = "用户名或邮箱已存在"),
         (status = 503, description = "审计服务不可用，注册与令牌签发均未提交", body = ErrorResponse),
     )
 )]
 pub async fn register(
     State(state): State<AppState>,
+    locale: RequestLocale,
     Json(req): Json<RegisterReq>,
 ) -> Result<Json<TokenResponse>, ApiError> {
-    if appsettings::get_bool(&state, appsettings::AUTH_OAUTH_ONLY, false).await {
-        return Err(Error::bad_request("仅 OAuth 登录模式，已禁用账号密码注册").into());
+    if appsettings::get_bool(&state, appsettings::AUTH_OAUTH_ONLY, false)
+        .await
+        .map_err(db_err)?
+    {
+        return Err(
+            ApiError::from(Error::validation("AUTH_PASSWORD_DISABLED")).with_locale(locale.0)
+        );
     }
-    if !appsettings::get_bool(&state, appsettings::AUTH_REGISTRATION_OPEN, true).await {
-        return Err(Error::Forbidden.into());
+    if !appsettings::get_bool(&state, appsettings::AUTH_REGISTRATION_OPEN, true)
+        .await
+        .map_err(db_err)?
+    {
+        return Err(
+            ApiError::from(Error::validation("AUTH_REGISTRATION_CLOSED")).with_locale(locale.0),
+        );
     }
 
     let username = req.username.trim();
@@ -129,14 +140,24 @@ pub struct LoginReq {
     responses(
         (status = 200, description = "登录成功", body = TokenResponse),
         (status = 401, description = "凭证错误"),
-        (status = 403, description = "账号被禁用"),
+        (status = 403, description = "仅 OAuth 模式或账号被禁用"),
         (status = 503, description = "审计服务不可用，未返回认证结论或令牌", body = ErrorResponse),
     )
 )]
 pub async fn login(
     State(state): State<AppState>,
+    locale: RequestLocale,
     Json(req): Json<LoginReq>,
 ) -> Result<Json<TokenResponse>, ApiError> {
+    if appsettings::get_bool(&state, appsettings::AUTH_OAUTH_ONLY, false)
+        .await
+        .map_err(db_err)?
+    {
+        return Err(
+            ApiError::from(Error::validation("AUTH_PASSWORD_DISABLED")).with_locale(locale.0)
+        );
+    }
+
     let user = match prts_db::users::find_by_username(&state.db, &req.username)
         .await
         .map_err(db_err)?
@@ -450,4 +471,43 @@ async fn unique_username(
         }
     }
     Ok(format!("{base}_{external_id}"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn password_routes_check_oauth_only_before_credentials_or_writes() {
+        let source = include_str!("auth.rs");
+        let register = source
+            .split_once("pub async fn register(")
+            .expect("register handler exists")
+            .1
+            .split_once("/// 登录请求")
+            .expect("register handler has a stable end")
+            .0;
+        let login = source
+            .split_once("pub async fn login(")
+            .expect("login handler exists")
+            .1
+            .split_once("/// 刷新令牌请求")
+            .expect("login handler has a stable end")
+            .0;
+
+        let register_gate = register
+            .find("AUTH_OAUTH_ONLY")
+            .expect("register checks auth mode");
+        let register_write = register
+            .find("create_password_user_tx")
+            .expect("register persists a password user");
+        assert!(register_gate < register_write);
+
+        let login_gate = login
+            .find("AUTH_OAUTH_ONLY")
+            .expect("login checks auth mode");
+        let credential_lookup = login
+            .find("find_by_username")
+            .expect("login looks up credentials");
+        assert!(login_gate < credential_lookup);
+        assert!(login.contains("AUTH_PASSWORD_DISABLED"));
+    }
 }

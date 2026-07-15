@@ -94,6 +94,7 @@ where
 fn status_for(code: &str) -> StatusCode {
     match code {
         "bad_request" => StatusCode::BAD_REQUEST,
+        "AUTH_PASSWORD_DISABLED" | "AUTH_REGISTRATION_CLOSED" => StatusCode::FORBIDDEN,
         "SEARCH_REQUEST_INVALID"
         | "SEARCH_LIMIT_INVALID"
         | "SEARCH_CONDITION_FIELD_INVALID"
@@ -193,6 +194,11 @@ mod tests {
         assert_eq!(status_for("not_found"), StatusCode::NOT_FOUND);
         assert_eq!(status_for("conflict"), StatusCode::CONFLICT);
         assert_eq!(status_for("SEARCH_CURSOR_INVALID"), StatusCode::BAD_REQUEST);
+        assert_eq!(status_for("AUTH_PASSWORD_DISABLED"), StatusCode::FORBIDDEN);
+        assert_eq!(
+            status_for("AUTH_REGISTRATION_CLOSED"),
+            StatusCode::FORBIDDEN
+        );
         assert_eq!(
             status_for("PROJECT_SEARCH_REBUILDING"),
             StatusCode::CONFLICT

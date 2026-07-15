@@ -17,6 +17,38 @@
     "cancel": "取消",
     "search": "搜索"
   },
+  "auth": {
+    "required": "必填",
+    "retry": "重试",
+    "configLoadFailed": "无法读取当前登录方式，已安全停用认证表单。",
+    "login": {
+      "title": "登录终端",
+      "username": "用户名 / 邮箱",
+      "password": "密码",
+      "submit": "登录",
+      "failed": "登录失败",
+      "zoot": "用 ZOOT 账号登录",
+      "zootUnavailable": "ZOOT 登录暂不可用",
+      "or": "或",
+      "noMethods": "当前没有可用的登录方式，请联系平台管理员。",
+      "noAccount": "还没有账号？",
+      "registerLink": "注册"
+    },
+    "register": {
+      "title": "注册账号",
+      "username": "用户名",
+      "usernameHint": "3–32 个字符",
+      "email": "邮箱（可选）",
+      "password": "密码",
+      "passwordHint": "至少 8 个字符",
+      "submit": "注册",
+      "success": "注册成功，已登录",
+      "failed": "注册失败（用户名或邮箱可能已被占用）",
+      "disabled": "当前未开放账号密码注册，请使用已启用的登录方式。",
+      "hasAccount": "已有账号？",
+      "loginLink": "登录"
+    }
+  },
   "profile": {
     "password": {
       "title": "修改密码",

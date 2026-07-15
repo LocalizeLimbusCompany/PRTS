@@ -70,6 +70,13 @@ export interface TokenResponse {
   user: UserDto
 }
 
+/** 登录与注册页可安全使用的公开认证能力。 */
+export interface AuthConfigDto {
+  password_login_enabled: boolean
+  password_registration_enabled: boolean
+  oauth_providers: string[]
+}
+
 export interface ProjectDto {
   id: number
   slug: string
