@@ -10,7 +10,8 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const $q = useQuasar()
-const { t } = useI18n()
+const { locale, t } = useI18n()
+const localizedLangLabel = (code: string) => langLabel(code, locale.value)
 
 const desc = ref('')
 const langs = ref<string[]>([])
@@ -35,9 +36,9 @@ async function saveProfile() {
   try {
     await usersApi.updateMe({ description: desc.value, translation_langs: langs.value })
     await auth.refreshMe()
-    $q.notify({ type: 'positive', message: '资料已保存' })
+    $q.notify({ type: 'positive', message: t('profile.saved') })
   } catch (e) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(e, '保存失败') })
+    $q.notify({ type: 'negative', message: apiErrorMessage(e, t('profile.saveFailed')) })
   } finally {
     saving.value = false
   }
@@ -104,13 +105,13 @@ async function createKey() {
       last_used_at: null,
     })
   } catch (e) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(e, '创建失败') })
+    $q.notify({ type: 'negative', message: apiErrorMessage(e, t('profile.apiKeys.createFailed')) })
   }
 }
 function copyKey() {
   if (createdKey.value) {
     navigator.clipboard?.writeText(createdKey.value)
-    $q.notify({ type: 'positive', message: '已复制', timeout: 800 })
+    $q.notify({ type: 'positive', message: t('common.copied'), timeout: 800 })
   }
 }
 async function revokeKey(id: number) {
@@ -126,7 +127,7 @@ async function revokeKey(id: number) {
 <template>
   <q-page class="prts-container prts-container--narrow">
     <div class="prts-label">// OPERATOR</div>
-    <h1 class="prts-h1 q-mb-lg">个人主页</h1>
+    <h1 class="prts-h1 q-mb-lg">{{ t('profile.title') }}</h1>
 
     <q-card flat bordered class="q-pa-lg q-mb-lg">
       <div class="row items-center q-gutter-md">
@@ -142,16 +143,9 @@ async function revokeKey(id: number) {
               v-if="auth.role"
               color="primary"
               text-color="dark"
-              :label="roleLabel(auth.role)"
+              :label="roleLabel(auth.role, t)"
             />
           </div>
-        </div>
-        <q-space />
-        <div class="text-center">
-          <div class="prts-display text-accent" style="font-size: 28px">
-            {{ Math.round((auth.user?.cp_tenths ?? 0) / 10) }}
-          </div>
-          <div class="prts-label">贡献分 CP</div>
         </div>
       </div>
 
@@ -159,11 +153,11 @@ async function revokeKey(id: number) {
 
       <div class="column q-gutter-md">
         <div class="fld">
-          <div class="prts-label q-mb-xs">个人描述</div>
+          <div class="prts-label q-mb-xs">{{ t('profile.description') }}</div>
           <q-input v-model="desc" outlined dense type="textarea" autogrow :disable="saving" />
         </div>
         <div class="fld">
-          <div class="prts-label q-mb-xs">翻译语言偏好</div>
+          <div class="prts-label q-mb-xs">{{ t('profile.translationLanguages') }}</div>
           <q-select
             v-model="langs"
             outlined
@@ -174,7 +168,7 @@ async function revokeKey(id: number) {
             input-debounce="0"
             new-value-mode="add-unique"
             :options="COMMON_LANGS"
-            :option-label="langLabel"
+            :option-label="localizedLangLabel"
             :disable="saving"
           />
         </div>
@@ -184,7 +178,7 @@ async function revokeKey(id: number) {
             no-caps
             color="primary"
             text-color="dark"
-            label="保存资料"
+            :label="t('profile.save')"
             :loading="saving"
             @click="saveProfile"
           />
@@ -248,7 +242,7 @@ async function revokeKey(id: number) {
     </q-card>
 
     <!-- linked accounts -->
-    <div class="prts-label q-mb-sm">关联账号</div>
+    <div class="prts-label q-mb-sm">{{ t('profile.linkedAccounts') }}</div>
     <q-card flat bordered class="q-mb-lg">
       <q-list v-if="accounts.length" separator>
         <q-item v-for="a in accounts" :key="a.provider + a.external_id">
@@ -259,14 +253,24 @@ async function revokeKey(id: number) {
           </q-item-section>
         </q-item>
       </q-list>
-      <div v-else class="prts-empty" style="padding: 30px">暂无关联账号</div>
+      <div v-else class="prts-empty" style="padding: 30px">
+        {{ t('profile.noLinkedAccounts') }}
+      </div>
     </q-card>
 
     <!-- api keys -->
     <div class="row items-center q-mb-sm">
       <div class="prts-label">API KEY</div>
       <q-space />
-      <q-btn flat dense no-caps size="sm" icon="mdi-plus" label="新建" @click="openCreate" />
+      <q-btn
+        flat
+        dense
+        no-caps
+        size="sm"
+        icon="mdi-plus"
+        :label="t('profile.apiKeys.new')"
+        @click="openCreate"
+      />
     </div>
     <q-card flat bordered>
       <q-list v-if="keys.length" separator>
@@ -274,7 +278,7 @@ async function revokeKey(id: number) {
           <q-item-section>
             <q-item-label>{{ k.name }}</q-item-label>
             <q-item-label caption class="prts-mono"
-              >{{ k.prefix }}··· · 创建于
+              >{{ k.prefix }}··· · {{ t('profile.apiKeys.createdAt') }}
               {{ new Date(k.created_at).toLocaleDateString() }}</q-item-label
             >
           </q-item-section>
@@ -291,26 +295,30 @@ async function revokeKey(id: number) {
           </q-item-section>
         </q-item>
       </q-list>
-      <div v-else class="prts-empty" style="padding: 30px">暂无 API Key</div>
+      <div v-else class="prts-empty" style="padding: 30px">
+        {{ t('profile.apiKeys.empty') }}
+      </div>
     </q-card>
 
     <q-dialog v-model="showCreate">
       <q-card style="width: 440px; max-width: 92vw">
-        <q-card-section><div class="prts-h2">新建 API Key</div></q-card-section>
+        <q-card-section
+          ><div class="prts-h2">{{ t('profile.apiKeys.new') }}</div></q-card-section
+        >
         <q-card-section>
           <template v-if="!createdKey">
             <q-input
               v-model="newKeyName"
               outlined
               dense
-              label="名称"
+              :label="t('profile.apiKeys.name')"
               autofocus
               @keyup.enter="createKey"
             />
           </template>
           <template v-else>
             <div class="prts-dim q-mb-sm" style="font-size: 13px">
-              请立即复制，密钥仅显示这一次：
+              {{ t('profile.apiKeys.copyNow') }}
             </div>
             <q-input :model-value="createdKey" readonly outlined dense input-class="prts-mono">
               <template #append
@@ -320,17 +328,17 @@ async function revokeKey(id: number) {
           </template>
         </q-card-section>
         <q-card-actions align="right">
-          <q-btn v-if="!createdKey" v-close-popup flat no-caps label="取消" />
+          <q-btn v-if="!createdKey" v-close-popup flat no-caps :label="t('common.cancel')" />
           <q-btn
             v-if="!createdKey"
             unelevated
             no-caps
             color="primary"
             text-color="dark"
-            label="创建"
+            :label="t('common.create')"
             @click="createKey"
           />
-          <q-btn v-else v-close-popup flat no-caps color="primary" label="完成" />
+          <q-btn v-else v-close-popup flat no-caps color="primary" :label="t('common.done')" />
         </q-card-actions>
       </q-card>
     </q-dialog>

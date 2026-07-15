@@ -66,7 +66,7 @@ async function logout() {
           dense
           class="prts-navbtn q-ml-md"
           :to="{ name: 'projects' }"
-          label="项目"
+          :label="t('app.projects')"
         />
         <q-btn
           v-if="auth.isAdmin"
@@ -75,7 +75,7 @@ async function logout() {
           dense
           class="prts-navbtn"
           :to="{ name: 'admin' }"
-          label="管理"
+          :label="t('app.admin')"
         />
 
         <q-space />
@@ -94,7 +94,7 @@ async function logout() {
           <q-badge v-if="messagesUnread > 0" color="negative" floating rounded>
             {{ messagesUnread }}
           </q-badge>
-          <q-tooltip>私信</q-tooltip>
+          <q-tooltip>{{ t('app.messages') }}</q-tooltip>
         </q-btn>
 
         <q-btn
@@ -105,7 +105,9 @@ async function logout() {
           :icon="$q.dark.isActive ? 'mdi-weather-night' : 'mdi-white-balance-sunny'"
           @click="toggleTheme"
         >
-          <q-tooltip>切换{{ $q.dark.isActive ? '浅色' : '深色' }}主题</q-tooltip>
+          <q-tooltip>{{
+            t($q.dark.isActive ? 'app.switchToLightTheme' : 'app.switchToDarkTheme')
+          }}</q-tooltip>
         </q-btn>
 
         <template v-if="auth.isAuthed">
@@ -120,31 +122,31 @@ async function logout() {
             <q-list style="min-width: 168px">
               <q-item v-close-popup clickable :to="{ name: 'me' }">
                 <q-item-section avatar><q-icon name="mdi-account-outline" /></q-item-section>
-                <q-item-section>个人主页</q-item-section>
+                <q-item-section>{{ t('app.profile') }}</q-item-section>
               </q-item>
               <q-item v-close-popup clickable :to="{ name: 'messages' }">
                 <q-item-section avatar><q-icon name="mdi-email-outline" /></q-item-section>
-                <q-item-section>私信</q-item-section>
+                <q-item-section>{{ t('app.messages') }}</q-item-section>
                 <q-item-section v-if="messagesUnread > 0" side>
                   <q-badge color="negative" rounded>{{ messagesUnread }}</q-badge>
                 </q-item-section>
               </q-item>
               <q-item v-if="auth.isAdmin" v-close-popup clickable :to="{ name: 'admin' }">
                 <q-item-section avatar><q-icon name="mdi-shield-outline" /></q-item-section>
-                <q-item-section>管理后台</q-item-section>
+                <q-item-section>{{ t('app.adminPanel') }}</q-item-section>
               </q-item>
               <q-separator />
               <q-item v-close-popup clickable @click="logout">
                 <q-item-section avatar
                   ><q-icon name="mdi-logout" color="negative"
                 /></q-item-section>
-                <q-item-section class="text-negative">登出</q-item-section>
+                <q-item-section class="text-negative">{{ t('app.logout') }}</q-item-section>
               </q-item>
             </q-list>
           </q-btn-dropdown>
         </template>
         <template v-else>
-          <q-btn flat no-caps :to="{ name: 'login' }" label="登录" />
+          <q-btn flat no-caps :to="{ name: 'login' }" :label="t('app.login')" />
           <q-btn
             unelevated
             no-caps
@@ -152,7 +154,7 @@ async function logout() {
             text-color="dark"
             class="q-ml-sm"
             :to="{ name: 'register' }"
-            label="注册"
+            :label="t('app.register')"
           />
         </template>
       </q-toolbar>

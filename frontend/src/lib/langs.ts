@@ -1,25 +1,34 @@
-// 常用 BCP-47 语言（可在选择器里自定义补充）。
+// 常用 BCP-47 语言（可在选择器里自定义补充）。显示名交给浏览器按当前界面语言生成。
+export const COMMON_LANGS = [
+  'en',
+  'ja',
+  'ko',
+  'zh-Hans',
+  'zh-Hant',
+  'fr',
+  'de',
+  'es',
+  'ru',
+  'it',
+  'pt',
+  'vi',
+  'th',
+  'ar',
+]
 
-export const LANG_LABELS: Record<string, string> = {
-  en: '英语',
-  ja: '日语',
-  ko: '韩语',
-  'zh-Hans': '简体中文',
-  'zh-Hant': '繁体中文',
-  fr: '法语',
-  de: '德语',
-  es: '西班牙语',
-  ru: '俄语',
-  it: '意大利语',
-  pt: '葡萄牙语',
-  vi: '越南语',
-  th: '泰语',
-  ar: '阿拉伯语',
-}
+const displayNames = new Map<string, Intl.DisplayNames>()
 
-export const COMMON_LANGS = Object.keys(LANG_LABELS)
-
-export function langLabel(code: string): string {
-  const name = LANG_LABELS[code]
-  return name ? `${name} · ${code}` : code
+/** 使用当前界面 locale 显示语言名称，同时保留 canonical BCP-47 code。 */
+export function langLabel(code: string, locale: string): string {
+  try {
+    let formatter = displayNames.get(locale)
+    if (!formatter) {
+      formatter = new Intl.DisplayNames([locale], { type: 'language' })
+      displayNames.set(locale, formatter)
+    }
+    const name = formatter.of(code)
+    return name && name !== code ? `${name} · ${code}` : code
+  } catch {
+    return code
+  }
 }

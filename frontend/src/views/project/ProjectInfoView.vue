@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 import MarkdownView from '@/components/MarkdownView.vue'
 import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
@@ -8,7 +9,9 @@ import { langLabel } from '@/lib/langs'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
 
 const { detail } = useProjectWorkspace()
+const { locale } = useI18n()
 const project = computed(() => detail.value?.project)
+const localizedLangLabel = (code: string) => langLabel(code, locale.value)
 </script>
 
 <template>
@@ -33,7 +36,7 @@ const project = computed(() => detail.value?.project)
           <span class="prts-label">{{ $t('project.sourceLanguages') }}</span>
           <div class="project-info__tags">
             <q-chip v-for="language in project.source_langs" :key="language" square dense>
-              {{ langLabel(language) }} · {{ language }}
+              {{ localizedLangLabel(language) }}
               <q-tooltip v-if="language === project.primary_source_lang">
                 {{ $t('project.primarySource') }}
               </q-tooltip>
@@ -44,7 +47,7 @@ const project = computed(() => detail.value?.project)
         <div>
           <span class="prts-label">{{ $t('project.targetLanguage') }}</span>
           <div class="project-info__target text-accent">
-            {{ langLabel(project.target_lang) }} · {{ project.target_lang }}
+            {{ localizedLangLabel(project.target_lang) }}
           </div>
         </div>
       </div>

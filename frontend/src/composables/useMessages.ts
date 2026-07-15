@@ -3,6 +3,7 @@ import { Notify } from 'quasar'
 
 import { messagesApi, type ThreadDto } from '@/api'
 import { useUserStream, type UserStreamEvent } from '@/composables/useUserStream'
+import { i18n } from '@/i18n'
 
 // 模块级单例：会话列表 + 未读总数。App 根部登录后 refresh()，登出 reset()。
 const threads = ref<ThreadDto[]>([])
@@ -36,7 +37,7 @@ useUserStream().onEvent((msg: UserStreamEvent) => {
   const preview = (typeof msg.content === 'string' ? msg.content : '').slice(0, 40)
   Notify.create({
     type: 'info',
-    message: name ? `${name}: ${preview}` : preview || '收到新私信',
+    message: name ? `${name}: ${preview}` : preview || i18n.global.t('messages.received'),
     timeout: 4000,
   })
   // 刷新会话列表以更新该会话的最后一条 / 排序 / 未读徽标。

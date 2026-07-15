@@ -3,7 +3,17 @@
     "tagline": "翻译协作平台",
     "switchLang": "English",
     "passwordChangeRequired": "此账号由管理员创建，请尽快修改初始密码。提醒不会阻止你继续使用其它功能。",
-    "changePassword": "修改密码"
+    "changePassword": "修改密码",
+    "projects": "项目",
+    "admin": "管理",
+    "messages": "私信",
+    "switchToLightTheme": "切换到浅色主题",
+    "switchToDarkTheme": "切换到深色主题",
+    "profile": "个人主页",
+    "adminPanel": "管理后台",
+    "logout": "登出",
+    "login": "登录",
+    "register": "注册"
   },
   "markdown": {
     "write": "编辑",
@@ -15,12 +25,35 @@
     "yes": "是",
     "no": "否",
     "cancel": "取消",
-    "search": "搜索"
+    "search": "搜索",
+    "create": "创建",
+    "done": "完成",
+    "copied": "已复制",
+    "close": "关闭",
+    "requestFailed": "请求失败",
+    "operationFailed": "操作失败",
+    "loadFailed": "加载失败"
+  },
+  "roles": {
+    "owner": "拥有者",
+    "manager": "管理",
+    "reviewer": "校对",
+    "translator": "翻译",
+    "super_admin": "总管理员",
+    "admin": "管理员",
+    "maintainer": "维护者"
   },
   "auth": {
     "required": "必填",
     "retry": "重试",
     "configLoadFailed": "无法读取当前登录方式，已安全停用认证表单。",
+    "oauth": {
+      "invalidToken": "登录令牌无效",
+      "missingToken": "登录回调缺少令牌",
+      "failed": "登录失败",
+      "backToLogin": "返回登录",
+      "completing": "正在完成 ZOOT 登录…"
+    },
     "login": {
       "title": "登录终端",
       "username": "用户名 / 邮箱",
@@ -50,6 +83,22 @@
     }
   },
   "profile": {
+    "title": "个人主页",
+    "description": "个人描述",
+    "translationLanguages": "翻译语言偏好",
+    "save": "保存资料",
+    "saved": "资料已保存",
+    "saveFailed": "保存失败",
+    "linkedAccounts": "关联账号",
+    "noLinkedAccounts": "暂无关联账号",
+    "apiKeys": {
+      "new": "新建 API Key",
+      "createdAt": "创建于",
+      "empty": "暂无 API Key",
+      "name": "名称",
+      "copyNow": "请立即复制，密钥仅显示这一次：",
+      "createFailed": "API Key 创建失败"
+    },
     "password": {
       "title": "修改密码",
       "description": "修改后请使用新密码登录。当前会话和其它功能不会被首次改密提醒阻断。",
@@ -63,6 +112,21 @@
       "changed": "密码已修改",
       "changeFailed": "密码修改失败"
     }
+  },
+  "projects": {
+    "title": "项目",
+    "new": "新建项目",
+    "public": "公开",
+    "mine": "我参与的",
+    "empty": "暂无项目",
+    "created": "项目已创建",
+    "createFailed": "项目创建失败",
+    "name": "项目名",
+    "slugHint": "Slug（可选，留空自动生成）",
+    "description": "描述（可选）",
+    "sourceLanguages": "源语言（可多选 / 自定义 BCP-47）",
+    "targetLanguage": "目标语言（单一）",
+    "makePrivate": "设为私有项目"
   },
   "project": {
     "workspaceNav": "项目工作区导航",
@@ -496,7 +560,26 @@
     "forceHint": "他人正在编辑，强制保存（仍按版本冲突校验）",
     "othersEditingHint": "他人正在编辑此词条",
     "editingNow": "正在编辑",
-    "taskScope": "任务 #{id}"
+    "taskScope": "任务 #{id}",
+    "saved": "已保存",
+    "versionConflict": "该词条已被他人修改，已刷新为最新版本",
+    "saveFailed": "保存失败",
+    "backToProject": "返回项目",
+    "searching": "搜索中",
+    "collaborating": "协作中：{names}",
+    "relevancePercent": "相关度 {value}%",
+    "noSearchResults": "未找到相关词条",
+    "entryList": "词条列表",
+    "selectFromList": "从列表选择一个词条开始翻译",
+    "selectFromLeft": "从左侧选择一个词条开始翻译",
+    "history": "历史",
+    "lock": "锁定",
+    "unlock": "解锁",
+    "hide": "隐藏",
+    "unhide": "取消隐藏",
+    "translation": "译文",
+    "entryHistory": "词条历史",
+    "noHistory": "暂无历史"
   },
   "admin": {
     "title": "管理后台",
@@ -589,7 +672,8 @@
     "justNow": "刚刚",
     "minutesAgo": "{n} 分钟前",
     "hoursAgo": "{n} 小时前",
-    "daysAgo": "{n} 天前"
+    "daysAgo": "{n} 天前",
+    "received": "收到新通知"
   },
   "poke": {
     "composeTitle": "向 {name} 发送提示",
@@ -605,7 +689,8 @@
     "send": "发送",
     "placeholder": "输入消息……（2000 字以内，Enter 发送，Shift+Enter 换行）",
     "loadEarlier": "加载更早",
-    "unread": "未读"
+    "unread": "未读",
+    "received": "收到新私信"
   },
   "dm": {
     "entry": "发私信"

@@ -3,7 +3,17 @@
     "tagline": "Localization Platform",
     "switchLang": "中文",
     "passwordChangeRequired": "This account was created by an administrator. Please change the initial password soon; the reminder does not block other features.",
-    "changePassword": "Change password"
+    "changePassword": "Change password",
+    "projects": "Projects",
+    "admin": "Admin",
+    "messages": "Messages",
+    "switchToLightTheme": "Switch to light theme",
+    "switchToDarkTheme": "Switch to dark theme",
+    "profile": "Profile",
+    "adminPanel": "Admin panel",
+    "logout": "Log out",
+    "login": "Log in",
+    "register": "Register"
   },
   "markdown": {
     "write": "Write",
@@ -15,12 +25,35 @@
     "yes": "Yes",
     "no": "No",
     "cancel": "Cancel",
-    "search": "Search"
+    "search": "Search",
+    "create": "Create",
+    "done": "Done",
+    "copied": "Copied",
+    "close": "Close",
+    "requestFailed": "Request failed",
+    "operationFailed": "Operation failed",
+    "loadFailed": "Failed to load"
+  },
+  "roles": {
+    "owner": "Owner",
+    "manager": "Manager",
+    "reviewer": "Reviewer",
+    "translator": "Translator",
+    "super_admin": "Super admin",
+    "admin": "Admin",
+    "maintainer": "Maintainer"
   },
   "auth": {
     "required": "Required",
     "retry": "Retry",
     "configLoadFailed": "The available sign-in methods could not be loaded. Authentication forms have been disabled for safety.",
+    "oauth": {
+      "invalidToken": "The sign-in token is invalid",
+      "missingToken": "The sign-in callback did not include tokens",
+      "failed": "Sign-in failed",
+      "backToLogin": "Back to sign in",
+      "completing": "Completing ZOOT sign-in…"
+    },
     "login": {
       "title": "Sign in",
       "username": "Username / email",
@@ -50,6 +83,22 @@
     }
   },
   "profile": {
+    "title": "Profile",
+    "description": "Profile description",
+    "translationLanguages": "Preferred translation languages",
+    "save": "Save profile",
+    "saved": "Profile saved",
+    "saveFailed": "Failed to save profile",
+    "linkedAccounts": "Linked accounts",
+    "noLinkedAccounts": "No linked accounts",
+    "apiKeys": {
+      "new": "New API key",
+      "createdAt": "Created",
+      "empty": "No API keys",
+      "name": "Name",
+      "copyNow": "Copy this key now. It will only be shown once:",
+      "createFailed": "Failed to create API key"
+    },
     "password": {
       "title": "Change password",
       "description": "Use the new password for future sign-ins. The initial-password reminder does not block this session or other features.",
@@ -63,6 +112,21 @@
       "changed": "Password changed",
       "changeFailed": "Failed to change password"
     }
+  },
+  "projects": {
+    "title": "Projects",
+    "new": "New project",
+    "public": "Public",
+    "mine": "My projects",
+    "empty": "No projects",
+    "created": "Project created",
+    "createFailed": "Failed to create project",
+    "name": "Project name",
+    "slugHint": "Slug (optional; generated when empty)",
+    "description": "Description (optional)",
+    "sourceLanguages": "Source languages (multiple/custom BCP-47 allowed)",
+    "targetLanguage": "Target language (one)",
+    "makePrivate": "Make this project private"
   },
   "project": {
     "workspaceNav": "Project workspace navigation",
@@ -496,7 +560,26 @@
     "forceHint": "Someone is editing; force-save (still version-checked)",
     "othersEditingHint": "Someone is editing this entry",
     "editingNow": "editing now",
-    "taskScope": "Task #{id}"
+    "taskScope": "Task #{id}",
+    "saved": "Saved",
+    "versionConflict": "Another user changed this entry. The latest version has been loaded.",
+    "saveFailed": "Failed to save",
+    "backToProject": "Back to project",
+    "searching": "Searching",
+    "collaborating": "Collaborating: {names}",
+    "relevancePercent": "Relevance {value}%",
+    "noSearchResults": "No relevant entries found",
+    "entryList": "Entry list",
+    "selectFromList": "Select an entry from the list to start translating",
+    "selectFromLeft": "Select an entry on the left to start translating",
+    "history": "History",
+    "lock": "Lock",
+    "unlock": "Unlock",
+    "hide": "Hide",
+    "unhide": "Unhide",
+    "translation": "Translation",
+    "entryHistory": "Entry history",
+    "noHistory": "No history"
   },
   "admin": {
     "title": "Administration",
@@ -589,7 +672,8 @@
     "justNow": "just now",
     "minutesAgo": "{n} min ago",
     "hoursAgo": "{n} hr ago",
-    "daysAgo": "{n} d ago"
+    "daysAgo": "{n} d ago",
+    "received": "New notification received"
   },
   "poke": {
     "composeTitle": "Send a poke to {name}",
@@ -605,7 +689,8 @@
     "send": "Send",
     "placeholder": "Type a message… (up to 2000 chars; Enter to send, Shift+Enter for newline)",
     "loadEarlier": "Load earlier",
-    "unread": "Unread"
+    "unread": "Unread",
+    "received": "New message received"
   },
   "dm": {
     "entry": "Message"

@@ -24,7 +24,7 @@ import {
   type SuggestionDto,
   type TermDto,
 } from '@/api'
-import { STATE_LABELS, STATE_ORDER, stateLabel } from '@/lib/states'
+import { STATE_ORDER, stateLabel } from '@/lib/states'
 import {
   canOpenPresenceMenu,
   shouldConnectProjectRealtime,
@@ -60,7 +60,7 @@ const canEdit = computed(() => capabilities.value?.edit_entry === true)
 const canForcePresence = computed(() => capabilities.value?.force_save_presence === true)
 const stateOptions = computed(() =>
   STATE_ORDER.map((state) => ({
-    label: STATE_LABELS[state] ?? state,
+    label: stateLabel(state, t),
     value: state,
     disable: ['checked', 'reviewed'].includes(state) ? !canReview.value : !canEdit.value,
   })),
@@ -72,7 +72,7 @@ const currentTaskId = ref<number | null>(route.query.task ? Number(route.query.t
 const isTaskScope = computed(() => currentTaskId.value !== null)
 const includeHidden = ref(false)
 const fileOptions = computed(() => [
-  { label: '全部文件', value: null as number | null },
+  { label: t('editor.scopeAll'), value: null as number | null },
   ...files.value.map((f) => ({ label: f.path, value: f.id })),
 ])
 
@@ -293,17 +293,17 @@ async function save() {
     })
     draftState.value = targetState // 推进后同步下拉
     applyUpdated(updated)
-    $q.notify({ type: 'positive', message: '已保存', timeout: 900 })
+    $q.notify({ type: 'positive', message: t('editor.saved'), timeout: 900 })
     selectNext()
   } catch (e) {
     const err = e as { response?: { status?: number } }
     if (err.response?.status === 409) {
-      $q.notify({ type: 'warning', message: '该词条已被他人修改，已刷新为最新' })
+      $q.notify({ type: 'warning', message: t('editor.versionConflict') })
       const fresh = await entriesApi.get(props.id, selected.value.id)
       applyUpdated(fresh)
       select(fresh)
     } else {
-      $q.notify({ type: 'negative', message: apiErrorMessage(e, '保存失败') })
+      $q.notify({ type: 'negative', message: apiErrorMessage(e, t('editor.saveFailed')) })
     }
   } finally {
     saving.value = false
@@ -418,7 +418,7 @@ async function toggleFlag(flag: 'locked' | 'hidden') {
     const updated = await entriesApi.setFlags(props.id, selected.value.id, body)
     applyUpdated(updated)
   } catch (e) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(e, '操作失败') })
+    $q.notify({ type: 'negative', message: apiErrorMessage(e, t('common.operationFailed')) })
   }
 }
 
@@ -447,7 +447,7 @@ onMounted(async () => {
     files.value = tree.files
     members.value = mem
   } catch (e) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(e, '加载失败') })
+    $q.notify({ type: 'negative', message: apiErrorMessage(e, t('common.loadFailed')) })
   }
   await resetAndLoad()
 })
@@ -464,7 +464,7 @@ onMounted(async () => {
         icon="mdi-arrow-left"
         :to="{ name: 'project-info', params: { id: props.id } }"
       >
-        <q-tooltip>返回项目</q-tooltip>
+        <q-tooltip>{{ t('editor.backToProject') }}</q-tooltip>
       </q-btn>
       <div class="prts-display ellipsis editor-title">{{ project?.name ?? '…' }}</div>
       <q-select
@@ -488,7 +488,12 @@ onMounted(async () => {
       >
         {{ $t('editor.taskScope', { id: currentTaskId }) }}
       </q-chip>
-      <q-toggle v-if="canHide && !isTaskScope" v-model="includeHidden" label="含隐藏" dense />
+      <q-toggle
+        v-if="canHide && !isTaskScope"
+        v-model="includeHidden"
+        :label="t('editor.includeHidden')"
+        dense
+      />
       <!-- 搜索模式指示徽标 -->
       <q-chip
         v-if="isSearchMode"
@@ -498,7 +503,7 @@ onMounted(async () => {
         text-color="dark"
         icon="mdi-file-search-outline"
       >
-        搜索中
+        {{ t('editor.searching') }}
       </q-chip>
       <q-chip
         v-if="onlineUsers.length"
@@ -510,7 +515,9 @@ onMounted(async () => {
         class="prts-mono"
       >
         {{ onlineUsers.length }}
-        <q-tooltip v-if="onlineNames.length">协作中：{{ onlineNames.join('、') }}</q-tooltip>
+        <q-tooltip v-if="onlineNames.length">{{
+          t('editor.collaborating', { names: onlineNames.join(', ') })
+        }}</q-tooltip>
       </q-chip>
     </div>
 
@@ -544,7 +551,7 @@ onMounted(async () => {
               <span
                 v-if="isHit(item)"
                 class="relevance-badge"
-                :title="'相关度 ' + relevancePct(item.rrf_score) + '%'"
+                :title="t('editor.relevancePercent', { value: relevancePct(item.rrf_score) })"
               >
                 {{ relevancePct(item.rrf_score) }}%
               </span>
@@ -626,7 +633,7 @@ onMounted(async () => {
           <q-spinner color="primary" size="20px" />
         </div>
         <div v-else-if="entries.length === 0" class="prts-empty">
-          {{ isSearchMode ? '未找到相关词条' : '无匹配词条' }}
+          {{ t(isSearchMode ? 'editor.noSearchResults' : 'editor.noResults') }}
         </div>
       </div>
 
@@ -638,12 +645,12 @@ onMounted(async () => {
           dense
           no-caps
           icon="mdi-arrow-left"
-          label="词条列表"
+          :label="t('editor.entryList')"
           class="q-ma-sm"
           @click="mobilePanel = false"
         />
         <div v-if="!selected" class="prts-empty" style="padding-top: 100px">
-          从{{ isNarrow ? '列表' : '左侧' }}选择一个词条开始翻译
+          {{ t(isNarrow ? 'editor.selectFromList' : 'editor.selectFromLeft') }}
         </div>
         <div v-else class="panel">
           <div class="row items-center q-mb-sm">
@@ -653,7 +660,7 @@ onMounted(async () => {
             </div>
             <q-space />
             <q-btn flat dense round size="sm" icon="mdi-history" @click="openHistory">
-              <q-tooltip>历史</q-tooltip>
+              <q-tooltip>{{ t('editor.history') }}</q-tooltip>
             </q-btn>
             <q-btn
               v-if="canLock"
@@ -665,7 +672,7 @@ onMounted(async () => {
               :color="selected.locked ? 'amber' : undefined"
               @click="toggleFlag('locked')"
             >
-              <q-tooltip>{{ selected.locked ? '解锁' : '锁定' }}</q-tooltip>
+              <q-tooltip>{{ t(selected.locked ? 'editor.unlock' : 'editor.lock') }}</q-tooltip>
             </q-btn>
             <q-btn
               v-if="canHide"
@@ -676,7 +683,7 @@ onMounted(async () => {
               :icon="selected.hidden ? 'visibility_off' : 'visibility'"
               @click="toggleFlag('hidden')"
             >
-              <q-tooltip>{{ selected.hidden ? '取消隐藏' : '隐藏' }}</q-tooltip>
+              <q-tooltip>{{ t(selected.hidden ? 'editor.unhide' : 'editor.hide') }}</q-tooltip>
             </q-btn>
           </div>
 
@@ -687,7 +694,9 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="prts-label q-mt-md q-mb-xs">译文 → {{ project?.target_lang }}</div>
+          <div class="prts-label q-mt-md q-mb-xs">
+            {{ t('editor.translation') }} → {{ project?.target_lang }}
+          </div>
           <q-input
             v-model="draft"
             type="textarea"
@@ -752,7 +761,9 @@ onMounted(async () => {
     <!-- history dialog -->
     <q-dialog v-model="showHistory">
       <q-card style="width: 560px; max-width: 94vw">
-        <q-card-section><div class="prts-h2">词条历史</div></q-card-section>
+        <q-card-section
+          ><div class="prts-h2">{{ t('editor.entryHistory') }}</div></q-card-section
+        >
         <q-card-section style="max-height: 60vh; overflow: auto">
           <q-timeline v-if="history.length" color="primary">
             <q-timeline-entry
@@ -764,15 +775,15 @@ onMounted(async () => {
                 <span class="prts-mono" style="font-size: 13px"
                   >v{{ h.version }} · {{ h.kind }}</span
                 >
-                <q-badge v-if="h.state" outline class="q-ml-sm" :label="stateLabel(h.state)" />
+                <q-badge v-if="h.state" outline class="q-ml-sm" :label="stateLabel(h.state, t)" />
               </template>
               <div v-if="h.translation" class="prts-translation">{{ h.translation }}</div>
             </q-timeline-entry>
           </q-timeline>
-          <div v-else class="prts-empty">暂无历史</div>
+          <div v-else class="prts-empty">{{ t('editor.noHistory') }}</div>
         </q-card-section>
         <q-card-actions align="right"
-          ><q-btn v-close-popup flat no-caps label="关闭"
+          ><q-btn v-close-popup flat no-caps :label="t('common.close')"
         /></q-card-actions>
       </q-card>
     </q-dialog>

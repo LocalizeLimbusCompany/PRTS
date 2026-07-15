@@ -3,6 +3,7 @@ import { Notify } from 'quasar'
 
 import { notificationsApi, type NotificationDto } from '@/api'
 import { useUserStream, type UserStreamEvent } from '@/composables/useUserStream'
+import { i18n } from '@/i18n'
 
 // 模块级单例状态：App 根部启动一次，<NotificationBell> 等组件复用同一份状态，
 // 避免每个使用方各开一条连接，也省去 provide/inject 样板。
@@ -31,7 +32,7 @@ useUserStream().onEvent((msg: UserStreamEvent) => {
     const text = typeof payload.text === 'string' ? payload.text : ''
     Notify.create({ type: 'info', message: `${from}: ${text}`, timeout: 5000 })
   } else {
-    Notify.create({ type: 'info', message: '收到新通知', timeout: 3000 })
+    Notify.create({ type: 'info', message: i18n.global.t('notifications.received'), timeout: 3000 })
   }
 })
 

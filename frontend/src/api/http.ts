@@ -62,7 +62,10 @@ http.interceptors.response.use(
 )
 
 /** 从 axios 错误中提取后端的本地化消息。 */
-export function apiErrorMessage(error: unknown, fallback = '请求失败'): string {
+export function apiErrorMessage(
+  error: unknown,
+  fallback = i18n.global.t('common.requestFailed'),
+): string {
   const e = error as AxiosError<{ message?: string; code?: string }>
   return e?.response?.data?.message || e?.message || fallback
 }

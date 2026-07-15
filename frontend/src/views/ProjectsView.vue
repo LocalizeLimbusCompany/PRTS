@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
+import { useI18n } from 'vue-i18n'
 
 import { apiErrorMessage, projectsApi, type ProjectDto } from '@/api'
 import { COMMON_LANGS, langLabel } from '@/lib/langs'
@@ -10,6 +11,8 @@ import { useAuthStore } from '@/stores/auth'
 const auth = useAuthStore()
 const router = useRouter()
 const $q = useQuasar()
+const { locale, t } = useI18n()
+const localizedLangLabel = (code: string) => langLabel(code, locale.value)
 
 const tab = ref<'public' | 'mine'>('public')
 const projects = ref<ProjectDto[]>([])
@@ -65,10 +68,10 @@ async function create() {
       target_lang: form.value.target_lang,
     })
     showCreate.value = false
-    $q.notify({ type: 'positive', message: '项目已创建' })
+    $q.notify({ type: 'positive', message: t('projects.created') })
     router.push({ name: 'project-info', params: { id: p.id } })
   } catch (e) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(e, '创建失败') })
+    $q.notify({ type: 'negative', message: apiErrorMessage(e, t('projects.createFailed')) })
   } finally {
     creating.value = false
   }
@@ -80,7 +83,7 @@ async function create() {
     <div class="row items-center q-mb-lg">
       <div>
         <div class="prts-label">// PROJECTS</div>
-        <h1 class="prts-h1">项目</h1>
+        <h1 class="prts-h1">{{ t('projects.title') }}</h1>
       </div>
       <q-space />
       <q-btn
@@ -90,7 +93,7 @@ async function create() {
         color="primary"
         text-color="dark"
         icon="mdi-plus"
-        label="新建项目"
+        :label="t('projects.new')"
         @click="showCreate = true"
       />
     </div>
@@ -105,8 +108,8 @@ async function create() {
       class="q-mb-md prts-dim"
       style="max-width: 280px"
     >
-      <q-tab name="public" label="公开" />
-      <q-tab v-if="auth.isAuthed" name="mine" label="我参与的" />
+      <q-tab name="public" :label="t('projects.public')" />
+      <q-tab v-if="auth.isAuthed" name="mine" :label="t('projects.mine')" />
     </q-tabs>
 
     <div v-if="loading" class="row q-col-gutter-md">
@@ -114,7 +117,7 @@ async function create() {
         <q-skeleton height="116px" square />
       </div>
     </div>
-    <div v-else-if="projects.length === 0" class="prts-empty">暂无项目</div>
+    <div v-else-if="projects.length === 0" class="prts-empty">{{ t('projects.empty') }}</div>
     <div v-else class="row q-col-gutter-md">
       <div v-for="p in projects" :key="p.id" class="col-12 col-sm-6 col-md-4">
         <q-card
@@ -127,7 +130,12 @@ async function create() {
             <div class="row items-center no-wrap">
               <div class="prts-h2 ellipsis">{{ p.name }}</div>
               <q-space />
-              <q-badge v-if="p.visibility === 'private'" outline color="grey" label="私有" />
+              <q-badge
+                v-if="p.visibility === 'private'"
+                outline
+                color="grey"
+                :label="t('project.private')"
+              />
             </div>
             <div class="prts-mono prts-dim q-mt-xs" style="font-size: 11px">{{ p.slug }}</div>
             <div class="q-mt-sm row items-center prts-mono" style="font-size: 12px; gap: 6px">
@@ -149,13 +157,15 @@ async function create() {
 
     <q-dialog v-model="showCreate">
       <q-card style="width: 480px; max-width: 92vw">
-        <q-card-section><div class="prts-h2">新建项目</div></q-card-section>
+        <q-card-section
+          ><div class="prts-h2">{{ t('projects.new') }}</div></q-card-section
+        >
         <q-card-section class="column q-gutter-md">
           <q-input
             v-model="form.name"
             outlined
             dense
-            label="项目名"
+            :label="t('projects.name')"
             :disable="creating"
             autofocus
           />
@@ -163,7 +173,7 @@ async function create() {
             v-model="form.slug"
             outlined
             dense
-            label="Slug（可选，留空自动生成）"
+            :label="t('projects.slugHint')"
             :disable="creating"
           />
           <q-input
@@ -172,7 +182,7 @@ async function create() {
             dense
             type="textarea"
             autogrow
-            label="描述（可选）"
+            :label="t('projects.description')"
             :disable="creating"
           />
           <q-select
@@ -185,8 +195,8 @@ async function create() {
             input-debounce="0"
             new-value-mode="add-unique"
             :options="COMMON_LANGS"
-            :option-label="langLabel"
-            label="源语言（可多选 / 自定义 BCP-47）"
+            :option-label="localizedLangLabel"
+            :label="t('projects.sourceLanguages')"
             :disable="creating"
           />
           <q-select
@@ -207,20 +217,20 @@ async function create() {
             input-debounce="0"
             new-value-mode="add-unique"
             :options="COMMON_LANGS"
-            :option-label="langLabel"
-            label="目标语言（单一）"
+            :option-label="localizedLangLabel"
+            :label="t('projects.targetLanguage')"
             :disable="creating"
           />
-          <q-toggle v-model="isPrivate" label="设为私有项目" :disable="creating" />
+          <q-toggle v-model="isPrivate" :label="t('projects.makePrivate')" :disable="creating" />
         </q-card-section>
         <q-card-actions align="right">
-          <q-btn v-close-popup flat no-caps label="取消" :disable="creating" />
+          <q-btn v-close-popup flat no-caps :label="t('common.cancel')" :disable="creating" />
           <q-btn
             unelevated
             no-caps
             color="primary"
             text-color="dark"
-            label="创建"
+            :label="t('common.create')"
             :loading="creating"
             @click="create"
           />

@@ -12,7 +12,7 @@ import ProjectDeleteDialog from '@/components/project/ProjectDeleteDialog.vue'
 import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import { useJobProgress } from '@/composables/useJobProgress'
 import { hasProjectCapability } from '@/lib/capabilities'
-import { ROLE_LABELS, roleLabel } from '@/lib/states'
+import { roleLabel } from '@/lib/states'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
 
 const { detail, projectId, reload } = useProjectWorkspace()
@@ -515,7 +515,7 @@ async function cancelDeletion() {
             </q-item-section>
             <q-item-section>
               <q-item-label>{{ member.username }}</q-item-label>
-              <q-item-label caption>{{ roleLabel(member.role) }}</q-item-label>
+              <q-item-label caption>{{ roleLabel(member.role, t) }}</q-item-label>
             </q-item-section>
             <q-item-section side>
               <div class="row items-center no-wrap q-gutter-sm">
@@ -529,7 +529,7 @@ async function cancelDeletion() {
                   :options="
                     member.capabilities.assignable_roles.map((role) => ({
                       value: role,
-                      label: ROLE_LABELS[role] ?? role,
+                      label: roleLabel(role, t),
                     }))
                   "
                   :loading="savingMember === member.user_id"
@@ -606,7 +606,7 @@ async function cancelDeletion() {
             :options="
               detail?.capabilities.member_assignable_roles.map((role) => ({
                 value: role,
-                label: ROLE_LABELS[role] ?? role,
+                label: roleLabel(role, t),
               })) ?? []
             "
             :label="$t('project.members.role')"

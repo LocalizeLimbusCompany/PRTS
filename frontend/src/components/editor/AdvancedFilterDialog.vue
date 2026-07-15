@@ -117,7 +117,9 @@ const operatorOptions: Array<{ label: string; value: SearchOperator }> = [
   { label: t('editor.opEndsWith'), value: 'ends_with' },
   { label: t('editor.opEquals'), value: 'equals' },
 ]
-const stateOptions = ENTRY_STATES.map((state) => ({ label: stateLabel(state), value: state }))
+const stateOptions = computed(() =>
+  ENTRY_STATES.map((state) => ({ label: stateLabel(state, t), value: state })),
+)
 const fileOptions = computed(() =>
   props.files.map((file) => ({ label: file.path, value: file.id })),
 )

@@ -1,30 +1,24 @@
-// 词条状态的展示辅助。
-
-export const STATE_LABELS: Record<string, string> = {
-  untranslated: '未翻译',
-  translated: '已翻译',
-  questioned: '有疑问',
-  checked: '已检查',
-  reviewed: '已审核',
-}
-
 export const STATE_ORDER = ['untranslated', 'translated', 'questioned', 'checked', 'reviewed']
 
-export function stateLabel(s: string): string {
-  return STATE_LABELS[s] ?? s
+type Translator = (key: string) => string
+
+/** 词条状态显示只从当前 locale 的消息表读取。 */
+export function stateLabel(s: string, t: Translator): string {
+  return STATE_ORDER.includes(s) ? t(`project.states.${s}`) : s
 }
 
-/** 项目角色中文名。 */
-export const ROLE_LABELS: Record<string, string> = {
-  owner: '拥有者',
-  manager: '管理',
-  reviewer: '校对',
-  translator: '翻译',
-  super_admin: '总管理员',
-  admin: '管理员',
-  maintainer: '维护者',
-}
+const ROLE_KEYS = new Set([
+  'owner',
+  'manager',
+  'reviewer',
+  'translator',
+  'super_admin',
+  'admin',
+  'maintainer',
+])
 
-export function roleLabel(r: string | null | undefined): string {
-  return r ? (ROLE_LABELS[r] ?? r) : ''
+/** 平台与项目角色显示只从当前 locale 的消息表读取。 */
+export function roleLabel(r: string | null | undefined, t: Translator): string {
+  if (!r) return ''
+  return ROLE_KEYS.has(r) ? t(`roles.${r}`) : r
 }
