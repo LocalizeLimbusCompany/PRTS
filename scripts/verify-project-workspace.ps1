@@ -158,7 +158,7 @@ function Test-Contracts {
     Assert-True (-not (Test-Path -LiteralPath 'frontend/src/components/editor/TermSuggestions.vue')) 'Legacy term suggestions component is removed'
     Assert-Contains 'deploy/nginx/default.conf' 'location /swagger-ui' 'Swagger UI is publicly proxied by nginx'
     Assert-Contains 'deploy/nginx/default.conf' 'location /api-docs/' 'OpenAPI JSON is publicly proxied by nginx'
-    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0016_editor_collaboration.sql') '0016 editor collaboration is the newest migration'
+    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0017_editor_ai_terms_mobile.sql') '0017 editor AI, terminology and mobile migration is the newest migration'
 }
 
 function Test-ScaleRecoverySecurityContracts {
