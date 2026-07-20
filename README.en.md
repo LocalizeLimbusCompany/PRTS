@@ -20,7 +20,7 @@ PRTS is a **public, extensible, high-concurrency** online translation platform f
 - **Project / Folder / File / Entry** hierarchy designed for the 200k+ entries target through materialized statistics, keyset pagination, and bounded batches.
 - **Multiple source languages → one target language** (BCP-47, Hans/Hant aware), shown per user preference.
 - **Real-time collaborative editor** (WebSocket): presence, "someone is editing" hints, optimistic-lock conflict guard, a four-state workflow plus an independent questioned tag, optional pre-save translation diffs, clearer history, and mobile layouts.
-- **On-demand AI source explanation**: users or project owners can configure an OpenAI-compatible provider; an explicit click returns the overall meaning, deduplicated tokens, contextual meanings, parts of speech, and grammar.
+- **Streaming AI source explanation**: users or project owners can configure an OpenAI-compatible provider, thinking mode/effort, and maximum wait time; an explicit click streams phase, elapsed time, and token usage before returning overall meaning, deduplicated tokens, contextual meanings, parts of speech, and grammar.
 - **Enhanced terminology matching**: exact, `[]` placeholder, and regex source-only modes with validation/sample tools, built-in POS presets, and detailed editor term cards.
 - **Structured hybrid search**: POST tagged scopes, PostgreSQL full-text + trigram fuzzy + optional vector semantics (pgvector), RRF, and signed keyset cursors.
 - **Durable streaming uploads**: 500-file / 2GB batch contract, 100MB per-file limit, byte-zero retries, per-file atomic replacement, cancellation/expiry cleanup, and 30-day recoverable history.

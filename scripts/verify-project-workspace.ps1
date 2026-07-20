@@ -158,7 +158,12 @@ function Test-Contracts {
     Assert-True (-not (Test-Path -LiteralPath 'frontend/src/components/editor/TermSuggestions.vue')) 'Legacy term suggestions component is removed'
     Assert-Contains 'deploy/nginx/default.conf' 'location /swagger-ui' 'Swagger UI is publicly proxied by nginx'
     Assert-Contains 'deploy/nginx/default.conf' 'location /api-docs/' 'OpenAPI JSON is publicly proxied by nginx'
-    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0017_editor_ai_terms_mobile.sql') '0017 editor AI, terminology and mobile migration is the newest migration'
+    Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'request_timeout_seconds INTEGER NOT NULL DEFAULT 180' 'AI provider timeout defaults to 180 seconds'
+    Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'thinking_mode TEXT NOT NULL DEFAULT ''auto''' 'AI provider thinking mode is persisted'
+    Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'schema_revision = GREATEST\(schema_revision, 18\)' 'AI settings migration advances the workspace schema revision'
+    Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'ai-explanation/stream' 'Editor AI exposes the documented SSE route'
+    Assert-Contains 'frontend/src/api/index.ts' 'streamExplainEntry' 'Editor uses the streaming AI client'
+    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0018_ai_stream_settings.sql') '0018 AI streaming settings migration is the newest migration'
 }
 
 function Test-ScaleRecoverySecurityContracts {
@@ -203,6 +208,8 @@ function Test-ReleaseCompatibilityContracts {
     Assert-Contains '.github/workflows/ci.yml' 'verify-project-workspace.ps1' 'CI runs the workspace contract verifier'
     Assert-Contains 'deploy/nginx/default.conf' 'client_max_body_size 100m;' 'nginx accepts the documented per-file upload ceiling'
     Assert-Contains 'deploy/nginx/default.conf' 'proxy_request_buffering off;' 'nginx streams API request bodies to the backend'
+    Assert-Contains 'deploy/nginx/default.conf' 'proxy_buffering off;' 'nginx does not buffer AI SSE responses'
+    Assert-Contains 'deploy/nginx/default.conf' 'proxy_read_timeout 650s;' 'nginx permits the maximum AI provider timeout plus transport margin'
     Assert-Contains 'deploy/docker-compose.yml' 'condition: service_healthy' 'Compose gates dependent services on health checks'
     Assert-Contains 'deploy/docker-compose.yml' 'curl -fsS http://localhost:3000/health/ready' 'Compose verifies backend dependency readiness'
 }

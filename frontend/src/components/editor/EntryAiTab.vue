@@ -1,39 +1,127 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
-import { aiApi, apiErrorMessage, type AiExplanationDto } from '@/api'
+import { aiApi, apiErrorMessage, type AiExplanationDto, type AiStreamPhase } from '@/api'
 
 const props = defineProps<{ projectId: number; entryId: number }>()
 const $q = useQuasar()
 const { t } = useI18n()
 const loading = ref(false)
 const explanation = ref<AiExplanationDto | null>(null)
+const phase = ref<AiStreamPhase>('connecting')
+const outputTokens = ref(0)
+const outputTokensExact = ref(false)
+const elapsedSeconds = ref(0)
+const controller = ref<AbortController | null>(null)
+let elapsedTimer: ReturnType<typeof setInterval> | undefined
+
+const tokenLabel = computed(() =>
+  t(outputTokensExact.value ? 'editor.ai.tokensExact' : 'editor.ai.tokensEstimated', {
+    count: outputTokens.value,
+  }),
+)
+
+function stopElapsedTimer() {
+  if (elapsedTimer) clearInterval(elapsedTimer)
+  elapsedTimer = undefined
+}
+
+/** Cancelling the browser request also closes the backend channel and upstream provider stream. */
+function cancelAnalysis() {
+  controller.value?.abort()
+}
 
 watch(
-  () => props.entryId,
+  () => [props.projectId, props.entryId],
   () => {
+    cancelAnalysis()
     explanation.value = null
+    outputTokens.value = 0
+    outputTokensExact.value = false
   },
 )
 
+onBeforeUnmount(() => {
+  cancelAnalysis()
+  stopElapsedTimer()
+})
+
 /** AI 只在用户明确点击后分析当前词条的主源文本。 */
 async function explain() {
+  cancelAnalysis()
+  const requestController = new AbortController()
+  controller.value = requestController
   loading.value = true
+  explanation.value = null
+  phase.value = 'connecting'
+  outputTokens.value = 0
+  outputTokensExact.value = false
+  elapsedSeconds.value = 0
+  stopElapsedTimer()
+  const startedAt = Date.now()
+  elapsedTimer = setInterval(() => {
+    elapsedSeconds.value = Math.floor((Date.now() - startedAt) / 1_000)
+  }, 1_000)
   try {
-    explanation.value = await aiApi.explainEntry(props.projectId, props.entryId)
+    const result = await aiApi.streamExplainEntry(
+      props.projectId,
+      props.entryId,
+      undefined,
+      {
+        onStatus(status) {
+          if (controller.value === requestController) phase.value = status.phase
+        },
+        onProgress(progress) {
+          if (controller.value !== requestController) return
+          phase.value = progress.phase
+          outputTokens.value = progress.estimated_output_tokens
+          outputTokensExact.value = false
+        },
+      },
+      requestController.signal,
+    )
+    if (controller.value !== requestController) return
+    explanation.value = result
+    outputTokens.value = result.output_tokens ?? outputTokens.value
+    outputTokensExact.value = result.output_tokens_exact
   } catch (error) {
+    if (requestController.signal.aborted) return
     $q.notify({ type: 'negative', message: apiErrorMessage(error, t('editor.ai.loadFailed')) })
   } finally {
-    loading.value = false
+    if (controller.value === requestController) {
+      controller.value = null
+      loading.value = false
+      stopElapsedTimer()
+    }
   }
 }
 </script>
 
 <template>
   <div class="ai-panel">
-    <div v-if="!explanation" class="ai-panel__empty">
+    <div v-if="loading" class="ai-panel__progress" role="status" aria-live="polite">
+      <div class="ai-panel__progress-head">
+        <q-icon name="mdi-brain" size="30px" color="primary" />
+        <div>
+          <div class="prts-h2">{{ t(`editor.ai.phases.${phase}`) }}</div>
+          <div class="prts-dim q-mt-xs">
+            {{ t('editor.ai.elapsed', { seconds: elapsedSeconds }) }} · {{ tokenLabel }}
+          </div>
+        </div>
+      </div>
+      <q-linear-progress indeterminate rounded size="6px" color="primary" />
+      <q-btn
+        outline
+        no-caps
+        color="negative"
+        icon="mdi-stop-circle-outline"
+        :label="t('editor.ai.cancel')"
+        @click="cancelAnalysis"
+      />
+    </div>
+    <div v-else-if="!explanation" class="ai-panel__empty">
       <q-icon name="mdi-auto-fix" size="34px" color="primary" />
       <div class="prts-h2">{{ t('editor.ai.heading') }}</div>
       <div class="prts-dim">{{ t('editor.ai.description') }}</div>
@@ -44,7 +132,6 @@ async function explain() {
         text-color="dark"
         icon="mdi-auto-fix"
         :label="t('editor.ai.analyze')"
-        :loading="loading"
         @click="explain"
       />
     </div>
@@ -99,6 +186,7 @@ async function explain() {
           })
         }}
         <span v-if="explanation.cached"> · {{ t('editor.ai.cached') }}</span>
+        <span v-if="explanation.output_tokens !== null"> · {{ tokenLabel }}</span>
       </div>
     </template>
   </div>
@@ -116,6 +204,23 @@ async function explain() {
   justify-items: start;
   gap: 10px;
   padding: 20px 8px;
+}
+
+.ai-panel__progress {
+  display: grid;
+  justify-items: stretch;
+  gap: 16px;
+  padding: 20px 8px;
+}
+
+.ai-panel__progress-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ai-panel__progress > .q-btn {
+  justify-self: start;
 }
 
 .ai-panel__head,

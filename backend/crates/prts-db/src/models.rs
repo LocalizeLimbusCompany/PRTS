@@ -463,6 +463,12 @@ pub struct UserAiSetting {
     pub api_key_nonce: Vec<u8>,
     pub api_key_hint: String,
     pub enabled: bool,
+    pub provider_preset: String,
+    pub thinking_mode: String,
+    pub reasoning_effort: String,
+    pub thinking_budget: Option<i64>,
+    pub request_timeout_seconds: i32,
+    pub custom_request_options: serde_json::Value,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -476,6 +482,12 @@ pub struct ProjectAiSetting {
     pub api_key_nonce: Vec<u8>,
     pub api_key_hint: String,
     pub enabled: bool,
+    pub provider_preset: String,
+    pub thinking_mode: String,
+    pub reasoning_effort: String,
+    pub thinking_budget: Option<i64>,
+    pub request_timeout_seconds: i32,
+    pub custom_request_options: serde_json::Value,
     pub updated_by: Option<i64>,
     pub updated_at: DateTime<Utc>,
 }

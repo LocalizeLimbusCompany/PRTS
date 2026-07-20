@@ -75,7 +75,7 @@ base64 = "0.22"
 rand = "0.8"
 chacha20poly1305 = "0.10"
 # ZOOT/OAuth 的服务端 HTTP 调用。native-tls：Windows 用 SChannel、Linux 用 OpenSSL（见后端 Dockerfile）。
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 url = "2"
 # 项目导出打包
 zip = { version = "2", default-features = false, features = ["deflate"] }

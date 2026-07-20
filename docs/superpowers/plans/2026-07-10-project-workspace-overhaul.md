@@ -12,7 +12,7 @@
 
 ## 0. 执行约束与迁移顺序
 
-实现以 [`../specs/2026-07-10-project-workspace-overhaul-design.md`](../specs/2026-07-10-project-workspace-overhaul-design.md) 为唯一总纲。本计划启动时数据库最大迁移号为 `0006`；后续按只增原则已扩展到 `0017`：
+实现以 [`../specs/2026-07-10-project-workspace-overhaul-design.md`](../specs/2026-07-10-project-workspace-overhaul-design.md) 为唯一总纲。本计划启动时数据库最大迁移号为 `0006`；后续按只增原则已扩展到 `0018`：
 
 | 迁移 | 责任 |
 | --- | --- |
@@ -27,6 +27,7 @@
 | `0015_contribution_events.sql` | CP 事件账本、项目重新加入累计恢复、平台周期排行榜索引 |
 | `0016_editor_collaboration.sql` | 评论策略、词条评论、术语版本、跨设备历史 diff 偏好与 hidden stats |
 | `0017_editor_ai_terms_mobile.sql` | 四状态 + questioned 标签、保存差异预览、加密 AI 设置、术语 match mode、内置 POS 预设 |
+| `0018_ai_stream_settings.sql` | 个人/项目 AI provider preset、思考控制、请求超时、受限扩展参数与 Editor SSE 进度所需配置 |
 
 迁移一经其阶段合并、推送或在任一环境应用即不可修改；任何后续纠正只新增更大编号迁移。每个迁移在首次创建任务中完整声明该阶段后续任务所需的表、字段、约束与索引，后续任务不得 retroactively 修改它。
 

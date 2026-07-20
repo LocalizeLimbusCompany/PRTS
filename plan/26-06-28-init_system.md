@@ -154,7 +154,7 @@ PRTS/
 - `job`：上传、主源 lexical、Embedding、文件清理与项目清除的持久化状态/阶段/进度/租约/重试；`project_id` 可空并 `ON DELETE SET NULL`，删除后所需 project/media snapshot 存 payload。
 - `task` / `task_file` / `task_baseline_entry`：immutable file/entry snapshot IDs + nullable live FKs（永久删除 SET NULL），历史基线可解释且 NULL live ref 退出分母。
 - `term` / `pos_preset`：带任意合法 canonical `source_lang`/归档状态/`match_mode`（exact/placeholder/regex）的项目术语与 zh-CN/en 全局词性预设；非当前主源语言只能 archived，legacy old-primary 保持 migration-ready。
-- `user_ai_settings` / `project_ai_settings`：OpenAI-compatible Base URL、模型与经 `PRTS__AI__MASTER_KEY` 加密的 API Key；个人设置归用户，项目设置只由唯一 owner 管理。
+- `user_ai_settings` / `project_ai_settings`：OpenAI-compatible Base URL、模型、provider preset、思考模式/强度或预算、30–600 秒超时、受限 JSON 扩展项，以及经 `PRTS__AI__MASTER_KEY` 加密的 API Key；个人设置归用户，项目设置只由唯一 owner 管理。
 - `project_stats` / `file_stats`：排除 hidden 与 soft-deleted 的四个工作流状态计数；`questioned_count` 是可与任意状态重叠的标签计数。
 
 ### 5.2 应对单项目 20w+ 词条的性能策略
@@ -310,7 +310,7 @@ trait AuthProvider {
 - 实时：WebSocket + Redis pub/sub 跨实例广播 —— 在线状态、"他人正在编辑此词条"、词条变更实时刷新。
 - 并发安全：保存时**乐观锁版本校验**（`version` 不匹配则提示冲突）；`locked` 词条对非管理/拥有者只读。
 - 原文和译文编辑区均设置响应式最大高度并在内部滚动，避免超长文本撑坏整页；移动端将导航、列表、编辑区与右栏改为可用的单列/抽屉布局。
-- AI 解释只在用户显式点击时分析当前 primary source，返回整体含义、去重分词、逐词语境义、词性与语法；provider 按用户的 `auto/personal/project` 偏好解析，不在读取词条时自动请求第三方。
+- AI 解释只在用户显式点击时分析当前 primary source，通过 SSE 展示连接/思考/生成/整理阶段、耗时和实时 token 估算，provider 返回 usage 时以精确值替换；最终返回整体含义、去重分词、逐词语境义、词性与语法。provider 按用户的 `auto/personal/project` 偏好解析，不在读取词条时自动请求第三方，原始思考内容不下发前端。
 - 用户级“保存前预览译文差异”默认关闭并跨设备保存；只在原译文非空且译文发生变化时弹窗，从空译文首次填写不弹。
 - 右栏术语卡展示 source/translation、词性、备注和匹配模式。`placeholder` 中的 `[]` 仅在原文侧代表任意文本，例如 `AAAA [] BBBB` 可命中含 `AAAA … BBBB` 的原文；`regex` 同样只匹配原文，并提供服务端校验/样例测试，不做译文捕获替换。
 - 历史对纯状态/疑问标签变更使用明确的“旧值 → 新值”摘要并隐藏内部 `v1/v2/...`；进度条只按四个互斥工作流状态分段，有疑问数量单独展示为重叠标签。

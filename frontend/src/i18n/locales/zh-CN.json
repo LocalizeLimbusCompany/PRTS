@@ -104,18 +104,62 @@
       },
       "baseUrl": "Base URL",
       "baseUrlHint": "必须是可公开访问的 HTTPS 地址，例如 https://api.openai.com/v1",
+      "providerPreset": "服务提供方预设",
+      "presets": {
+        "openai": "OpenAI",
+        "qwen": "Qwen（通义千问）",
+        "deepseek": "DeepSeek",
+        "gemini": "Gemini",
+        "custom": "自定义兼容接口"
+      },
       "model": "模型",
       "apiKey": "API Key",
       "apiKeyRetainHint": "留空则保留当前密钥。",
       "apiKeyRequiredHint": "首次配置必须填写。",
       "enabled": "允许编辑器使用此配置",
+      "thinkingMode": "思考模式",
+      "thinkingModeHint": "自动模式不附加思考参数；开启或关闭会按所选提供方发送对应参数。",
+      "customThinkingHint": "自定义接口的思考参数由下方 JSON 选项控制。",
+      "thinkingModes": {
+        "auto": "自动",
+        "enabled": "开启",
+        "disabled": "关闭"
+      },
+      "reasoningEffort": "思考强度",
+      "reasoningEfforts": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "max": "最高"
+      },
+      "thinkingBudget": "思考 Token 预算",
+      "thinkingBudgetHint": "Qwen 可选，范围 1–1,000,000；留空使用服务方默认值。",
+      "requestTimeout": "最长等待时间",
+      "requestTimeoutHint": "范围 30–600 秒，默认 180 秒。",
+      "seconds": "秒",
+      "customOptions": "高级请求选项（JSON）",
+      "customOptionsHint": "可添加兼容接口支持的非核心参数，不得包含密钥或认证信息。",
       "keyConfigured": "已保存密钥（尾号 {hint}）",
       "save": "保存 AI 配置",
       "saved": "个人 AI 配置已保存",
       "saveFailed": "个人 AI 配置保存失败",
       "delete": "删除 AI 配置",
       "deleteConfirm": "确定删除个人 AI 接口和已加密保存的密钥吗？",
-      "deleted": "个人 AI 配置已删除"
+      "deleted": "个人 AI 配置已删除",
+      "validation": {
+        "required": "请填写 Base URL 和模型。",
+        "url": "Base URL 必须是不含账号、查询参数或片段的 HTTPS 地址。",
+        "model": "模型名称不能超过 200 个字符。",
+        "apiKey": "首次配置必须填写 API Key。",
+        "timeout": "最长等待时间必须是 30–600 之间的整数。",
+        "budget": "思考 Token 预算必须是 1–1,000,000 之间的整数。",
+        "json": "高级请求选项不是有效的 JSON。",
+        "jsonObject": "高级请求选项必须是 JSON 对象。",
+        "jsonTooLarge": "高级请求选项不能超过 16 KiB。",
+        "jsonDepth": "高级请求选项的嵌套层级不能超过 8 层。",
+        "jsonConflict": "高级请求选项包含由系统管理的核心字段。",
+        "jsonSensitive": "高级请求选项不能包含密钥、令牌或其他认证字段。"
+      }
     },
     "diffModes": {
       "character": "字符行内差分",
@@ -391,6 +435,13 @@
     "manage": {
       "heading": "项目管理",
       "information": "基本信息",
+      "tabs": {
+        "basic": "基本设置",
+        "ai": "AI",
+        "language": "语言与索引",
+        "members": "成员",
+        "danger": "危险操作"
+      },
       "name": "项目名称",
       "descriptionPlaceholder": "介绍项目背景、翻译规范和参与方式……",
       "languageNotice": "语言设置由专用流程管理；项目产生词条后目标语言不可更改。",
@@ -692,8 +743,8 @@
     "saveComment": "保存评论",
     "deleteComment": "删除评论",
     "deleteCommentConfirm": "确定要删除这条评论吗？",
-    "loadMoreComments": "加载更多评论"
-    ,"ai": {
+    "loadMoreComments": "加载更多评论",
+    "ai": {
       "tab": "AI",
       "heading": "AI 原文解释",
       "description": "点击后仅分析当前词条的主源文本，给出整体含义、去重分词和逐词语境解释。",
@@ -705,7 +756,17 @@
       "tokens": "分词解释",
       "noTokens": "AI 未返回可用的分词。",
       "provider": "来源：{source}",
-      "cached": "缓存结果"
+      "cached": "缓存结果",
+      "phases": {
+        "connecting": "正在连接 AI",
+        "thinking": "思考中",
+        "generating": "正在生成解释",
+        "formatting": "正在整理结果"
+      },
+      "elapsed": "已用时 {seconds} 秒",
+      "tokensEstimated": "约 {count} tokens",
+      "tokensExact": "{count} tokens（精确）",
+      "cancel": "停止分析"
     }
   },
   "admin": {

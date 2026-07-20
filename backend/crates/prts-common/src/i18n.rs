@@ -47,6 +47,44 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
     let msg = match (code, locale) {
         ("bad_request", Locale::ZhCn) => "请求参数有误",
         ("bad_request", Locale::En) => "Bad request",
+        ("AI_REQUEST_FAILED", Locale::ZhCn) => "AI 请求失败，请稍后重试",
+        ("AI_REQUEST_FAILED", Locale::En) => "AI request failed; please try again",
+        ("AI_REQUEST_TIMEOUT", Locale::ZhCn) => "AI 请求超时，请提高超时上限或降低思考强度",
+        ("AI_REQUEST_TIMEOUT", Locale::En) => {
+            "AI request timed out; increase the timeout or lower the reasoning effort"
+        }
+        ("AI_PROVIDER_ERROR", Locale::ZhCn) => "AI 服务返回错误，请检查模型与请求配置",
+        ("AI_PROVIDER_ERROR", Locale::En) => {
+            "The AI provider returned an error; check the model and request settings"
+        }
+        ("AI_RESPONSE_INVALID", Locale::ZhCn) => "AI 返回内容无法解析，请重试或调整模型配置",
+        ("AI_RESPONSE_INVALID", Locale::En) => {
+            "The AI response could not be parsed; retry or adjust the model settings"
+        }
+        ("AI_TIMEOUT_INVALID", Locale::ZhCn) => "AI 请求超时必须在 30 到 600 秒之间",
+        ("AI_TIMEOUT_INVALID", Locale::En) => {
+            "AI request timeout must be between 30 and 600 seconds"
+        }
+        ("AI_THINKING_BUDGET_INVALID", Locale::ZhCn) => "思考预算必须是有效的正整数",
+        ("AI_THINKING_BUDGET_INVALID", Locale::En) => {
+            "Thinking budget must be a valid positive integer"
+        }
+        ("AI_REASONING_OPTIONS_INVALID", Locale::ZhCn) => "所选 AI 预设不支持这些思考选项",
+        ("AI_REASONING_OPTIONS_INVALID", Locale::En) => {
+            "The selected AI preset does not support these reasoning options"
+        }
+        ("AI_CUSTOM_OPTIONS_INVALID", Locale::ZhCn) => "自定义请求字段不是有效的 JSON 对象",
+        ("AI_CUSTOM_OPTIONS_INVALID", Locale::En) => {
+            "Custom request fields must be a valid JSON object"
+        }
+        ("AI_CUSTOM_OPTIONS_CONFLICT", Locale::ZhCn) => "自定义请求字段与系统管理字段冲突",
+        ("AI_CUSTOM_OPTIONS_CONFLICT", Locale::En) => {
+            "A custom request field conflicts with a system-managed field"
+        }
+        ("AI_CUSTOM_OPTIONS_SENSITIVE", Locale::ZhCn) => "自定义请求字段不能包含密钥或凭据",
+        ("AI_CUSTOM_OPTIONS_SENSITIVE", Locale::En) => {
+            "Custom request fields cannot contain keys or credentials"
+        }
         ("AUTH_PASSWORD_DISABLED", Locale::ZhCn) => "当前仅允许使用 OAuth 登录",
         ("AUTH_PASSWORD_DISABLED", Locale::En) => {
             "Password authentication is disabled; use an OAuth provider"

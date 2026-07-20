@@ -126,6 +126,7 @@ fn api_router() -> OpenApiRouter<AppState> {
             ai::put_project_ai_settings,
             ai::delete_project_ai_settings
         ))
+        .routes(routes!(ai::explain_entry_stream))
         .routes(routes!(leaderboards::project_leaderboard))
         .routes(routes!(tasks::list_tasks, tasks::create_task))
         .routes(routes!(
@@ -412,6 +413,10 @@ mod tests {
             ("/projects/{id}/entries/{entry_id}/comments", "get"),
             ("/projects/{id}/entries/{entry_id}/comments", "post"),
             (
+                "/projects/{id}/entries/{entry_id}/ai-explanation/stream",
+                "post",
+            ),
+            (
                 "/projects/{id}/entries/{entry_id}/comments/{comment_id}",
                 "put",
             ),
@@ -434,6 +439,18 @@ mod tests {
                 "{method} {path} 必须提供至少 24 字符的详细描述"
             );
         }
+    }
+
+    #[test]
+    fn ai_explanation_stream_is_documented_as_sse_without_reasoning_content() {
+        let (_, api) = api_router().split_for_parts();
+        let document = serde_json::to_value(api).unwrap();
+        let operation =
+            &document["paths"]["/projects/{id}/entries/{entry_id}/ai-explanation/stream"]["post"];
+        assert!(operation["responses"]["200"]["content"]["text/event-stream"].is_object());
+        assert!(operation["description"]
+            .as_str()
+            .is_some_and(|description| description.contains("never exposes raw model reasoning")));
     }
 
     /// SearchScope 的 discriminator、封闭对象与 BIGINT ID 必须体现在生成文档中，

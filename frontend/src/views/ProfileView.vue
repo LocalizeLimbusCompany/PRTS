@@ -8,11 +8,13 @@ import {
   apiErrorMessage,
   usersApi,
   type AiSettingsDto,
+  type AiSettingsWriteRequest,
   type AiSourcePreference,
   type ApiKeyDto,
   type EntryDiffMode,
   type ExternalAccountDto,
 } from '@/api'
+import AiSettingsForm from '@/components/AiSettingsForm.vue'
 import { COMMON_LANGS, langLabel } from '@/lib/langs'
 import { roleLabel } from '@/lib/states'
 import { useAuthStore } from '@/stores/auth'
@@ -31,18 +33,7 @@ const saving = ref(false)
 const keys = ref<ApiKeyDto[]>([])
 const accounts = ref<ExternalAccountDto[]>([])
 const aiSettings = ref<AiSettingsDto | null>(null)
-const aiForm = ref({ base_url: '', model: '', api_key: '', enabled: true })
 const aiSaving = ref(false)
-
-function applyAiSettings(setting: AiSettingsDto) {
-  aiSettings.value = setting
-  aiForm.value = {
-    base_url: setting.base_url ?? '',
-    model: setting.model ?? '',
-    api_key: '',
-    enabled: setting.configured ? setting.enabled : true,
-  }
-}
 
 onMounted(async () => {
   await auth.refreshMe()
@@ -59,7 +50,7 @@ onMounted(async () => {
     ])
     keys.value = loadedKeys
     accounts.value = loadedAccounts
-    applyAiSettings(loadedAi)
+    aiSettings.value = loadedAi
   } catch (e) {
     $q.notify({ type: 'negative', message: apiErrorMessage(e) })
   }
@@ -84,18 +75,10 @@ async function saveProfile() {
   }
 }
 
-async function savePersonalAi() {
-  if (!aiForm.value.base_url.trim() || !aiForm.value.model.trim()) return
+async function savePersonalAi(request: AiSettingsWriteRequest) {
   aiSaving.value = true
   try {
-    const apiKey = aiForm.value.api_key.trim()
-    const updated = await aiApi.putPersonalSettings({
-      base_url: aiForm.value.base_url.trim(),
-      model: aiForm.value.model.trim(),
-      api_key: apiKey || undefined,
-      enabled: aiForm.value.enabled,
-    })
-    applyAiSettings(updated)
+    aiSettings.value = await aiApi.putPersonalSettings(request)
     $q.notify({ type: 'positive', message: t('profile.ai.saved') })
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error, t('profile.ai.saveFailed')) })
@@ -113,13 +96,7 @@ function deletePersonalAi() {
     aiSaving.value = true
     try {
       await aiApi.deletePersonalSettings()
-      applyAiSettings({
-        configured: false,
-        base_url: null,
-        model: null,
-        api_key_hint: null,
-        enabled: false,
-      })
+      aiSettings.value = await aiApi.getPersonalSettings()
       $q.notify({ type: 'positive', message: t('profile.ai.deleted') })
     } catch (error) {
       $q.notify({ type: 'negative', message: apiErrorMessage(error) })
@@ -326,74 +303,13 @@ async function revokeKey(id: number) {
 
     <div class="prts-label q-mb-sm">{{ t('profile.ai.heading') }}</div>
     <q-card flat bordered class="q-pa-lg q-mb-lg">
-      <div class="column q-gutter-md">
-        <div class="prts-dim">{{ t('profile.ai.description') }}</div>
-        <q-banner v-if="aiSettings?.configured" dense rounded class="bg-grey-9">
-          {{ t('profile.ai.keyConfigured', { hint: aiSettings.api_key_hint }) }}
-        </q-banner>
-        <q-input
-          v-model="aiForm.base_url"
-          outlined
-          dense
-          type="url"
-          autocomplete="url"
-          :label="t('profile.ai.baseUrl')"
-          :hint="t('profile.ai.baseUrlHint')"
-          :disable="aiSaving"
-        />
-        <q-input
-          v-model="aiForm.model"
-          outlined
-          dense
-          :label="t('profile.ai.model')"
-          :disable="aiSaving"
-        />
-        <q-input
-          v-model="aiForm.api_key"
-          outlined
-          dense
-          type="password"
-          autocomplete="new-password"
-          :label="t('profile.ai.apiKey')"
-          :hint="
-            aiSettings?.configured
-              ? t('profile.ai.apiKeyRetainHint')
-              : t('profile.ai.apiKeyRequiredHint')
-          "
-          :disable="aiSaving"
-        />
-        <q-toggle
-          v-model="aiForm.enabled"
-          :label="t('profile.ai.enabled')"
-          :disable="aiSaving"
-        />
-        <div class="row q-gutter-sm">
-          <q-btn
-            unelevated
-            no-caps
-            color="primary"
-            text-color="dark"
-            :label="t('profile.ai.save')"
-            :loading="aiSaving"
-            :disable="
-              !aiForm.base_url.trim() ||
-              !aiForm.model.trim() ||
-              (!aiSettings?.configured && !aiForm.api_key.trim())
-            "
-            @click="savePersonalAi"
-          />
-          <q-btn
-            v-if="aiSettings?.configured"
-            flat
-            no-caps
-            color="negative"
-            icon="mdi-delete-outline"
-            :label="t('profile.ai.delete')"
-            :disable="aiSaving"
-            @click="deletePersonalAi"
-          />
-        </div>
-      </div>
+      <AiSettingsForm
+        :settings="aiSettings"
+        :loading="aiSaving"
+        scope="personal"
+        @save="savePersonalAi"
+        @delete="deletePersonalAi"
+      />
     </q-card>
 
     <div class="prts-label q-mb-sm">{{ t('profile.password.title') }}</div>

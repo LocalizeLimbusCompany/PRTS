@@ -19,6 +19,13 @@ export interface UserDto {
 
 export type AiSourcePreference = 'auto' | 'personal' | 'project'
 
+export type AiProviderPreset = 'openai' | 'qwen' | 'deepseek' | 'gemini' | 'custom'
+export type AiThinkingMode = 'auto' | 'enabled' | 'disabled'
+export type AiReasoningEffort = 'low' | 'medium' | 'high' | 'max'
+export type AiStreamPhase = 'connecting' | 'thinking' | 'generating' | 'formatting'
+
+export type AiCustomRequestOptions = Record<string, unknown>
+
 /** AI endpoint metadata exposed without the encrypted API key. */
 export interface AiSettingsDto {
   configured: boolean
@@ -26,6 +33,26 @@ export interface AiSettingsDto {
   model: string | null
   api_key_hint: string | null
   enabled: boolean
+  provider_preset: AiProviderPreset
+  thinking_mode: AiThinkingMode
+  reasoning_effort: AiReasoningEffort
+  thinking_budget: number | null
+  request_timeout_seconds: number
+  custom_request_options: AiCustomRequestOptions
+}
+
+/** Complete settings payload shared by personal and project AI providers. */
+export interface AiSettingsWriteRequest {
+  base_url: string
+  model: string
+  api_key?: string
+  enabled: boolean
+  provider_preset: AiProviderPreset
+  thinking_mode: AiThinkingMode
+  reasoning_effort: AiReasoningEffort
+  thinking_budget: number | null
+  request_timeout_seconds: number
+  custom_request_options: AiCustomRequestOptions
 }
 
 export interface AiTokenExplanation {
@@ -42,6 +69,22 @@ export interface AiExplanationDto {
   grammar_notes: string
   provider_source: 'personal' | 'project'
   cached: boolean
+  output_tokens: number | null
+  output_tokens_exact: boolean
+}
+
+export interface AiStreamStatusDto {
+  phase: AiStreamPhase
+}
+
+export interface AiStreamProgressDto {
+  phase: AiStreamPhase
+  estimated_output_tokens: number
+}
+
+export interface AiStreamErrorDto {
+  code: string
+  message: string
 }
 
 export interface PlatformCapabilities {
@@ -390,12 +433,7 @@ export interface ExternalAccountDto {
 }
 
 /** 词条工作流状态。 */
-export const ENTRY_STATES = [
-  'untranslated',
-  'translated',
-  'checked',
-  'reviewed',
-] as const
+export const ENTRY_STATES = ['untranslated', 'translated', 'checked', 'reviewed'] as const
 export type EntryState = (typeof ENTRY_STATES)[number]
 
 export type SearchOperator = 'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'equals'

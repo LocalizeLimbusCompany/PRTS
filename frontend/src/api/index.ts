@@ -1,8 +1,10 @@
 import { http } from './http'
+import { streamAiExplanation, type AiStreamCallbacks } from './aiStream'
 import type {
   ApiKeyDto,
   AiExplanationDto,
   AiSettingsDto,
+  AiSettingsWriteRequest,
   AiSourcePreference,
   AdminUserDto,
   AdminUserListParams,
@@ -40,6 +42,7 @@ import type {
 } from './types'
 
 export * from './types'
+export * from './aiStream'
 export * from './tasks'
 export * from './terms'
 export { http, apiErrorMessage } from './http'
@@ -116,12 +119,7 @@ export const aiApi = {
   getPersonalSettings() {
     return http.get<AiSettingsDto>('/me/ai-settings').then((response) => response.data)
   },
-  putPersonalSettings(body: {
-    base_url: string
-    model: string
-    api_key?: string
-    enabled: boolean
-  }) {
+  putPersonalSettings(body: AiSettingsWriteRequest) {
     return http.put<AiSettingsDto>('/me/ai-settings', body).then((response) => response.data)
   },
   deletePersonalSettings() {
@@ -132,10 +130,7 @@ export const aiApi = {
       .get<AiSettingsDto>(`/projects/${projectId}/ai-settings`)
       .then((response) => response.data)
   },
-  putProjectSettings(
-    projectId: number,
-    body: { base_url: string; model: string; api_key?: string; enabled: boolean },
-  ) {
+  putProjectSettings(projectId: number, body: AiSettingsWriteRequest) {
     return http
       .put<AiSettingsDto>(`/projects/${projectId}/ai-settings`, body)
       .then((response) => response.data)
@@ -149,6 +144,15 @@ export const aiApi = {
         source,
       })
       .then((response) => response.data)
+  },
+  streamExplainEntry(
+    projectId: number,
+    entryId: number,
+    source: AiSourcePreference | undefined,
+    callbacks: AiStreamCallbacks,
+    signal?: AbortSignal,
+  ) {
+    return streamAiExplanation(projectId, entryId, source, callbacks, signal)
   },
 }
 

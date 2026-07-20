@@ -82,6 +82,8 @@ ZOOT 字段见 [`external/oauth_integration.md`](./external/oauth_integration.md
 
 项目工作区目标分区为信息/文件/任务/术语/排行榜/下载/管理，编辑器是独立全屏路由。项目/任务 Markdown 保存源文、净化展示。
 
+项目管理页内部再按基本设置、AI、语言与索引、成员、危险操作五类分栏；当前栏写入 `?tab=`，不可见或失效的栏位按服务端 capabilities 回退到首个可用栏。项目 AI 和永久删除仍只对唯一 owner 开放，前端不从角色字符串推导权限。
+
 语言入口共享 `language-tags` canonicalizer：language 小写、script Titlecase、region 大写，variant/extension/private-use 按 parser 规范序列化。项目 source/primary/target、上传 original keys、term source_lang、search source selector 与用户语言偏好都先规范化；invalid/规范化后重复拒绝。
 
 `0008_workspace_meta_stats.sql` 与 `0009_primary_source_search.sql` 必须在同一 foundation release 部署。durable repair 先按键集批次规范化 legacy project/entry/term/user language data；冲突或 invalid 数据把 project 标 `needs_language_resolution`，禁用 search 与普通语言写，只有 owner resolution UI/API 可选择 mapping/value，platform admin 只有无正文诊断/retry。repair-ready search trigger/function、既有行 backfill/reconciliation 与 lexical worker readiness 完成之前，不开放非首主源创建或已有项目主源更新。部署边界与状态矩阵以总纲 §2.5、§4.2–§4.3 为准。
@@ -177,11 +179,14 @@ locked 修改和“强制保存”由 capability 控制；强制保存只越过 
  → 校验登录、项目可见性/实际 membership 与 entry 绑定
  → 按 auto/personal/project 解析 provider（显式来源不回退）
  → 解密 scoped API key，校验 HTTPS endpoint 并固定公网解析地址
- → OpenAI-compatible chat completion
- → 校验结构化响应，去重 tokens，返回整体含义/语境义/POS/语法
+ → OpenAI-compatible streaming chat completion（单请求 30–600 秒，默认 180 秒）
+ → SSE 仅发送 connecting/thinking/generating/formatting 阶段与累计 token 估算
+ → 校验结构化响应，使用 provider usage 替换估算并返回整体含义/语境义/POS/语法
 ```
 
-个人 AI 设置归当前用户，项目 AI 设置只由项目唯一 owner 管理；平台管理员不能冒充 owner。项目 AI 只供实际项目成员使用。API Key 以 XChaCha20-Poly1305 和环境变量 `PRTS__AI__MASTER_KEY` 加密，明文不回传。出站请求拒绝私网/保留地址、HTTP、重定向和 DNS rebinding；缓存键包含 personal user/project owner scope、endpoint、model 与 prompt，避免跨租户复用。读取词条或切换词条不会自动调用第三方。
+个人 AI 设置归当前用户，项目 AI 设置只由项目唯一 owner 管理；平台管理员不能冒充 owner。两类设置共用 provider preset（OpenAI/Qwen/DeepSeek/Gemini/custom）、`auto/enabled/disabled` 思考模式、provider-specific 强度或预算、超时与受限 JSON 扩展项。核心字段冲突、超过 16 KiB/8 层或疑似凭据字段的扩展项会被拒绝。
+
+项目 AI 只供实际项目成员使用。API Key 以 XChaCha20-Poly1305 和环境变量 `PRTS__AI__MASTER_KEY` 加密，明文不回传。出站请求拒绝私网/保留地址、HTTP、重定向和 DNS rebinding；缓存键包含 personal user/project owner scope、endpoint、model、思考/扩展参数与 prompt 版本，避免跨租户或配置复用。流式转发只观察 provider reasoning 以估算 token，原始 reasoning 内容永不进入前端事件或缓存结果。浏览器取消会关闭后端 channel 并释放上游响应流；nginx 禁用响应缓冲并提供 650 秒 read timeout。读取词条或切换词条不会自动调用第三方。
 
 ### 3.9 任务与术语
 
@@ -259,6 +264,7 @@ setting    -- runtime non-secret configuration
 - 运行时非密钥设置包括搜索、上传四项限制、batch 默认 24h 过期、文件默认 30 天保留、删除题型等。
 - sqlx 参数化、HTTPS、最小权限、输入/签名/大小校验、稳定错误码和 fail-closed audit。
 - 交互 UI 仅 Vue 3 + Quasar，浅/深主题、MDI、方角/2–4px；中文使用 Noto Sans SC 同类 sans；前端 zh-CN/en，后端按 Accept-Language 本地化。
+- 普通 JSON API 保持有界客户端超时；AI 长请求使用可取消的鉴权 Fetch + SSE，复用单飞 token refresh，不受 15 秒 axios 超时影响。
 
 ## 8. 部署
 

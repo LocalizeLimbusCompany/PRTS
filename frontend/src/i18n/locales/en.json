@@ -104,18 +104,62 @@
       },
       "baseUrl": "Base URL",
       "baseUrlHint": "Must be a publicly reachable HTTPS URL, such as https://api.openai.com/v1",
+      "providerPreset": "Provider preset",
+      "presets": {
+        "openai": "OpenAI",
+        "qwen": "Qwen",
+        "deepseek": "DeepSeek",
+        "gemini": "Gemini",
+        "custom": "Custom compatible endpoint"
+      },
       "model": "Model",
       "apiKey": "API key",
       "apiKeyRetainHint": "Leave empty to keep the current key.",
       "apiKeyRequiredHint": "Required for the initial setup.",
       "enabled": "Allow the editor to use this configuration",
+      "thinkingMode": "Thinking mode",
+      "thinkingModeHint": "Auto sends no thinking override. Enabled or disabled uses the selected provider's supported parameter.",
+      "customThinkingHint": "Control custom endpoint thinking parameters through the JSON options below.",
+      "thinkingModes": {
+        "auto": "Auto",
+        "enabled": "Enabled",
+        "disabled": "Disabled"
+      },
+      "reasoningEffort": "Reasoning effort",
+      "reasoningEfforts": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "max": "Maximum"
+      },
+      "thinkingBudget": "Thinking token budget",
+      "thinkingBudgetHint": "Optional for Qwen, from 1 to 1,000,000. Leave empty for the provider default.",
+      "requestTimeout": "Maximum wait time",
+      "requestTimeoutHint": "From 30 to 600 seconds; the default is 180 seconds.",
+      "seconds": "seconds",
+      "customOptions": "Advanced request options (JSON)",
+      "customOptionsHint": "Add non-core parameters supported by the endpoint. Credentials and authentication fields are rejected.",
       "keyConfigured": "Saved key ending in {hint}",
       "save": "Save AI settings",
       "saved": "Personal AI settings saved",
       "saveFailed": "Failed to save personal AI settings",
       "delete": "Delete AI settings",
       "deleteConfirm": "Delete the personal AI endpoint and its encrypted key?",
-      "deleted": "Personal AI settings deleted"
+      "deleted": "Personal AI settings deleted",
+      "validation": {
+        "required": "Enter a Base URL and model.",
+        "url": "The Base URL must be HTTPS without credentials, query parameters, or a fragment.",
+        "model": "The model name cannot exceed 200 characters.",
+        "apiKey": "An API key is required for the initial setup.",
+        "timeout": "Maximum wait time must be an integer from 30 to 600.",
+        "budget": "The thinking token budget must be an integer from 1 to 1,000,000.",
+        "json": "Advanced request options are not valid JSON.",
+        "jsonObject": "Advanced request options must be a JSON object.",
+        "jsonTooLarge": "Advanced request options cannot exceed 16 KiB.",
+        "jsonDepth": "Advanced request options cannot exceed eight nested levels.",
+        "jsonConflict": "Advanced request options include a core field managed by the system.",
+        "jsonSensitive": "Advanced request options cannot include keys, tokens, or other authentication fields."
+      }
     },
     "diffModes": {
       "character": "Inline character diff",
@@ -391,6 +435,13 @@
     "manage": {
       "heading": "Project management",
       "information": "Basic information",
+      "tabs": {
+        "basic": "Basic settings",
+        "ai": "AI",
+        "language": "Languages and indexes",
+        "members": "Members",
+        "danger": "Danger zone"
+      },
       "name": "Project name",
       "descriptionPlaceholder": "Describe the project, translation guidelines, and how to contribute…",
       "languageNotice": "Languages use a dedicated workflow; the target language is locked after the first entry is created.",
@@ -705,7 +756,17 @@
       "tokens": "Token explanations",
       "noTokens": "The AI did not return usable tokens.",
       "provider": "Source: {source}",
-      "cached": "Cached result"
+      "cached": "Cached result",
+      "phases": {
+        "connecting": "Connecting to AI",
+        "thinking": "Thinking",
+        "generating": "Generating explanation",
+        "formatting": "Formatting result"
+      },
+      "elapsed": "Elapsed: {seconds} seconds",
+      "tokensEstimated": "About {count} tokens",
+      "tokensExact": "{count} tokens (exact)",
+      "cancel": "Stop analysis"
     }
   },
   "admin": {

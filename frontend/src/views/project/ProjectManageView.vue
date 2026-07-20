@@ -2,15 +2,17 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import {
   aiApi,
   apiErrorMessage,
   projectsApi,
   type AiSettingsDto,
+  type AiSettingsWriteRequest,
   type MemberDto,
 } from '@/api'
+import AiSettingsForm from '@/components/AiSettingsForm.vue'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import AvatarCropDialog from '@/components/project/AvatarCropDialog.vue'
 import LanguageResolutionDialog from '@/components/project/LanguageResolutionDialog.vue'
@@ -18,6 +20,11 @@ import ProjectDeleteDialog from '@/components/project/ProjectDeleteDialog.vue'
 import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import { useJobProgress } from '@/composables/useJobProgress'
 import { hasProjectCapability } from '@/lib/capabilities'
+import {
+  availableProjectManageTabs,
+  resolveProjectManageTab,
+  type ProjectManageTab,
+} from '@/lib/projectManageTabs'
 import { roleLabel } from '@/lib/states'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
 import { useAuthStore } from '@/stores/auth'
@@ -25,6 +32,7 @@ import { useAuthStore } from '@/stores/auth'
 const { detail, projectId, reload } = useProjectWorkspace()
 const $q = useQuasar()
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const saving = ref(false)
@@ -43,14 +51,33 @@ const newMember = ref({ username: '', role: '' })
 const showDeleteDialog = ref(false)
 const cancellingDeletion = ref(false)
 const projectAiSettings = ref<AiSettingsDto | null>(null)
-const projectAiForm = ref({ base_url: '', model: '', api_key: '', enabled: true })
 const projectAiSaving = ref(false)
+const activeTab = ref<ProjectManageTab>('basic')
 const countdownNow = ref(Date.now())
 let countdownTimer: ReturnType<typeof setInterval> | undefined
 
 const lexicalJobId = computed(() => detail.value?.project.lexical_job_id)
 const embeddingJobId = computed(() => detail.value?.project.embedding_job_id)
 const isProjectOwner = computed(() => detail.value?.project.owner_id === auth.user?.id)
+const availableTabs = computed(() =>
+  availableProjectManageTabs({
+    manageProject: hasProjectCapability(detail.value?.capabilities, 'manage_project'),
+    owner: isProjectOwner.value,
+    manageMembers: hasProjectCapability(detail.value?.capabilities, 'manage_members'),
+    deleteProject: hasProjectCapability(detail.value?.capabilities, 'delete_project'),
+    deletionPending: Boolean(detail.value?.project.deletion_scheduled_at),
+  }),
+)
+const tabDefinitions: Array<{ key: ProjectManageTab; icon: string }> = [
+  { key: 'basic', icon: 'mdi-tune-variant' },
+  { key: 'ai', icon: 'mdi-auto-fix' },
+  { key: 'language', icon: 'mdi-translate' },
+  { key: 'members', icon: 'mdi-account-multiple-outline' },
+  { key: 'danger', icon: 'mdi-alert-outline' },
+]
+const visibleTabs = computed(() =>
+  tabDefinitions.filter(({ key }) => availableTabs.value.includes(key)),
+)
 const lexicalProgress = useJobProgress(lexicalJobId)
 const embeddingProgress = useJobProgress(embeddingJobId)
 const cooldownActive = computed(() => {
@@ -96,36 +123,38 @@ watch(
   { immediate: true },
 )
 
-function applyProjectAiSettings(setting: AiSettingsDto) {
-  projectAiSettings.value = setting
-  projectAiForm.value = {
-    base_url: setting.base_url ?? '',
-    model: setting.model ?? '',
-    api_key: '',
-    enabled: setting.configured ? setting.enabled : true,
-  }
+/** Keep the selected management section addressable and fall back after capability changes. */
+watch(
+  () => [route.query.tab, availableTabs.value.join(',')] as const,
+  ([requested]) => {
+    const resolved = resolveProjectManageTab(requested, availableTabs.value)
+    if (!resolved) return
+    activeTab.value = resolved
+    if (requested !== resolved) {
+      void router.replace({ query: { ...route.query, tab: resolved } })
+    }
+  },
+  { immediate: true },
+)
+
+function selectTab(tab: ProjectManageTab) {
+  if (!availableTabs.value.includes(tab)) return
+  activeTab.value = tab
+  void router.replace({ query: { ...route.query, tab } })
 }
 
 async function loadProjectAi() {
   try {
-    applyProjectAiSettings(await aiApi.getProjectSettings(projectId.value))
+    projectAiSettings.value = await aiApi.getProjectSettings(projectId.value)
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error) })
   }
 }
 
-async function saveProjectAi() {
-  if (!projectAiForm.value.base_url.trim() || !projectAiForm.value.model.trim()) return
+async function saveProjectAi(request: AiSettingsWriteRequest) {
   projectAiSaving.value = true
   try {
-    const apiKey = projectAiForm.value.api_key.trim()
-    const updated = await aiApi.putProjectSettings(projectId.value, {
-      base_url: projectAiForm.value.base_url.trim(),
-      model: projectAiForm.value.model.trim(),
-      api_key: apiKey || undefined,
-      enabled: projectAiForm.value.enabled,
-    })
-    applyProjectAiSettings(updated)
+    projectAiSettings.value = await aiApi.putProjectSettings(projectId.value, request)
     $q.notify({ type: 'positive', message: t('project.ai.saved') })
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error, t('project.ai.saveFailed')) })
@@ -143,13 +172,7 @@ function deleteProjectAi() {
     projectAiSaving.value = true
     try {
       await aiApi.deleteProjectSettings(projectId.value)
-      applyProjectAiSettings({
-        configured: false,
-        base_url: null,
-        model: null,
-        api_key_hint: null,
-        enabled: false,
-      })
+      projectAiSettings.value = await aiApi.getProjectSettings(projectId.value)
       $q.notify({ type: 'positive', message: t('project.ai.deleted') })
     } catch (error) {
       $q.notify({ type: 'negative', message: apiErrorMessage(error) })
@@ -242,15 +265,28 @@ async function deleteAvatar() {
 
 /** Refresh server-authored per-target membership capabilities. */
 async function loadMembers() {
+  if (!availableTabs.value.includes('members')) return
+  const requestedProjectId = projectId.value
   loadingMembers.value = true
   try {
-    members.value = await projectsApi.members(projectId.value)
+    const loaded = await projectsApi.members(requestedProjectId)
+    if (projectId.value === requestedProjectId) members.value = loaded
   } catch (error) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+    if (projectId.value === requestedProjectId) {
+      $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+    }
   } finally {
-    loadingMembers.value = false
+    if (projectId.value === requestedProjectId) loadingMembers.value = false
   }
 }
+
+watch(
+  () => [activeTab.value, projectId.value, availableTabs.value.includes('members')] as const,
+  ([tab, , canManageMembers]) => {
+    if (tab === 'members' && canManageMembers) void loadMembers()
+  },
+  { immediate: true },
+)
 
 function openAddMember() {
   const firstRole = detail.value?.capabilities.member_assignable_roles[0]
@@ -304,7 +340,6 @@ async function removeMember(member: MemberDto) {
 }
 
 onMounted(() => {
-  void loadMembers()
   countdownTimer = setInterval(() => {
     countdownNow.value = Date.now()
   }, 60_000)
@@ -341,7 +376,33 @@ async function cancelDeletion() {
       <h2>{{ $t('project.manage.heading') }}</h2>
     </div>
 
-    <q-card v-if="detail?.project.deletion_scheduled_at" flat bordered class="manage-view__pending">
+    <q-tabs
+      :model-value="activeTab"
+      class="manage-view__tabs"
+      dense
+      no-caps
+      outside-arrows
+      mobile-arrows
+      align="left"
+      active-color="primary"
+      indicator-color="primary"
+      @update:model-value="selectTab($event as ProjectManageTab)"
+    >
+      <q-tab
+        v-for="tab in visibleTabs"
+        :key="tab.key"
+        :name="tab.key"
+        :icon="tab.icon"
+        :label="$t(`project.manage.tabs.${tab.key}`)"
+      />
+    </q-tabs>
+
+    <q-card
+      v-if="detail?.project.deletion_scheduled_at && activeTab === 'danger'"
+      flat
+      bordered
+      class="manage-view__pending"
+    >
       <q-card-section class="column q-gutter-md">
         <div class="prts-label text-negative">{{ $t('project.deletion.pending') }}</div>
         <div class="prts-h2">{{ deletionCountdown }}</div>
@@ -358,7 +419,7 @@ async function cancelDeletion() {
     </q-card>
 
     <template v-else>
-      <q-card flat bordered>
+      <q-card v-if="activeTab === 'basic'" flat bordered>
         <q-card-section class="manage-view__form">
           <div class="prts-label">{{ $t('project.manage.information') }}</div>
           <div class="manage-view__avatar">
@@ -453,80 +514,22 @@ async function cancelDeletion() {
         </q-card-section>
       </q-card>
 
-      <q-card v-if="isProjectOwner" flat bordered>
+      <q-card v-if="activeTab === 'ai' && isProjectOwner" flat bordered>
         <q-card-section class="manage-view__ai">
           <div>
             <div class="prts-label">{{ $t('project.ai.heading') }}</div>
-            <div class="prts-dim q-mt-xs">{{ $t('project.ai.description') }}</div>
           </div>
-          <q-banner v-if="projectAiSettings?.configured" dense rounded class="bg-grey-9">
-            {{
-              $t('project.ai.keyConfigured', { hint: projectAiSettings.api_key_hint })
-            }}
-          </q-banner>
-          <q-input
-            v-model="projectAiForm.base_url"
-            outlined
-            type="url"
-            autocomplete="url"
-            :label="$t('profile.ai.baseUrl')"
-            :hint="$t('profile.ai.baseUrlHint')"
-            :disable="projectAiSaving"
+          <AiSettingsForm
+            :settings="projectAiSettings"
+            :loading="projectAiSaving"
+            scope="project"
+            @save="saveProjectAi"
+            @delete="deleteProjectAi"
           />
-          <q-input
-            v-model="projectAiForm.model"
-            outlined
-            :label="$t('profile.ai.model')"
-            :disable="projectAiSaving"
-          />
-          <q-input
-            v-model="projectAiForm.api_key"
-            outlined
-            type="password"
-            autocomplete="new-password"
-            :label="$t('profile.ai.apiKey')"
-            :hint="
-              projectAiSettings?.configured
-                ? $t('profile.ai.apiKeyRetainHint')
-                : $t('profile.ai.apiKeyRequiredHint')
-            "
-            :disable="projectAiSaving"
-          />
-          <q-toggle
-            v-model="projectAiForm.enabled"
-            :label="$t('profile.ai.enabled')"
-            :disable="projectAiSaving"
-          />
-          <div class="row q-gutter-sm">
-            <q-btn
-              unelevated
-              no-caps
-              color="primary"
-              text-color="dark"
-              :label="$t('project.ai.save')"
-              :loading="projectAiSaving"
-              :disable="
-                !projectAiForm.base_url.trim() ||
-                !projectAiForm.model.trim() ||
-                (!projectAiSettings?.configured && !projectAiForm.api_key.trim())
-              "
-              @click="saveProjectAi"
-            />
-            <q-btn
-              v-if="projectAiSettings?.configured"
-              flat
-              no-caps
-              color="negative"
-              icon="mdi-delete-outline"
-              :label="$t('project.ai.delete')"
-              :disable="projectAiSaving"
-              @click="deleteProjectAi"
-            />
-          </div>
         </q-card-section>
       </q-card>
 
-      <q-card flat bordered>
+      <q-card v-if="activeTab === 'language'" flat bordered>
         <q-card-section class="manage-view__language">
           <div class="manage-view__language-head">
             <div>
@@ -650,7 +653,7 @@ async function cancelDeletion() {
         </q-card-section>
       </q-card>
 
-      <q-card flat bordered>
+      <q-card v-if="activeTab === 'members'" flat bordered>
         <q-card-section class="row items-center">
           <div>
             <div class="prts-label">{{ $t('project.members.heading') }}</div>
@@ -721,7 +724,9 @@ async function cancelDeletion() {
       </q-card>
 
       <q-card
-        v-if="hasProjectCapability(detail?.capabilities, 'delete_project')"
+        v-if="
+          activeTab === 'danger' && hasProjectCapability(detail?.capabilities, 'delete_project')
+        "
         flat
         bordered
         class="manage-view__danger"
@@ -807,6 +812,16 @@ async function cancelDeletion() {
   gap: 18px;
 }
 
+.manage-view {
+  width: 100%;
+  min-width: 0;
+}
+
+.manage-view > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .manage-view__language,
 .manage-view__ai,
 .manage-view__stage,
@@ -849,6 +864,13 @@ async function cancelDeletion() {
   margin: 4px 0 0;
   color: var(--prts-text-strong);
   font: 500 22px var(--font-display);
+}
+
+.manage-view__tabs {
+  width: 100%;
+  overflow: hidden;
+  min-height: 44px;
+  border-bottom: 1px solid var(--prts-border);
 }
 
 .manage-view__form {
