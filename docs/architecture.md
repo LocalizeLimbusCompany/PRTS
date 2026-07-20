@@ -184,9 +184,9 @@ locked 修改和“强制保存”由 capability 控制；强制保存只越过 
  → 校验结构化响应，使用 provider usage 替换估算并返回整体含义/语境义/POS/语法
 ```
 
-个人 AI 设置归当前用户，项目 AI 设置只由项目唯一 owner 管理；平台管理员不能冒充 owner。两类设置共用 provider preset（OpenAI/Qwen/DeepSeek/Gemini/custom）、`auto/enabled/disabled` 思考模式、provider-specific 强度或预算、超时与受限 JSON 扩展项。核心字段冲突、超过 16 KiB/8 层或疑似凭据字段的扩展项会被拒绝。
+个人 AI 设置归当前用户，项目 AI 设置只由项目唯一 owner 管理；平台管理员不能冒充 owner。两类设置共用 provider preset（OpenAI/Qwen/DeepSeek/Gemini/custom）、`auto/enabled/disabled` 思考模式、provider-specific 强度或预算、超时与受限 JSON 扩展项。核心字段冲突、超过 16 KiB/8 层或疑似凭据字段的扩展项会被拒绝。AI 解释请求在 JSON 中显式携带当前界面语言（`zh-CN`/`en`）；模型所有解释字段按该语言生成，token 保留源文表面形式，输出语言与缓存均不依赖 `Accept-Language`。
 
-项目 AI 只供实际项目成员使用。API Key 以 XChaCha20-Poly1305 和环境变量 `PRTS__AI__MASTER_KEY` 加密，明文不回传。出站请求拒绝私网/保留地址、HTTP、重定向和 DNS rebinding；缓存键包含 personal user/project owner scope、endpoint、model、思考/扩展参数与 prompt 版本，避免跨租户或配置复用。流式转发只观察 provider reasoning 以估算 token，原始 reasoning 内容永不进入前端事件或缓存结果。浏览器取消会关闭后端 channel 并释放上游响应流；nginx 禁用响应缓冲并提供 650 秒 read timeout。读取词条或切换词条不会自动调用第三方。
+项目 AI 只供实际项目成员使用。API Key 以 XChaCha20-Poly1305 和环境变量 `PRTS__AI__MASTER_KEY` 加密，明文不回传。出站请求拒绝私网/保留地址、HTTP、重定向和 DNS rebinding；缓存键包含 personal user/project owner scope、endpoint、model、界面语言、思考/扩展参数与 prompt 版本，避免跨租户、跨语言或配置复用。流式转发只观察 provider reasoning 以估算 token，原始 reasoning 内容永不进入前端事件或缓存结果。浏览器取消会关闭后端 channel 并释放上游响应流；nginx 禁用响应缓冲并提供 650 秒 read timeout。读取词条或切换词条不会自动调用第三方。
 
 ### 3.9 任务与术语
 

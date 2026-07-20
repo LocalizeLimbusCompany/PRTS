@@ -2,6 +2,7 @@ import { authenticatedFetch } from './http'
 import type {
   AiExplanationDto,
   AiSourcePreference,
+  AiUiLocale,
   AiStreamErrorDto,
   AiStreamProgressDto,
   AiStreamStatusDto,
@@ -140,6 +141,7 @@ export async function consumeAiExplanationStream(
 export async function streamAiExplanation(
   projectId: number,
   entryId: number,
+  uiLocale: AiUiLocale,
   source: AiSourcePreference | undefined,
   callbacks: AiStreamCallbacks = {},
   signal?: AbortSignal,
@@ -152,7 +154,7 @@ export async function streamAiExplanation(
         Accept: 'text/event-stream',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ source }),
+      body: JSON.stringify({ source, ui_locale: uiLocale }),
       signal,
     },
   )

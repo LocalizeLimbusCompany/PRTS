@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./http', () => ({ authenticatedFetch: vi.fn() }))
 
-import { AiStreamRequestError, consumeAiExplanationStream, parseSseStream } from './aiStream'
+import {
+  AiStreamRequestError,
+  consumeAiExplanationStream,
+  parseSseStream,
+  streamAiExplanation,
+} from './aiStream'
+import { authenticatedFetch } from './http'
 
 function chunkedBody(source: string, chunkSize = 1): ReadableStream<Uint8Array> {
   const bytes = new TextEncoder().encode(source)
@@ -27,6 +33,23 @@ const result = {
 }
 
 describe('AI SSE client', () => {
+  it('sends the explicit UI locale in the JSON body instead of relying on headers', async () => {
+    vi.mocked(authenticatedFetch).mockResolvedValue(
+      new Response(chunkedBody(`event: result\ndata: ${JSON.stringify(result)}\n\n`), {
+        status: 200,
+      }),
+    )
+
+    await streamAiExplanation(7, 11, 'zh-CN', undefined)
+
+    expect(authenticatedFetch).toHaveBeenCalledWith(
+      '/api/projects/7/entries/11/ai-explanation/stream',
+      expect.objectContaining({
+        body: JSON.stringify({ source: undefined, ui_locale: 'zh-CN' }),
+      }),
+    )
+  })
+
   it('parses CRLF frames split across arbitrary byte chunks', async () => {
     const events: Array<{ event: string; data: string }> = []
     await parseSseStream(

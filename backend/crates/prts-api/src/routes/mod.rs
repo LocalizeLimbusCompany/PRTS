@@ -451,6 +451,14 @@ mod tests {
         assert!(operation["description"]
             .as_str()
             .is_some_and(|description| description.contains("never exposes raw model reasoning")));
+        assert_eq!(
+            document["components"]["schemas"]["AiUiLocale"]["enum"],
+            serde_json::json!(["zh-CN", "en"])
+        );
+        assert!(
+            document["components"]["schemas"]["AiExplainRequest"]["properties"]["ui_locale"]
+                .is_object()
+        );
     }
 
     /// SearchScope 的 discriminator、封闭对象与 BIGINT ID 必须体现在生成文档中，

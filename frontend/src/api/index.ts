@@ -6,6 +6,7 @@ import type {
   AiSettingsDto,
   AiSettingsWriteRequest,
   AiSourcePreference,
+  AiUiLocale,
   AdminUserDto,
   AdminUserListParams,
   AdminUserListResponse,
@@ -138,21 +139,28 @@ export const aiApi = {
   deleteProjectSettings(projectId: number) {
     return http.delete(`/projects/${projectId}/ai-settings`)
   },
-  explainEntry(projectId: number, entryId: number, source?: AiSourcePreference) {
+  explainEntry(
+    projectId: number,
+    entryId: number,
+    uiLocale: AiUiLocale,
+    source?: AiSourcePreference,
+  ) {
     return http
       .post<AiExplanationDto>(`/projects/${projectId}/entries/${entryId}/ai-explanation`, {
         source,
+        ui_locale: uiLocale,
       })
       .then((response) => response.data)
   },
   streamExplainEntry(
     projectId: number,
     entryId: number,
+    uiLocale: AiUiLocale,
     source: AiSourcePreference | undefined,
     callbacks: AiStreamCallbacks,
     signal?: AbortSignal,
   ) {
-    return streamAiExplanation(projectId, entryId, source, callbacks, signal)
+    return streamAiExplanation(projectId, entryId, uiLocale, source, callbacks, signal)
   },
 }
 

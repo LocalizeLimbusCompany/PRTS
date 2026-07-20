@@ -162,6 +162,8 @@ function Test-Contracts {
     Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'thinking_mode TEXT NOT NULL DEFAULT ''auto''' 'AI provider thinking mode is persisted'
     Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'schema_revision = GREATEST\(schema_revision, 18\)' 'AI settings migration advances the workspace schema revision'
     Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'ai-explanation/stream' 'Editor AI exposes the documented SSE route'
+    Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'source-explain-v3-ui-locale' 'Editor AI invalidates legacy language-agnostic cache entries'
+    Assert-Contains 'frontend/src/api/aiStream.ts' 'ui_locale: uiLocale' 'Editor AI sends the current UI locale in the JSON body'
     Assert-Contains 'frontend/src/api/index.ts' 'streamExplainEntry' 'Editor uses the streaming AI client'
     Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0018_ai_stream_settings.sql') '0018 AI streaming settings migration is the newest migration'
 }

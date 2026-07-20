@@ -3,11 +3,17 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
-import { aiApi, apiErrorMessage, type AiExplanationDto, type AiStreamPhase } from '@/api'
+import {
+  aiApi,
+  apiErrorMessage,
+  type AiExplanationDto,
+  type AiStreamPhase,
+  type AiUiLocale,
+} from '@/api'
 
 const props = defineProps<{ projectId: number; entryId: number }>()
 const $q = useQuasar()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const loading = ref(false)
 const explanation = ref<AiExplanationDto | null>(null)
 const phase = ref<AiStreamPhase>('connecting')
@@ -16,6 +22,8 @@ const outputTokensExact = ref(false)
 const elapsedSeconds = ref(0)
 const controller = ref<AbortController | null>(null)
 let elapsedTimer: ReturnType<typeof setInterval> | undefined
+
+const activeUiLocale = computed<AiUiLocale>(() => (locale.value === 'en' ? 'en' : 'zh-CN'))
 
 const tokenLabel = computed(() =>
   t(outputTokensExact.value ? 'editor.ai.tokensExact' : 'editor.ai.tokensEstimated', {
@@ -34,7 +42,7 @@ function cancelAnalysis() {
 }
 
 watch(
-  () => [props.projectId, props.entryId],
+  () => [props.projectId, props.entryId, locale.value],
   () => {
     cancelAnalysis()
     explanation.value = null
@@ -68,6 +76,7 @@ async function explain() {
     const result = await aiApi.streamExplainEntry(
       props.projectId,
       props.entryId,
+      activeUiLocale.value,
       undefined,
       {
         onStatus(status) {

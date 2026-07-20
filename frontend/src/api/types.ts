@@ -18,6 +18,7 @@ export interface UserDto {
 }
 
 export type AiSourcePreference = 'auto' | 'personal' | 'project'
+export type AiUiLocale = 'zh-CN' | 'en'
 
 export type AiProviderPreset = 'openai' | 'qwen' | 'deepseek' | 'gemini' | 'custom'
 export type AiThinkingMode = 'auto' | 'enabled' | 'disabled'
