@@ -83,7 +83,9 @@ const entries = ref<(EntryDto | SearchHitDto)[]>([])
 const listLoading = ref(false)
 const PAGE_SIZES = [50, 100, 200] as const
 const storedPageSize = Number(localStorage.getItem('prts_editor_page_size'))
-const pageSize = ref<number>(PAGE_SIZES.includes(storedPageSize as (typeof PAGE_SIZES)[number]) ? storedPageSize : 100)
+const pageSize = ref<number>(
+  PAGE_SIZES.includes(storedPageSize as (typeof PAGE_SIZES)[number]) ? storedPageSize : 100,
+)
 const currentPage = ref(1)
 const totalItems = ref(0)
 const browseCursors = ref<Array<number | null>>([null])
@@ -212,6 +214,7 @@ const commentsRefreshToken = ref(0)
 const questionDialog = ref(false)
 const questionReason = ref('')
 let contextLoadGeneration = 0
+let historyLoadGeneration = 0
 
 const panelReadOnly = computed(
   () => !canEdit.value || (selected.value?.locked === true && !canEditLocked.value),
@@ -258,10 +261,12 @@ async function loadEntryContext(entry: EntryDto) {
   const generation = ++contextLoadGeneration
   const primary = project.value?.primary_source_lang
   const source = primary ? entry.original[primary] : undefined
-  const [tm, terms, versions] = await Promise.allSettled([
+  // History has its own generation guard because a save can refresh it while the other context
+  // requests for the selected entry are still in flight.
+  void refreshEntryHistory(entry.id)
+  const [tm, terms] = await Promise.allSettled([
     suggestionsApi.forEntry(props.id, entry.id),
     primary && source ? termsApi.match(props.id, source, 5_000) : Promise.resolve([]),
-    entriesApi.history(props.id, entry.id),
   ])
   if (generation !== contextLoadGeneration || selected.value?.id !== entry.id) return
   suggestions.value = tm.status === 'fulfilled' ? tm.value : []
@@ -271,13 +276,26 @@ async function loadEntryContext(entry: EntryDto) {
           (term) => !term.archived && !term.deleted && term.source_lang === primary,
         )
       : []
-  history.value = versions.status === 'fulfilled' ? versions.value : []
+}
+
+/** Reload the authoritative newest-first entry history without letting stale requests win. */
+async function refreshEntryHistory(entryId: number) {
+  const generation = ++historyLoadGeneration
+  try {
+    const versions = await entriesApi.history(props.id, entryId)
+    if (generation !== historyLoadGeneration || selected.value?.id !== entryId) return
+    history.value = versions
+  } catch {
+    // History is contextual data: a failed refresh must not turn an already committed save into
+    // a reported save failure. A later selection, save, or realtime update will retry the read.
+  }
 }
 
 function select(entry: EntryDto | SearchHitDto) {
   selected.value = entry
   draft.value = entry.translation
   draftState.value = entry.state
+  history.value = []
   sendEditing(entry.id)
   if (isNarrow.value) mobileSection.value = 'editor'
   void loadEntryContext(entry)
@@ -285,6 +303,7 @@ function select(entry: EntryDto | SearchHitDto) {
 
 function clearSelection() {
   contextLoadGeneration += 1
+  historyLoadGeneration += 1
   selected.value = null
   draft.value = ''
   suggestions.value = []
@@ -311,6 +330,7 @@ async function persist(targetState: EntryState, questionReasonValue?: string): P
     })
     if (selected.value?.id === entryId) draftState.value = targetState
     applyUpdated(updated)
+    if (selected.value?.id === entryId) await refreshEntryHistory(entryId)
     if (questionReasonValue) commentsRefreshToken.value += 1
     $q.notify({ type: 'positive', message: t('editor.saved'), timeout: 900 })
     return true
@@ -358,6 +378,8 @@ async function toggleFlag(flag: 'locked' | 'hidden') {
     if (flag === 'hidden' && updated.hidden && !includeHidden.value) {
       clearSelection()
       await resetAndLoad()
+    } else if (selected.value?.id === updated.id) {
+      await refreshEntryHistory(updated.id)
     }
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error) })
@@ -377,6 +399,7 @@ function handleRemoteUpdate(entryId: number, _version: number, by: number) {
           void resetAndLoad()
         } else {
           applyUpdated(fresh)
+          if (selected.value?.id === fresh.id) void refreshEntryHistory(fresh.id)
         }
       })
       .catch(() => {})

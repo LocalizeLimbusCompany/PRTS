@@ -111,6 +111,21 @@ describe('guest and presence boundaries', () => {
   })
 })
 
+describe('entry history refresh workflow', () => {
+  it('reloads authoritative history after a successful local save', () => {
+    expect(editorSource).toContain('async function refreshEntryHistory(entryId: number)')
+    expect(editorSource).toMatch(
+      /applyUpdated\(updated\)\s+if \(selected\.value\?\.id === entryId\) await refreshEntryHistory\(entryId\)/,
+    )
+  })
+
+  it('refreshes the selected history after realtime updates from another editor', () => {
+    expect(editorSource).toContain(
+      'if (selected.value?.id === fresh.id) void refreshEntryHistory(fresh.id)',
+    )
+  })
+})
+
 describe('editor locale contract', () => {
   it('keeps Chinese and English editor/common action keys synchronized', () => {
     expect(Object.keys(zhCn.editor).sort()).toEqual(Object.keys(en.editor).sort())
