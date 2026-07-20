@@ -4,6 +4,7 @@ pub mod admin;
 pub mod admin_settings;
 pub mod auth;
 pub mod entries;
+pub mod entry_comments;
 pub mod file_history;
 pub mod files;
 pub mod health;
@@ -125,6 +126,8 @@ fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(terms::list_terms, terms::create_term))
         .routes(routes!(terms::match_terms))
+        .routes(routes!(terms::list_term_versions))
+        .routes(routes!(terms::restore_term_version))
         .routes(routes!(terms::preview_term_import))
         .routes(routes!(terms::confirm_term_import))
         .routes(routes!(terms::export_terms))
@@ -167,9 +170,18 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(uploads::retry_file))
         .routes(routes!(uploads::cancel_batch))
         .routes(routes!(entries::list_entries))
+        .routes(routes!(entries::count_entries))
         .routes(routes!(entries::get_entry, entries::update_entry))
         .routes(routes!(entries::set_entry_flags))
         .routes(routes!(entries::entry_history))
+        .routes(routes!(
+            entry_comments::list_comments,
+            entry_comments::create_comment
+        ))
+        .routes(routes!(
+            entry_comments::update_comment,
+            entry_comments::delete_comment
+        ))
         .routes(routes!(entries::export_project))
         // 混合搜索
         .routes(routes!(search::search_entries, search::structured_search))
@@ -372,6 +384,30 @@ mod tests {
             ("/projects/{id}/tasks/{task_id}", "delete"),
             ("/projects/{id}/search", "post"),
             ("/projects/{id}/search", "get"),
+            ("/me", "get"),
+            ("/me", "put"),
+            ("/projects/{id}", "put"),
+            ("/projects/{id}/entries", "get"),
+            ("/projects/{id}/entries/count", "get"),
+            ("/projects/{id}/entries/{entry_id}", "get"),
+            ("/projects/{id}/entries/{entry_id}", "put"),
+            ("/projects/{id}/entries/{entry_id}/flags", "patch"),
+            ("/projects/{id}/entries/{entry_id}/history", "get"),
+            ("/projects/{id}/entries/{entry_id}/comments", "get"),
+            ("/projects/{id}/entries/{entry_id}/comments", "post"),
+            (
+                "/projects/{id}/entries/{entry_id}/comments/{comment_id}",
+                "put",
+            ),
+            (
+                "/projects/{id}/entries/{entry_id}/comments/{comment_id}",
+                "delete",
+            ),
+            ("/projects/{id}/terms/{term_id}/versions", "get"),
+            (
+                "/projects/{id}/terms/{term_id}/versions/{version}/restore",
+                "post",
+            ),
             ("/projects/{id}/delete-challenge", "post"),
             ("/projects/{id}/deletion", "get"),
             ("/projects/{id}/deletion/cancel", "post"),

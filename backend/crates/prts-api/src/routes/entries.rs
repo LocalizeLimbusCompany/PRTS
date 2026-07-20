@@ -351,10 +351,66 @@ pub struct EntryListQuery {
     pub include_hidden: bool,
 }
 
+/// 编辑器浏览模式的物化总数。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct EntryCountDto {
+    pub total_items: i64,
+}
+
+/// 从 project_stats/file_stats/task file_stats 读取精确总数，不扫描 entries 热表。
+#[utoipa::path(
+    get,
+    path = "/projects/{id}/entries/count",
+    tag = "entry",
+    params(("id" = i64, Path), EntryListQuery),
+    description = "返回编辑器普通浏览模式的精确词条总数。项目、文件、任务、状态与授权后的 include_hidden 都只读取物化统计；不执行热路径 COUNT(entries)。",
+    responses((status = 200, body = EntryCountDto), (status = 400, body = ErrorResponse), (status = 404, body = ErrorResponse))
+)]
+pub async fn count_entries(
+    State(state): State<AppState>,
+    MaybeUser(user): MaybeUser,
+    Path(id): Path<i64>,
+    Query(query): Query<EntryListQuery>,
+) -> Result<Json<EntryCountDto>, ApiError> {
+    let access = paccess::load(&state, user.as_ref(), id).await?;
+    access.require_view()?;
+    if query.file_id.is_some() && query.task_id.is_some() {
+        return Err(Error::bad_request("entry_scope_conflict").into());
+    }
+    if query.include_hidden && !access.has_node(nodes::PROJECT_ENTRY_HIDE) {
+        return Err(Error::Forbidden.into());
+    }
+    if let Some(file_id) = query.file_id {
+        prts_db::search::resolve_active_file_id(&state.db, id, file_id)
+            .await
+            .map_err(db_err)?
+            .ok_or(Error::NotFound)?;
+    }
+    if let Some(task_id) = query.task_id {
+        prts_db::tasks::find(&state.db, id, task_id)
+            .await
+            .map_err(db_err)?
+            .ok_or(Error::NotFound)?;
+    }
+    let states = super::parse_states(query.state.as_deref());
+    let total_items = prts_db::stats::editor_entry_total(
+        &state.db,
+        id,
+        query.file_id,
+        query.task_id,
+        &states,
+        query.include_hidden,
+    )
+    .await
+    .map_err(db_err)?;
+    Ok(Json(EntryCountDto { total_items }))
+}
+
 /// 列出词条（键集分页 + 过滤）。
 #[utoipa::path(get, path = "/projects/{id}/entries", tag = "entry",
     params(("id" = i64, Path), EntryListQuery),
-    responses((status = 200, body = [EntryDto]), (status = 404)))]
+    description = "List editor entries in ascending id order using keyset pagination. file_id and task_id are mutually exclusive; effective visibility is enforced and include_hidden is honored only for authorized collaborators. limit is bounded to 1..=500.",
+    responses((status = 200, body = [EntryDto]), (status = 400, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn list_entries(
     State(state): State<AppState>,
     MaybeUser(user): MaybeUser,
@@ -366,6 +422,12 @@ pub async fn list_entries(
     if q.file_id.is_some() && q.task_id.is_some() {
         return Err(Error::bad_request("entry_scope_conflict").into());
     }
+    if let Some(file_id) = q.file_id {
+        prts_db::search::resolve_active_file_id(&state.db, id, file_id)
+            .await
+            .map_err(db_err)?
+            .ok_or(Error::NotFound)?;
+    }
     if let Some(task_id) = q.task_id {
         prts_db::tasks::find(&state.db, id, task_id)
             .await
@@ -375,8 +437,8 @@ pub async fn list_entries(
 
     let states = super::parse_states(q.state.as_deref());
 
-    // 仅当成员可编辑时才允许查看隐藏词条
-    let include_hidden = q.include_hidden && access.has_node(nodes::PROJECT_ENTRY_EDIT);
+    // include_hidden 是 owner/manager 的明确管理视图，不随普通编辑权限下发。
+    let include_hidden = q.include_hidden && access.has_node(nodes::PROJECT_ENTRY_HIDE);
 
     let filter = prts_db::entries::EntryFilter {
         file_id: q.file_id,
@@ -394,7 +456,8 @@ pub async fn list_entries(
 
 /// 获取单条词条。
 #[utoipa::path(get, path = "/projects/{id}/entries/{entry_id}", tag = "entry",
-    responses((status = 200, body = EntryDto), (status = 404)))]
+    description = "Read one entry bound to the URL project. Public projects are readable by guests; private-project existence is not disclosed to unauthorized callers.",
+    responses((status = 200, body = EntryDto), (status = 404, body = ErrorResponse)))]
 pub async fn get_entry(
     State(state): State<AppState>,
     MaybeUser(user): MaybeUser,
@@ -418,16 +481,20 @@ pub struct UpdateEntryReq {
     /// 只覆盖客户端检测到的 presence 冲突；绝不绕过 expected version。
     #[serde(default)]
     pub force_presence: bool,
+    /// 设置为 questioned 时可同时发布为评论；空白内容等同未提供。
+    pub question_reason: Option<String>,
 }
 
 /// 更新词条译文与状态。状态变化按目标状态校验 capability；锁定词条与 presence force
 /// 分别要求显式 capability；无论是否 force，expected version 冲突都返回 409。
 #[utoipa::path(put, path = "/projects/{id}/entries/{entry_id}", tag = "entry", request_body = UpdateEntryReq,
+    description = "Atomically save translation and workflow state with optimistic version checking. locked entries and force_presence require their explicit capabilities; force never bypasses a stale version. When target state is questioned, an optional Markdown reason up to 4000 characters is created as a comment in the same transaction.",
     responses(
         (status = 200, body = EntryDto),
-        (status = 403),
-        (status = 404),
-        (status = 409),
+        (status = 400, description = "Invalid state or question reason", body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 409, description = "Optimistic version conflict", body = ErrorResponse),
         (status = 503, description = "审计服务不可用，词条更新未提交", body = ErrorResponse)
     ))]
 pub async fn update_entry(
@@ -439,6 +506,17 @@ pub async fn update_entry(
     let access = paccess::load(&state, Some(&user), id).await?;
     let target =
         EntryState::parse(&req.state).ok_or_else(|| Error::bad_request("非法的目标状态"))?;
+    let question_reason = req
+        .question_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty());
+    if question_reason.is_some_and(|reason| reason.chars().count() > 4000) {
+        return Err(Error::bad_request("invalid_comment_content").into());
+    }
+    if question_reason.is_some() && target != EntryState::Questioned {
+        return Err(Error::bad_request("question_reason_requires_questioned_state").into());
+    }
     access.require_node(nodes::PROJECT_ENTRY_EDIT)?;
     if req.force_presence && !access.capabilities(false).force_save_presence {
         return Err(Error::Forbidden.into());
@@ -485,6 +563,41 @@ pub async fn update_entry(
             prts_db::contributions::award_tx(&mut tx, user.id, id, e.id, e.version, contribution)
                 .await
                 .map_err(db_err)?;
+            let question_comment = if let Some(reason) = question_reason {
+                let actor = prts_db::users::find_by_id_for_update_tx(&mut tx, user.id)
+                    .await
+                    .map_err(db_err)?
+                    .ok_or(Error::Unauthorized)?;
+                let comment = prts_db::comments::create_tx(
+                    &mut tx,
+                    id,
+                    e.id,
+                    user.id,
+                    &actor.username,
+                    actor.avatar_url.as_deref(),
+                    reason,
+                )
+                .await
+                .map_err(db_err)?;
+                prts_db::audit::append_event_tx(
+                    &mut tx,
+                    AuditActor {
+                        id: Some(user.id),
+                        kind: AuditActorKind::User,
+                        ip: None,
+                    },
+                    AuditEvent::EntryCommentCreated {
+                        project_id: id,
+                        entry_id: e.id,
+                        comment_id: comment.id,
+                    },
+                )
+                .await
+                .map_err(|_| Error::AuditUnavailable)?;
+                true
+            } else {
+                false
+            };
             prts_db::audit::append_event_tx(
                 &mut tx,
                 AuditActor {
@@ -517,6 +630,18 @@ pub async fn update_entry(
                     },
                 )
                 .await;
+            if question_comment {
+                state
+                    .realtime
+                    .publish(
+                        id,
+                        &prts_realtime::RoomEvent::EntryCommentChanged {
+                            entry_id: e.id,
+                            by: user.id,
+                        },
+                    )
+                    .await;
+            }
             Ok(Json((&e).into()))
         }
         None => Err(Error::Conflict.into()), // 版本冲突
@@ -532,6 +657,7 @@ pub struct SetFlagsReq {
 
 /// 设置词条锁定/隐藏。锁定需 `entry.lock`，隐藏需 `entry.hide`。
 #[utoipa::path(patch, path = "/projects/{id}/entries/{entry_id}/flags", tag = "entry", request_body = SetFlagsReq,
+    description = "Update the orthogonal locked and/or hidden flags without changing workflow state. Each mutation increments the entry version, appends an actor snapshot to history, updates materialized visibility statistics, writes audit, and broadcasts the new version.",
     responses(
         (status = 200, body = EntryDto),
         (status = 403),
@@ -567,10 +693,17 @@ pub async fn set_entry_flags(
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    let updated = prts_db::entries::set_flags_tx(&mut tx, id, entry_id, req.locked, req.hidden)
-        .await
-        .map_err(db_err)?
-        .ok_or(Error::NotFound)?;
+    let updated = prts_db::entries::set_flags_tx(
+        &mut tx,
+        id,
+        entry_id,
+        req.locked,
+        req.hidden,
+        Some(user.id),
+    )
+    .await
+    .map_err(db_err)?
+    .ok_or(Error::NotFound)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         AuditActor {
@@ -607,16 +740,19 @@ pub async fn set_entry_flags(
 pub struct EntryVersionDto {
     pub version: i64,
     pub kind: String,
-    pub translation: Option<String>,
-    pub state: Option<String>,
-    pub original: Option<serde_json::Value>,
+    pub translation: String,
+    pub state: String,
+    pub original: serde_json::Value,
     pub editor_id: Option<i64>,
+    pub editor_name: Option<String>,
+    pub editor_avatar_url: Option<String>,
     pub created_at: String,
 }
 
 /// 词条历史。
 #[utoipa::path(get, path = "/projects/{id}/entries/{entry_id}/history", tag = "entry",
-    responses((status = 200, body = [EntryVersionDto]), (status = 404)))]
+    description = "Return up to 200 newest-first complete entry snapshots for editor diff rendering. Legacy partial rows are materialized oldest-to-newest; source-upload changes, translation/state edits, flag changes and rollbacks include editor display snapshots when available.",
+    responses((status = 200, body = [EntryVersionDto]), (status = 404, body = ErrorResponse)))]
 pub async fn entry_history(
     State(state): State<AppState>,
     MaybeUser(user): MaybeUser,
@@ -625,27 +761,67 @@ pub async fn entry_history(
     let access = paccess::load(&state, user.as_ref(), id).await?;
     access.require_view()?;
     // 确认词条属于该项目
-    prts_db::entries::get(&state.db, id, entry_id)
+    let entry = prts_db::entries::get(&state.db, id, entry_id)
         .await
         .map_err(db_err)?
         .ok_or(Error::NotFound)?;
-    let versions = prts_db::entries::list_versions(&state.db, entry_id, 200)
+    let versions = prts_db::entries::list_versions_with_editor(&state.db, entry_id, 200)
         .await
         .map_err(db_err)?;
-    Ok(Json(
-        versions
-            .into_iter()
-            .map(|v| EntryVersionDto {
-                version: v.version,
-                kind: v.kind,
-                translation: v.translation,
-                state: v.state,
-                original: v.original,
-                editor_id: v.editor_id,
-                created_at: v.created_at.to_rfc3339(),
-            })
-            .collect(),
-    ))
+    let current_actor = match entry.updated_by {
+        Some(user_id) => prts_db::users::find_by_id(&state.db, user_id)
+            .await
+            .map_err(db_err)?,
+        None => None,
+    };
+    // Legacy rows may contain partial snapshots. Materialize from oldest to newest so a source
+    // snapshot propagates forward, then return the editor-facing newest-first timeline.
+    let mut materialized = Vec::with_capacity(versions.len());
+    let mut original = entry.original.clone();
+    let mut translation = String::new();
+    let mut workflow_state = "untranslated".to_string();
+    for version in versions.into_iter().rev() {
+        if let Some(value) = version.original {
+            original = value;
+        }
+        if let Some(value) = version.translation {
+            translation = value;
+        }
+        if let Some(value) = version.state {
+            workflow_state = value;
+        }
+        materialized.push(EntryVersionDto {
+            version: version.version,
+            kind: version.kind,
+            translation: translation.clone(),
+            state: workflow_state.clone(),
+            original: original.clone(),
+            editor_id: version.editor_id,
+            editor_name: version.editor_name,
+            editor_avatar_url: version.editor_avatar_url,
+            created_at: version.created_at.to_rfc3339(),
+        });
+    }
+    materialized.reverse();
+    let mut result = Vec::with_capacity(materialized.len() + 1);
+    if materialized
+        .first()
+        .is_none_or(|version| version.version != entry.version)
+    {
+        result.push(EntryVersionDto {
+            version: entry.version,
+            kind: "current".to_string(),
+            translation: entry.translation.clone(),
+            state: entry.state.clone(),
+            original: entry.original.clone(),
+            editor_id: entry.updated_by,
+            editor_name: current_actor.as_ref().map(|actor| actor.username.clone()),
+            editor_avatar_url: current_actor.and_then(|actor| actor.avatar_url),
+            created_at: entry.updated_at.to_rfc3339(),
+        });
+    }
+    result.extend(materialized);
+    Ok(Json(result))
 }
 
 // ============================= 导出 =============================

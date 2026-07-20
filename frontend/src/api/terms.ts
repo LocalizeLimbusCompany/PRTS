@@ -1,7 +1,7 @@
 import { http } from './http'
 import type { TerminologyDocumentFormat } from '@/lib/terminology'
 
-export type TermScope = 'current' | 'archived' | 'mixed'
+export type TermScope = 'current' | 'archived' | 'mixed' | 'deleted'
 
 export interface TermDto {
   id: number
@@ -15,6 +15,9 @@ export interface TermDto {
   pos_name_en: string | null
   archived: boolean
   archived_at: string | null
+  version: number
+  deleted: boolean
+  deleted_at: string | null
   created_by: number | null
   updated_by: number | null
   created_at: string
@@ -24,6 +27,28 @@ export interface TermDto {
 export interface TermPageDto {
   items: TermDto[]
   next_after: number | null
+}
+
+export interface TermVersionDto {
+  version: number
+  kind: string
+  source_lang: string
+  source_text: string
+  translation: string
+  notes: string
+  pos_id: number | null
+  archived: boolean
+  deleted: boolean
+  editor_id: number | null
+  editor_name: string
+  editor_avatar_url: string | null
+  created_at: string
+}
+
+export interface TermVersionPageDto {
+  items: TermVersionDto[]
+  next_after: number | null
+  can_restore: boolean
 }
 
 export interface TermWriteRequest {
@@ -121,6 +146,16 @@ export const termsApi = {
   },
   remove(projectId: number, termId: number) {
     return http.delete(`/projects/${projectId}/terms/${termId}`)
+  },
+  versions(projectId: number, termId: number, params: { after?: number; limit?: number } = {}) {
+    return http
+      .get<TermVersionPageDto>(`/projects/${projectId}/terms/${termId}/versions`, { params })
+      .then((response) => response.data)
+  },
+  restoreVersion(projectId: number, termId: number, version: number) {
+    return http
+      .post<TermDto>(`/projects/${projectId}/terms/${termId}/versions/${version}/restore`)
+      .then((response) => response.data)
   },
   previewImport(projectId: number, format: TerminologyDocumentFormat, content: string) {
     return http

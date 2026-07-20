@@ -54,6 +54,12 @@ struct FileNodeRow {
     questioned_count: i64,
     checked_count: i64,
     reviewed_count: i64,
+    hidden_total: i64,
+    hidden_untranslated_count: i64,
+    hidden_translated_count: i64,
+    hidden_questioned_count: i64,
+    hidden_checked_count: i64,
+    hidden_reviewed_count: i64,
 }
 
 /// API 历史列表中的 change set 行。
@@ -160,6 +166,12 @@ impl From<FileNodeRow> for FileNode {
                 questioned: row.questioned_count,
                 checked: row.checked_count,
                 reviewed: row.reviewed_count,
+                hidden_total: row.hidden_total,
+                hidden_untranslated: row.hidden_untranslated_count,
+                hidden_translated: row.hidden_translated_count,
+                hidden_questioned: row.hidden_questioned_count,
+                hidden_checked: row.hidden_checked_count,
+                hidden_reviewed: row.hidden_reviewed_count,
             },
         }
     }
@@ -179,7 +191,16 @@ pub async fn lock_file_tx(
                 COALESCE(stats.translated_count, 0)::BIGINT AS translated_count,
                 COALESCE(stats.questioned_count, 0)::BIGINT AS questioned_count,
                 COALESCE(stats.checked_count, 0)::BIGINT AS checked_count,
-                COALESCE(stats.reviewed_count, 0)::BIGINT AS reviewed_count
+                COALESCE(stats.reviewed_count, 0)::BIGINT AS reviewed_count,
+                COALESCE(stats.hidden_total, 0)::BIGINT AS hidden_total,
+                COALESCE(stats.hidden_untranslated_count, 0)::BIGINT
+                    AS hidden_untranslated_count,
+                COALESCE(stats.hidden_translated_count, 0)::BIGINT
+                    AS hidden_translated_count,
+                COALESCE(stats.hidden_questioned_count, 0)::BIGINT
+                    AS hidden_questioned_count,
+                COALESCE(stats.hidden_checked_count, 0)::BIGINT AS hidden_checked_count,
+                COALESCE(stats.hidden_reviewed_count, 0)::BIGINT AS hidden_reviewed_count
          FROM files AS file
          LEFT JOIN file_stats AS stats ON stats.file_id = file.id
          WHERE file.project_id = $1 AND file.id = $2
@@ -259,7 +280,16 @@ pub async fn lock_folder_subtree_tx(
                 COALESCE(stats.translated_count, 0)::BIGINT AS translated_count,
                 COALESCE(stats.questioned_count, 0)::BIGINT AS questioned_count,
                 COALESCE(stats.checked_count, 0)::BIGINT AS checked_count,
-                COALESCE(stats.reviewed_count, 0)::BIGINT AS reviewed_count
+                COALESCE(stats.reviewed_count, 0)::BIGINT AS reviewed_count,
+                COALESCE(stats.hidden_total, 0)::BIGINT AS hidden_total,
+                COALESCE(stats.hidden_untranslated_count, 0)::BIGINT
+                    AS hidden_untranslated_count,
+                COALESCE(stats.hidden_translated_count, 0)::BIGINT
+                    AS hidden_translated_count,
+                COALESCE(stats.hidden_questioned_count, 0)::BIGINT
+                    AS hidden_questioned_count,
+                COALESCE(stats.hidden_checked_count, 0)::BIGINT AS hidden_checked_count,
+                COALESCE(stats.hidden_reviewed_count, 0)::BIGINT AS hidden_reviewed_count
          FROM files AS file
          LEFT JOIN file_stats AS stats ON stats.file_id = file.id
          WHERE file.project_id = $1
@@ -1275,8 +1305,12 @@ async fn apply_mutation_tx(
             })?;
             sqlx::query(
                 "INSERT INTO entry_versions (
-                     entry_id, version, kind, translation, state, original, editor_id
-                 ) VALUES ($1, $2, 'rollback', $3, $4, $5, $6)",
+                     entry_id, version, kind, translation, state, original, editor_id,
+                     editor_name, editor_avatar_url
+                 )
+                 SELECT $1, $2, 'rollback', $3, $4, $5, actor.id, actor.username,
+                        actor.avatar_url
+                 FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $6",
             )
             .bind(entry_id)
             .bind(version)
@@ -1305,6 +1339,12 @@ async fn apply_stats_delta_tx(
              questioned_count = questioned_count + $5,
              checked_count = checked_count + $6,
              reviewed_count = reviewed_count + $7,
+             hidden_total = hidden_total + $8,
+             hidden_untranslated_count = hidden_untranslated_count + $9,
+             hidden_translated_count = hidden_translated_count + $10,
+             hidden_questioned_count = hidden_questioned_count + $11,
+             hidden_checked_count = hidden_checked_count + $12,
+             hidden_reviewed_count = hidden_reviewed_count + $13,
              updated_at = now()
          WHERE project_id = $1",
     )
@@ -1315,6 +1355,12 @@ async fn apply_stats_delta_tx(
     .bind(project_delta.questioned)
     .bind(project_delta.checked)
     .bind(project_delta.reviewed)
+    .bind(project_delta.hidden_total)
+    .bind(project_delta.hidden_untranslated)
+    .bind(project_delta.hidden_translated)
+    .bind(project_delta.hidden_questioned)
+    .bind(project_delta.hidden_checked)
+    .bind(project_delta.hidden_reviewed)
     .execute(&mut *conn)
     .await?;
     if let Some((file_id, delta)) = file_delta {
@@ -1326,6 +1372,12 @@ async fn apply_stats_delta_tx(
                  questioned_count = questioned_count + $5,
                  checked_count = checked_count + $6,
                  reviewed_count = reviewed_count + $7,
+                 hidden_total = hidden_total + $8,
+                 hidden_untranslated_count = hidden_untranslated_count + $9,
+                 hidden_translated_count = hidden_translated_count + $10,
+                 hidden_questioned_count = hidden_questioned_count + $11,
+                 hidden_checked_count = hidden_checked_count + $12,
+                 hidden_reviewed_count = hidden_reviewed_count + $13,
                  updated_at = now()
              WHERE file_id = $1",
         )
@@ -1336,6 +1388,12 @@ async fn apply_stats_delta_tx(
         .bind(delta.questioned)
         .bind(delta.checked)
         .bind(delta.reviewed)
+        .bind(delta.hidden_total)
+        .bind(delta.hidden_untranslated)
+        .bind(delta.hidden_translated)
+        .bind(delta.hidden_questioned)
+        .bind(delta.hidden_checked)
+        .bind(delta.hidden_reviewed)
         .execute(conn)
         .await?;
     }
@@ -1351,6 +1409,9 @@ async fn verify_stats_nonnegative_tx(
         "SELECT visible_total >= 0
             AND visible_total = untranslated_count + translated_count
                 + questioned_count + checked_count + reviewed_count
+            AND hidden_total >= 0
+            AND hidden_total = hidden_untranslated_count + hidden_translated_count
+                + hidden_questioned_count + hidden_checked_count + hidden_reviewed_count
          FROM project_stats WHERE project_id = $1",
     )
     .bind(project_id)
@@ -1366,6 +1427,9 @@ async fn verify_stats_nonnegative_tx(
             "SELECT visible_total >= 0
                 AND visible_total = untranslated_count + translated_count
                     + questioned_count + checked_count + reviewed_count
+                AND hidden_total >= 0
+                AND hidden_total = hidden_untranslated_count + hidden_translated_count
+                    + hidden_questioned_count + hidden_checked_count + hidden_reviewed_count
              FROM file_stats WHERE file_id = $1",
         )
         .bind(file_id)
@@ -1578,6 +1642,12 @@ fn stats_json(stats: MaterializedFileStats) -> Value {
         "questioned": stats.questioned,
         "checked": stats.checked,
         "reviewed": stats.reviewed,
+        "hidden_total": stats.hidden_total,
+        "hidden_untranslated": stats.hidden_untranslated,
+        "hidden_translated": stats.hidden_translated,
+        "hidden_questioned": stats.hidden_questioned,
+        "hidden_checked": stats.hidden_checked,
+        "hidden_reviewed": stats.hidden_reviewed,
     })
 }
 

@@ -164,6 +164,7 @@ pub async fn update(
     visibility: &str,
     source_langs: &[String],
     target_lang: &str,
+    comment_policy: &str,
 ) -> Result<Project, sqlx::Error> {
     let mut connection = pool.acquire().await?;
     update_tx(
@@ -174,6 +175,7 @@ pub async fn update(
         visibility,
         source_langs,
         target_lang,
+        comment_policy,
     )
     .await
 }
@@ -188,10 +190,11 @@ pub async fn update_tx(
     visibility: &str,
     source_langs: &[String],
     target_lang: &str,
+    comment_policy: &str,
 ) -> Result<Project, sqlx::Error> {
     sqlx::query_as::<_, Project>(
         "UPDATE projects SET name = $2, description = $3, visibility = $4,
-             source_langs = $5, target_lang = $6
+             source_langs = $5, target_lang = $6, comment_policy = $7
          WHERE id = $1 RETURNING *",
     )
     .bind(id)
@@ -200,6 +203,7 @@ pub async fn update_tx(
     .bind(visibility)
     .bind(source_langs)
     .bind(target_lang)
+    .bind(comment_policy)
     .fetch_one(conn)
     .await
 }
@@ -323,6 +327,10 @@ pub async fn delete_entry_versions_tx(
     conn: &mut PgConnection,
     project_id: i64,
 ) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM entry_comments WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query("DELETE FROM entry_versions WHERE entry_id IN (SELECT id FROM entries WHERE project_id = $1)").bind(project_id).execute(&mut *conn).await?;
     sqlx::query("DELETE FROM file_stats WHERE project_id = $1")
         .bind(project_id)
@@ -456,6 +464,10 @@ pub async fn delete_tasks_tx(conn: &mut PgConnection, project_id: i64) -> Result
 }
 
 pub async fn delete_terms_tx(conn: &mut PgConnection, project_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM term_versions WHERE project_id=$1")
+        .bind(project_id)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query("DELETE FROM terms WHERE project_id=$1")
         .bind(project_id)
         .execute(conn)

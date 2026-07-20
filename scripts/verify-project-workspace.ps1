@@ -148,7 +148,17 @@ function Test-Contracts {
     Assert-NotContains 'frontend/src/api/types.ts' '^\s*context\s*:' 'Frontend entry schema does not expose context'
     Assert-Contains 'backend/migrations/0013_editor_search.sql' "before_value - 'context'" 'Migration scrubs context from history before drop'
     Assert-Contains 'backend/migrations/0013_editor_search.sql' 'DROP COLUMN context' 'Migration removes entries.context'
-    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0015_contribution_events.sql') '0015 contribution ledger is the newest migration'
+    Assert-Contains 'backend/migrations/0016_editor_collaboration.sql' 'CREATE TABLE entry_comments' 'Editor collaboration migration creates entry comments'
+    Assert-Contains 'backend/migrations/0016_editor_collaboration.sql' 'CREATE TABLE term_versions' 'Editor collaboration migration creates immutable term versions'
+    Assert-Contains 'backend/migrations/0016_editor_collaboration.sql' 'ADD COLUMN hidden_total' 'Editor include-hidden totals are materialized'
+    Assert-Contains 'backend/crates/prts-db/src/stats.rs' 'editor_entry_total' 'Editor total pages read materialized statistics'
+    Assert-Contains 'frontend/src/views/EditorView.vue' 'name="terms"' 'Editor context area exposes the terminology tab'
+    Assert-Contains 'frontend/src/views/EditorView.vue' 'name="history"' 'Editor context area exposes the history tab'
+    Assert-Contains 'frontend/src/views/EditorView.vue' 'name="comments"' 'Editor context area exposes the comments tab'
+    Assert-True (-not (Test-Path -LiteralPath 'frontend/src/components/editor/TermSuggestions.vue')) 'Legacy term suggestions component is removed'
+    Assert-Contains 'deploy/nginx/default.conf' 'location /swagger-ui' 'Swagger UI is publicly proxied by nginx'
+    Assert-Contains 'deploy/nginx/default.conf' 'location /api-docs/' 'OpenAPI JSON is publicly proxied by nginx'
+    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0016_editor_collaboration.sql') '0016 editor collaboration is the newest migration'
 }
 
 function Test-ScaleRecoverySecurityContracts {

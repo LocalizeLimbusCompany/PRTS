@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import MarkdownView from '@/components/MarkdownView.vue'
@@ -7,11 +7,33 @@ import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import ProjectProgress from '@/components/project/ProjectProgress.vue'
 import { langLabel } from '@/lib/langs'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
+import { projectsApi, type MemberDto } from '@/api'
+import { shouldConnectProjectRealtime, useRealtime } from '@/composables/useRealtime'
+import { useAuthStore } from '@/stores/auth'
 
-const { detail } = useProjectWorkspace()
+const { detail, projectId } = useProjectWorkspace()
+const auth = useAuthStore()
 const { locale } = useI18n()
 const project = computed(() => detail.value?.project)
 const localizedLangLabel = (code: string) => langLabel(code, locale.value)
+const members = ref<MemberDto[]>([])
+const { presences } = useRealtime(
+  () => projectId.value,
+  {},
+  () =>
+    shouldConnectProjectRealtime(auth.isAuthed, detail.value?.capabilities.collaborate === true),
+)
+const onlineMembers = computed(() => {
+  const ids = new Set(presences.value.map((presence) => presence.user_id))
+  return [...ids].map((id) => {
+    const member = members.value.find((candidate) => candidate.user_id === id)
+    if (member) return member
+    return { user_id: id, username: `#${id}`, avatar_url: null } as MemberDto
+  })
+})
+onMounted(async () => {
+  if (auth.isAuthed) members.value = await projectsApi.members(projectId.value).catch(() => [])
+})
 </script>
 
 <template>
@@ -56,6 +78,36 @@ const localizedLangLabel = (code: string) => langLabel(code, locale.value)
     <q-card flat bordered class="project-info__progress">
       <q-card-section>
         <ProjectProgress :state-counts="detail.state_counts" :total="detail.entry_count" />
+      </q-card-section>
+    </q-card>
+
+    <q-card v-if="detail.capabilities.collaborate" flat bordered>
+      <q-card-section>
+        <div class="row items-center q-gutter-sm">
+          <div>
+            <div class="prts-label">{{ $t('project.online.heading') }}</div>
+            <div class="prts-dim">
+              {{ $t('project.online.count', { count: onlineMembers.length }) }}
+            </div>
+          </div>
+          <q-space />
+          <div class="project-info__online">
+            <q-avatar
+              v-for="member in onlineMembers"
+              :key="member.user_id"
+              size="34px"
+              color="primary"
+              text-color="dark"
+            >
+              <img v-if="member.avatar_url" :src="member.avatar_url" :alt="member.username" />
+              <span v-else>{{ member.username.charAt(0).toUpperCase() }}</span>
+              <q-tooltip>{{ member.username }}</q-tooltip>
+            </q-avatar>
+            <span v-if="onlineMembers.length === 0" class="prts-dim">{{
+              $t('project.online.empty')
+            }}</span>
+          </div>
+        </div>
       </q-card-section>
     </q-card>
 
@@ -135,6 +187,14 @@ const localizedLangLabel = (code: string) => langLabel(code, locale.value)
 .project-info__target {
   margin-top: 9px;
   white-space: nowrap;
+}
+.project-info__online {
+  display: flex;
+  align-items: center;
+}
+.project-info__online :deep(.q-avatar) {
+  margin-left: -7px;
+  border: 2px solid var(--prts-bg);
 }
 
 .project-info__progress {

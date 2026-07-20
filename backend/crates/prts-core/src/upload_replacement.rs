@@ -99,6 +99,18 @@ pub struct EntryStatsDelta {
     pub checked: i64,
     /// reviewed 数量差异。
     pub reviewed: i64,
+    /// 隐藏但未 tombstone 的词条总数差异。
+    pub hidden_total: i64,
+    /// 隐藏未翻译数差异。
+    pub hidden_untranslated: i64,
+    /// 隐藏已翻译数差异。
+    pub hidden_translated: i64,
+    /// 隐藏有疑问数差异。
+    pub hidden_questioned: i64,
+    /// 隐藏已检查数差异。
+    pub hidden_checked: i64,
+    /// 隐藏已审核数差异。
+    pub hidden_reviewed: i64,
 }
 
 impl AddAssign for EntryStatsDelta {
@@ -109,6 +121,12 @@ impl AddAssign for EntryStatsDelta {
         self.questioned += rhs.questioned;
         self.checked += rhs.checked;
         self.reviewed += rhs.reviewed;
+        self.hidden_total += rhs.hidden_total;
+        self.hidden_untranslated += rhs.hidden_untranslated;
+        self.hidden_translated += rhs.hidden_translated;
+        self.hidden_questioned += rhs.hidden_questioned;
+        self.hidden_checked += rhs.hidden_checked;
+        self.hidden_reviewed += rhs.hidden_reviewed;
     }
 }
 
@@ -122,24 +140,34 @@ impl EntryStatsDelta {
         after: Option<&EntryHistorySnapshot>,
     ) -> Self {
         let mut delta = Self::default();
-        if let Some(before) = before.filter(|entry| !entry.deleted && !entry.hidden) {
-            delta.visible_total -= 1;
-            delta.add_state(before.state, -1);
+        if let Some(before) = before.filter(|entry| !entry.deleted) {
+            delta.add_entry(before.state, before.hidden, -1);
         }
-        if let Some(after) = after.filter(|entry| !entry.deleted && !entry.hidden) {
-            delta.visible_total += 1;
-            delta.add_state(after.state, 1);
+        if let Some(after) = after.filter(|entry| !entry.deleted) {
+            delta.add_entry(after.state, after.hidden, 1);
         }
         delta
     }
 
-    fn add_state(&mut self, state: EntryState, amount: i64) {
-        match state {
-            EntryState::Untranslated => self.untranslated += amount,
-            EntryState::Translated => self.translated += amount,
-            EntryState::Questioned => self.questioned += amount,
-            EntryState::Checked => self.checked += amount,
-            EntryState::Reviewed => self.reviewed += amount,
+    fn add_entry(&mut self, state: EntryState, hidden: bool, amount: i64) {
+        if hidden {
+            self.hidden_total += amount;
+            match state {
+                EntryState::Untranslated => self.hidden_untranslated += amount,
+                EntryState::Translated => self.hidden_translated += amount,
+                EntryState::Questioned => self.hidden_questioned += amount,
+                EntryState::Checked => self.hidden_checked += amount,
+                EntryState::Reviewed => self.hidden_reviewed += amount,
+            }
+        } else {
+            self.visible_total += amount;
+            match state {
+                EntryState::Untranslated => self.untranslated += amount,
+                EntryState::Translated => self.translated += amount,
+                EntryState::Questioned => self.questioned += amount,
+                EntryState::Checked => self.checked += amount,
+                EntryState::Reviewed => self.reviewed += amount,
+            }
         }
     }
 }
@@ -611,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn restored_hidden_key_does_not_change_visible_stats() {
+    fn restored_hidden_key_updates_hidden_stats_without_changing_visible_stats() {
         let transition = plan_transition(ReplacementInput {
             existing: Some(existing(
                 EntryState::Reviewed,
@@ -626,7 +654,14 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(transition.stats_delta, EntryStatsDelta::default());
+        assert_eq!(
+            transition.stats_delta,
+            EntryStatsDelta {
+                hidden_total: 1,
+                hidden_reviewed: 1,
+                ..EntryStatsDelta::default()
+            }
+        );
         assert!(transition.after.hidden);
     }
 

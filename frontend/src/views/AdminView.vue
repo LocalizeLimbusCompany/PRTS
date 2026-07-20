@@ -601,7 +601,11 @@ async function exportPos(format: TerminologyDocumentFormat) {
           square
           :color="searchSettings.embedding_key_present ? 'positive' : 'grey-6'"
           text-color="white"
-          :icon="searchSettings.embedding_key_present ? 'check_circle' : 'cancel'"
+          :icon="
+            searchSettings.embedding_key_present
+              ? 'mdi-check-circle-outline'
+              : 'mdi-close-circle-outline'
+          "
         >
           {{
             searchSettings.embedding_key_present

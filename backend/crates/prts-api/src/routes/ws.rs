@@ -72,10 +72,14 @@ pub(crate) async fn can_access(state: &AppState, project_id: i64, user_id: i64) 
 
 async fn handle_socket(socket: WebSocket, state: AppState, project_id: i64, user_id: i64) {
     let (mut sender, mut receiver) = socket.split();
-    let (mut rx, online) = state.realtime.join(project_id, user_id).await;
+    let connection_id = uuid::Uuid::new_v4().to_string();
+    let (mut rx, presences) = state
+        .realtime
+        .join(project_id, user_id, &connection_id)
+        .await;
 
     // 先把当前在线快照发给本连接
-    if let Ok(snapshot) = serde_json::to_string(&RoomEvent::Join { user_id, online }) {
+    if let Ok(snapshot) = serde_json::to_string(&RoomEvent::PresenceSnapshot { presences }) {
         let _ = sender.send(Message::Text(snapshot.into())).await;
     }
 
@@ -90,15 +94,62 @@ async fn handle_socket(socket: WebSocket, state: AppState, project_id: i64, user
 
     // 客户端消息（正在编辑）→ 房间
     let hub = state.realtime.clone();
+    let db = state.db.clone();
+    let recv_connection_id = connection_id.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let Message::Text(txt) = msg {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(txt.as_str()) {
-                    if v.get("type").and_then(|t| t.as_str()) == Some("editing") {
-                        if let Some(entry_id) = v.get("entry_id").and_then(|e| e.as_i64()) {
-                            hub.publish(project_id, &RoomEvent::Editing { user_id, entry_id })
-                                .await;
+                    match v.get("type").and_then(|t| t.as_str()) {
+                        Some("editing") => {
+                            if let Some(entry_id) = v.get("entry_id").and_then(|e| e.as_i64()) {
+                                if let Ok(Some(entry)) =
+                                    prts_db::entries::get(&db, project_id, entry_id).await
+                                {
+                                    hub.update_presence(
+                                        project_id,
+                                        &recv_connection_id,
+                                        user_id,
+                                        Some(entry.file_id),
+                                        Some(entry.id),
+                                    )
+                                    .await;
+                                }
+                            }
                         }
+                        Some("viewing") => {
+                            if let Some(file_id) = v.get("file_id").and_then(|file| file.as_i64()) {
+                                if prts_db::search::resolve_active_file_id(&db, project_id, file_id)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .is_some()
+                                {
+                                    hub.update_presence(
+                                        project_id,
+                                        &recv_connection_id,
+                                        user_id,
+                                        Some(file_id),
+                                        None,
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+                        Some("idle") => {
+                            hub.update_presence(
+                                project_id,
+                                &recv_connection_id,
+                                user_id,
+                                None,
+                                None,
+                            )
+                            .await;
+                        }
+                        Some("heartbeat") => {
+                            hub.touch_presence(project_id, &recv_connection_id).await;
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -110,7 +161,7 @@ async fn handle_socket(socket: WebSocket, state: AppState, project_id: i64, user
         _ = &mut recv_task => send_task.abort(),
     }
 
-    state.realtime.leave(project_id, user_id).await;
+    state.realtime.leave(project_id, &connection_id).await;
 }
 
 /// 用户通知流 WebSocket 升级入口（`GET /ws/user?token=`）。

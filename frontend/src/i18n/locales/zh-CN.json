@@ -88,6 +88,13 @@
     "cp": "贡献分 CP",
     "description": "个人描述",
     "translationLanguages": "翻译语言偏好",
+    "entryDiffMode": "词条历史差分模式",
+    "entryDiffModeHint": "保存到账号，并在所有设备的词条历史中使用。",
+    "diffModes": {
+      "character": "字符行内差分",
+      "word": "词级行内差分",
+      "sideBySide": "左右对照"
+    },
     "save": "保存资料",
     "saved": "资料已保存",
     "saveFailed": "保存失败",
@@ -151,6 +158,20 @@
     "createdAt": "创建时间",
     "save": "保存",
     "cancel": "取消",
+    "online": {
+      "heading": "项目在线成员",
+      "count": "当前有 {count} 人在线",
+      "empty": "暂无在线成员"
+    },
+    "comments": {
+      "policy": "词条评论权限",
+      "private": "私密",
+      "privateHint": "所有项目可见者可看，只有项目成员可评论。",
+      "internal": "内部",
+      "internalHint": "只有项目成员可以查看和评论。",
+      "public": "公开",
+      "publicHint": "所有项目可见者可看，除游客外的登录用户都可评论。"
+    },
     "sections": {
       "info": "信息",
       "files": "文件",
@@ -433,9 +454,12 @@
     "restorePrimaryOnly": "只有当前主源语言的术语可以恢复启用",
     "restored": "术语已恢复启用",
     "delete": "删除术语",
-    "deleteConfirm": "确认永久删除此术语？此操作不可撤销。",
+    "deleteConfirm": "确认删除此术语？术语会移入“已删除”，之后仍可从版本历史恢复。",
     "deleted": "术语已删除",
     "deleteFailed": "术语删除失败",
+    "versionHistory": "版本历史",
+    "restoreVersion": "恢复此版本",
+    "versionRestored": "术语版本已恢复",
     "export": "导出",
     "exportFailed": "导出失败",
     "loadMore": "加载更多术语",
@@ -446,7 +470,8 @@
     "scopes": {
       "current": "当前术语",
       "archived": "已归档",
-      "mixed": "全部"
+      "mixed": "全部",
+      "deleted": "已删除"
     },
     "fields": {
       "sourceLang": "源语言",
@@ -581,7 +606,35 @@
     "unhide": "取消隐藏",
     "translation": "译文",
     "entryHistory": "词条历史",
-    "noHistory": "暂无历史"
+    "noHistory": "暂无历史",
+    "editArea": "编辑",
+    "contextArea": "详情",
+    "expandEntryList": "展开词条列表",
+    "expandContext": "展开详情区域",
+    "termsTab": "术语",
+    "commentsTab": "评论",
+    "noTerms": "此词条没有匹配的术语",
+    "clickTermToInsert": "点击插入译文光标位置",
+    "selectForContext": "选择词条后查看术语、历史和评论",
+    "fileOnlineCount": "当前文件有 {count} 人在线",
+    "noFileOnline": "当前文件暂无在线成员",
+    "markQuestioned": "标记为有疑问",
+    "questionReason": "疑问原因（可选）",
+    "questionReasonHint": "填写后会自动发布到此词条的评论。",
+    "confirmQuestioned": "保存并标记有疑问",
+    "translationDiff": "译文变化",
+    "sourceDiff": "原文变化",
+    "systemActor": "系统",
+    "comment": "评论",
+    "publishComment": "发布评论",
+    "commentReadOnly": "当前权限只能查看评论。",
+    "commentDeleted": "此评论已删除",
+    "noComments": "暂无评论",
+    "editComment": "编辑评论",
+    "saveComment": "保存评论",
+    "deleteComment": "删除评论",
+    "deleteCommentConfirm": "确定要删除这条评论吗？",
+    "loadMoreComments": "加载更多评论"
   },
   "admin": {
     "title": "管理后台",

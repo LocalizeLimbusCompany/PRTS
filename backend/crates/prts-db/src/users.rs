@@ -237,6 +237,19 @@ pub async fn update_profile_tx(
     .await
 }
 
+/// 在调用方事务内更新词条历史差分偏好。
+pub async fn update_entry_diff_mode_tx(
+    conn: &mut PgConnection,
+    id: i64,
+    entry_diff_mode: &str,
+) -> Result<User, sqlx::Error> {
+    sqlx::query_as::<_, User>("UPDATE users SET entry_diff_mode = $2 WHERE id = $1 RETURNING *")
+        .bind(id)
+        .bind(entry_diff_mode)
+        .fetch_one(conn)
+        .await
+}
+
 /// 设置 / 清除平台角色（`None` 表示降为普通用户）。
 pub async fn set_platform_role(
     pool: &PgPool,

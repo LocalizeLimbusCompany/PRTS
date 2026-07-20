@@ -160,6 +160,8 @@ pub struct SearchHitDto {
 pub struct StructuredSearchResponse {
     pub items: Vec<SearchHitDto>,
     pub next_after: Option<String>,
+    /// 当前搜索结果集合的精确总条目数，用于编辑器显示总页数。
+    pub total_items: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -321,7 +323,7 @@ async fn execute_search(
         include_hidden: plan.include_hidden,
     };
 
-    let vector_ids = if plan.vector && access.project.embedding_state == "ready" {
+    let query_vector = if plan.vector && access.project.embedding_state == "ready" {
         let runtime = state.search_rt.read().await.clone();
         match (
             runtime.embedding_enabled,
@@ -338,15 +340,7 @@ async fn execute_search(
             {
                 Ok(mut vectors) if !vectors.is_empty() => {
                     let vector = vectors.remove(0);
-                    prts_db::search::vector_search(
-                        &state.db,
-                        project_id,
-                        &vector,
-                        &filter,
-                        SEARCH_RECALL_LIMIT,
-                    )
-                    .await
-                    .ok()
+                    Some(vector)
                 }
                 _ => {
                     tracing::warn!("query embedding unavailable; degrading to lexical search");
@@ -364,41 +358,60 @@ async fn execute_search(
         .primary_source_lang
         .as_deref()
         .ok_or(Error::ProjectLanguageResolutionRequired)?;
-    let mut results = run(
-        &state.db,
-        OrchestratorInput {
-            project_id,
-            query: plan.query.as_deref(),
-            src_lang: source_language,
-            tgt_lang: &access.project.target_lang,
-            file_ids: &file_ids,
-            restrict_to_file_ids,
-            states: &state_filters,
-            conditions: &plan.conditions,
-            include_hidden: plan.include_hidden,
-            per_path: SEARCH_RECALL_LIMIT,
-            top_k: if plan.query.is_none() {
-                i64::from(plan.limit) + 1
-            } else {
-                SEARCH_RECALL_LIMIT
-            },
-            filter_after_entry_id: if plan.query.is_none() {
-                cursor.as_ref().map(|cursor| cursor.last_entry_id)
-            } else {
-                None
-            },
-            vector_ids,
-        },
-    )
-    .await
-    .map_err(db_err)?;
-    if let Some(cursor) = cursor {
-        results.retain(|(entry, score)| {
-            *score < cursor.last_rrf_score
-                || (*score == cursor.last_rrf_score && entry.id > cursor.last_entry_id)
-        });
-    }
     let limit = usize::from(plan.limit);
+    let (mut results, total_items) = if let Some(query) = plan.query.as_deref() {
+        let rows = prts_db::search::ranked_search_page(
+            &state.db,
+            project_id,
+            query,
+            source_language,
+            &access.project.target_lang,
+            &filter,
+            query_vector.as_deref(),
+            SEARCH_RECALL_LIMIT,
+            cursor
+                .as_ref()
+                .map(|cursor| (cursor.last_rrf_score, cursor.last_entry_id)),
+            i64::from(plan.limit) + 1,
+        )
+        .await
+        .map_err(db_err)?;
+        let total = rows.first().map(|row| row.total_items).unwrap_or(0);
+        (
+            rows.into_iter()
+                .map(|row| {
+                    let (entry, score, _) = row.into_parts();
+                    (entry, score)
+                })
+                .collect(),
+            total,
+        )
+    } else {
+        let results = run(
+            &state.db,
+            OrchestratorInput {
+                project_id,
+                query: None,
+                src_lang: source_language,
+                tgt_lang: &access.project.target_lang,
+                file_ids: &file_ids,
+                restrict_to_file_ids,
+                states: &state_filters,
+                conditions: &plan.conditions,
+                include_hidden: plan.include_hidden,
+                per_path: SEARCH_RECALL_LIMIT,
+                top_k: i64::from(plan.limit) + 1,
+                filter_after_entry_id: cursor.as_ref().map(|cursor| cursor.last_entry_id),
+                vector_ids: None,
+            },
+        )
+        .await
+        .map_err(db_err)?;
+        let total = prts_db::search::count_filtered(&state.db, project_id, &filter)
+            .await
+            .map_err(db_err)?;
+        (results, total)
+    };
     let has_more = results.len() > limit;
     results.truncate(limit);
     let next_after = if has_more {
@@ -426,6 +439,7 @@ async fn execute_search(
             })
             .collect(),
         next_after,
+        total_items,
     })
 }
 

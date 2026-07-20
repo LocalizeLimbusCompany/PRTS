@@ -14,6 +14,8 @@ pub struct User {
     pub avatar_url: Option<String>,
     pub description: String,
     pub translation_langs: Vec<String>,
+    /// 词条历史的个人差分展示模式。
+    pub entry_diff_mode: String,
     /// Exact tenths of one CP; one stored unit equals 0.1 CP.
     pub cp_tenths: i64,
     pub platform_role: Option<String>,
@@ -65,6 +67,8 @@ pub struct Project {
     pub name: String,
     pub description: String,
     pub visibility: String,
+    /// 词条评论的项目级读取/写入策略。
+    pub comment_policy: String,
     pub source_langs: Vec<String>,
     pub primary_source_lang: Option<String>,
     pub target_lang: String,
@@ -187,6 +191,8 @@ pub struct EntryVersion {
     pub state: Option<String>,
     pub original: Option<serde_json::Value>,
     pub editor_id: Option<i64>,
+    pub editor_name: Option<String>,
+    pub editor_avatar_url: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -277,6 +283,12 @@ pub struct ProjectStats {
     pub questioned_count: i64,
     pub checked_count: i64,
     pub reviewed_count: i64,
+    pub hidden_total: i64,
+    pub hidden_untranslated_count: i64,
+    pub hidden_translated_count: i64,
+    pub hidden_questioned_count: i64,
+    pub hidden_checked_count: i64,
+    pub hidden_reviewed_count: i64,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -291,6 +303,12 @@ pub struct FileStats {
     pub questioned_count: i64,
     pub checked_count: i64,
     pub reviewed_count: i64,
+    pub hidden_total: i64,
+    pub hidden_untranslated_count: i64,
+    pub hidden_translated_count: i64,
+    pub hidden_questioned_count: i64,
+    pub hidden_checked_count: i64,
+    pub hidden_reviewed_count: i64,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -357,6 +375,9 @@ pub struct Term {
     pub notes: String,
     pub pos_id: Option<i64>,
     pub archived_at: Option<DateTime<Utc>>,
+    pub version: i64,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deleted_by: Option<i64>,
     pub created_by: Option<i64>,
     pub updated_by: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -376,10 +397,50 @@ pub struct TermWithPos {
     pub pos_name_zh_cn: Option<String>,
     pub pos_name_en: Option<String>,
     pub archived_at: Option<DateTime<Utc>>,
+    pub version: i64,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deleted_by: Option<i64>,
     pub created_by: Option<i64>,
     pub updated_by: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// 词条评论；作者展示信息在写入时快照，账号删除后仍可解释历史。
+#[derive(Debug, Clone, FromRow)]
+pub struct EntryComment {
+    pub id: i64,
+    pub project_id: i64,
+    pub entry_id: i64,
+    pub author_id: Option<i64>,
+    pub author_name: String,
+    pub author_avatar_url: Option<String>,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub deleted_by: Option<i64>,
+}
+
+/// 术语的不可改写完整快照。
+#[derive(Debug, Clone, FromRow)]
+pub struct TermVersion {
+    pub id: i64,
+    pub project_id: i64,
+    pub term_id: i64,
+    pub version: i64,
+    pub kind: String,
+    pub source_lang: String,
+    pub source_text: String,
+    pub translation: String,
+    pub notes: String,
+    pub pos_id: Option<i64>,
+    pub archived_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
+    pub editor_id: Option<i64>,
+    pub editor_name: String,
+    pub editor_avatar_url: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// 原始文件上传批次；项目删除后以 snapshot id 保留传输历史。

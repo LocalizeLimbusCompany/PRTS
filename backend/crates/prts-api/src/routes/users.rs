@@ -16,8 +16,13 @@ use crate::error::{ApiError, ErrorResponse, RequestLocale};
 use crate::state::AppState;
 
 /// 当前用户资料。
-#[utoipa::path(get, path = "/me", tag = "user",
-    responses((status = 200, body = UserDto), (status = 401)))]
+#[utoipa::path(
+    get,
+    path = "/me",
+    tag = "user",
+    description = "Return the authenticated user's profile, including canonical translation-language preferences and the cross-device entry-history diff mode. Password hashes and OAuth provider payloads are never returned.",
+    responses((status = 200, body = UserDto), (status = 401, body = ErrorResponse))
+)]
 pub async fn me(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -35,13 +40,17 @@ pub struct UpdateMeReq {
     pub description: Option<String>,
     pub avatar_url: Option<String>,
     pub translation_langs: Option<Vec<String>>,
+    /// 词条历史差分模式；缺省表示不变。
+    pub entry_diff_mode: Option<String>,
 }
 
 /// 更新当前用户资料。
 #[utoipa::path(put, path = "/me", tag = "user", request_body = UpdateMeReq,
+    description = "Atomically update provided profile fields. Translation languages are canonicalized as BCP-47 tags; entry_diff_mode accepts character_inline, word_inline, or side_by_side and is saved to the account for use across devices.",
     responses(
         (status = 200, body = UserDto),
-        (status = 401),
+        (status = 400, description = "Invalid or duplicate language tag, or invalid diff mode", body = ErrorResponse),
+        (status = 401, body = ErrorResponse),
         (status = 503, description = "审计服务不可用，资料更新未提交", body = ErrorResponse)
     ))]
 pub async fn update_me(
@@ -68,7 +77,16 @@ pub async fn update_me(
             prts_core::LanguageTagError::Duplicate => Error::DuplicateLanguageTag,
             _ => Error::bad_request(error.code()),
         })?;
-    let mut changed_fields = Vec::with_capacity(3);
+    let diff_mode = req
+        .entry_diff_mode
+        .unwrap_or_else(|| current.entry_diff_mode.clone());
+    if !matches!(
+        diff_mode.as_str(),
+        "character_inline" | "word_inline" | "side_by_side"
+    ) {
+        return Err(Error::bad_request("invalid_entry_diff_mode").into());
+    }
+    let mut changed_fields = Vec::with_capacity(4);
     if description != current.description {
         changed_fields.push("description");
     }
@@ -77,6 +95,9 @@ pub async fn update_me(
     }
     if langs != current.translation_langs {
         changed_fields.push("translation_langs");
+    }
+    if diff_mode != current.entry_diff_mode {
+        changed_fields.push("entry_diff_mode");
     }
 
     let updated = prts_db::users::update_profile_tx(
@@ -88,6 +109,9 @@ pub async fn update_me(
     )
     .await
     .map_err(db_err)?;
+    let updated = prts_db::users::update_entry_diff_mode_tx(&mut tx, updated.id, &diff_mode)
+        .await
+        .map_err(db_err)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         AuditActor {

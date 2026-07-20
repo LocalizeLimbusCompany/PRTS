@@ -8,6 +8,8 @@ import type {
   CreatedApiKey,
   DeleteChallengeDto,
   DeletionStatusDto,
+  EntryCommentDto,
+  EntryCommentPageDto,
   EntryDto,
   EntryVersionDto,
   ExternalAccountDto,
@@ -79,6 +81,7 @@ export const usersApi = {
     description?: string
     avatar_url?: string | null
     translation_langs?: string[]
+    entry_diff_mode?: string
   }) {
     return http.put<UserDto>('/me', body).then((r) => r.data)
   },
@@ -280,10 +283,24 @@ export const entriesApi = {
   get(id: number, entryId: number) {
     return http.get<EntryDto>(`/projects/${id}/entries/${entryId}`).then((r) => r.data)
   },
+  count(
+    id: number,
+    params: { file_id?: number; task_id?: number; state?: string; include_hidden?: boolean } = {},
+  ) {
+    return http
+      .get<{ total_items: number }>(`/projects/${id}/entries/count`, { params })
+      .then((r) => r.data)
+  },
   update(
     id: number,
     entryId: number,
-    body: { translation: string; state: string; version: number; force_presence?: boolean },
+    body: {
+      translation: string
+      state: string
+      version: number
+      force_presence?: boolean
+      question_reason?: string
+    },
   ) {
     return http.put<EntryDto>(`/projects/${id}/entries/${entryId}`, body).then((r) => r.data)
   },
@@ -296,6 +313,29 @@ export const entriesApi = {
     return http
       .get<EntryVersionDto[]>(`/projects/${id}/entries/${entryId}/history`)
       .then((r) => r.data)
+  },
+}
+
+export const entryCommentsApi = {
+  list(id: number, entryId: number, params: { after?: number; limit?: number } = {}) {
+    return http
+      .get<EntryCommentPageDto>(`/projects/${id}/entries/${entryId}/comments`, { params })
+      .then((r) => r.data)
+  },
+  create(id: number, entryId: number, content: string) {
+    return http
+      .post<EntryCommentDto>(`/projects/${id}/entries/${entryId}/comments`, { content })
+      .then((r) => r.data)
+  },
+  update(id: number, entryId: number, commentId: number, content: string) {
+    return http
+      .put<EntryCommentDto>(`/projects/${id}/entries/${entryId}/comments/${commentId}`, {
+        content,
+      })
+      .then((r) => r.data)
+  },
+  remove(id: number, entryId: number, commentId: number) {
+    return http.delete(`/projects/${id}/entries/${entryId}/comments/${commentId}`)
   },
 }
 

@@ -25,7 +25,7 @@ use crate::term_import::{
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 100;
-const MAX_MATCH_LIMIT: i64 = 50;
+const MAX_MATCH_LIMIT: i64 = 5_000;
 
 /// 术语列表范围。
 #[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
@@ -34,6 +34,7 @@ pub enum TermScope {
     Current,
     Archived,
     Mixed,
+    Deleted,
 }
 
 impl From<TermScope> for prts_db::terms::TermListScope {
@@ -42,6 +43,7 @@ impl From<TermScope> for prts_db::terms::TermListScope {
             TermScope::Current => Self::Current,
             TermScope::Archived => Self::Archived,
             TermScope::Mixed => Self::Mixed,
+            TermScope::Deleted => Self::Deleted,
         }
     }
 }
@@ -88,10 +90,44 @@ pub struct TermDto {
     pub pos_name_en: Option<String>,
     pub archived: bool,
     pub archived_at: Option<String>,
+    pub version: i64,
+    pub deleted: bool,
+    pub deleted_at: Option<String>,
     pub created_by: Option<i64>,
     pub updated_by: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// 术语不可改写版本快照。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TermVersionDto {
+    pub version: i64,
+    pub kind: String,
+    pub source_lang: String,
+    pub source_text: String,
+    pub translation: String,
+    pub notes: String,
+    pub pos_id: Option<i64>,
+    pub archived: bool,
+    pub deleted: bool,
+    pub editor_id: Option<i64>,
+    pub editor_name: String,
+    pub editor_avatar_url: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct TermVersionListQuery {
+    pub after: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TermVersionPageDto {
+    pub items: Vec<TermVersionDto>,
+    pub next_after: Option<i64>,
+    pub can_restore: bool,
 }
 
 /// 术语键集页。
@@ -175,7 +211,16 @@ pub async fn create_term(
         user.id,
     )
     .await
-    .map_err(map_term_db_error)?;
+    .map_err(map_term_db_error)?
+    .ok_or(prts_common::Error::DuplicateTerm)?;
+    let version_kind = if term.version == 1 {
+        "create"
+    } else {
+        "restore_create"
+    };
+    prts_db::terms::append_version_tx(&mut tx, term.id, version_kind, user.id)
+        .await
+        .map_err(db_err)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         audit_actor(&user),
@@ -275,6 +320,9 @@ pub async fn update_term(
     .await
     .map_err(map_term_db_error)?
     .ok_or(prts_common::Error::NotFound)?;
+    prts_db::terms::append_version_tx(&mut tx, term_id, "update", user.id)
+        .await
+        .map_err(db_err)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         audit_actor(&user),
@@ -293,10 +341,10 @@ pub async fn update_term(
     load_term(&state, id, term_id).await.map(Json)
 }
 
-/// 删除 URL project 绑定的术语。
+/// 软删除 URL project 绑定的术语。
 #[utoipa::path(delete, path = "/projects/{id}/terms/{term_id}", tag = "term",
     params(("id" = i64, Path), ("term_id" = i64, Path)),
-    description = "永久删除一个项目术语；事务内重新校验术语管理权限与项目状态，并写脱敏审计。",
+    description = "软删除一个项目术语并保留完整版本历史；事务内重新校验术语管理权限与项目状态，并写脱敏审计。删除后可恢复任意历史版本，或以相同 identity 再次创建并恢复原记录。",
     responses((status = 204), (status = 401, body = ErrorResponse),
         (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse),
         (status = 409, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
@@ -313,12 +361,16 @@ pub async fn delete_term(
         .await
         .map_err(db_err)?
         .ok_or(prts_common::Error::NotFound)?;
-    if !prts_db::terms::delete_tx(&mut tx, id, term_id)
+    if prts_db::terms::delete_tx(&mut tx, id, term_id, user.id)
         .await
         .map_err(db_err)?
+        .is_none()
     {
         return Err(prts_common::Error::NotFound.into());
     }
+    prts_db::terms::append_version_tx(&mut tx, term_id, "delete", user.id)
+        .await
+        .map_err(db_err)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         audit_actor(&user),
@@ -334,6 +386,103 @@ pub async fn delete_term(
     .map_err(|_| prts_common::Error::AuditUnavailable)?;
     tx.commit().await.map_err(db_err)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// 按版本倒序读取术语历史；项目可见者均可读取，恢复能力单独下发。
+#[utoipa::path(
+    get,
+    path = "/projects/{id}/terms/{term_id}/versions",
+    tag = "term",
+    params(("id" = i64, Path), ("term_id" = i64, Path), TermVersionListQuery),
+    description = "返回术语的不可改写完整快照，包含创建、编辑、归档/激活、导入、删除和恢复。使用 version 键集分页，不使用 OFFSET。",
+    responses((status = 200, body = TermVersionPageDto), (status = 404, body = ErrorResponse))
+)]
+pub async fn list_term_versions(
+    State(state): State<AppState>,
+    MaybeUser(user): MaybeUser,
+    Path((id, term_id)): Path<(i64, i64)>,
+    Query(query): Query<TermVersionListQuery>,
+) -> Result<Json<TermVersionPageDto>, ApiError> {
+    let access = paccess::load(&state, user.as_ref(), id).await?;
+    access.require_view()?;
+    let limit = validate_limit(query.limit, MAX_LIMIT)?;
+    let rows = prts_db::terms::list_versions(&state.db, id, term_id, query.after, limit)
+        .await
+        .map_err(db_err)?;
+    if rows.is_empty() && query.after.is_none() {
+        return Err(prts_common::Error::NotFound.into());
+    }
+    let next_after = (rows.len() as i64 == limit)
+        .then(|| rows.last().map(|row| row.version))
+        .flatten();
+    Ok(Json(TermVersionPageDto {
+        items: rows.into_iter().map(term_version_dto).collect(),
+        next_after,
+        can_restore: access.has_node(nodes::PROJECT_TERM_MANAGE),
+    }))
+}
+
+/// 将任意历史快照恢复为新的当前版本；旧版本永不改写。
+#[utoipa::path(
+    post,
+    path = "/projects/{id}/terms/{term_id}/versions/{version}/restore",
+    tag = "term",
+    description = "owner/manager/reviewer 可把历史术语快照恢复为新的 active current version。恢复重新校验当前主源、POS、项目状态和唯一约束，并写新版本与脱敏审计。",
+    responses((status = 200, body = TermDto), (status = 400, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse), (status = 503, body = ErrorResponse))
+)]
+pub async fn restore_term_version(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path((id, term_id, version)): Path<(i64, i64, i64)>,
+) -> Result<Json<TermDto>, ApiError> {
+    let access = paccess::load(&state, Some(&user), id).await?;
+    access.require_node(nodes::PROJECT_TERM_MANAGE)?;
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let project = lock_term_mutation(&mut tx, &user, id).await?;
+    prts_db::terms::find_for_update_tx(&mut tx, id, term_id)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::NotFound)?;
+    let snapshot = prts_db::terms::find_version_for_update_tx(&mut tx, id, term_id, version)
+        .await
+        .map_err(db_err)?
+        .ok_or(prts_common::Error::NotFound)?;
+    let primary = project
+        .primary_source_lang
+        .as_deref()
+        .ok_or(prts_common::Error::ProjectLanguageResolutionRequired)?;
+    prts_core::terms::plan_term_write(
+        &snapshot.source_lang,
+        primary,
+        snapshot.archived_at.is_some(),
+        project.language_repair_state == "ready",
+        false,
+    )
+    .map_err(map_term_rule_error)?;
+    require_pos(&mut tx, snapshot.pos_id).await?;
+    let restored = prts_db::terms::restore_version_tx(&mut tx, id, term_id, &snapshot, user.id)
+        .await
+        .map_err(map_term_db_error)?;
+    prts_db::terms::append_version_tx(&mut tx, term_id, "restore", user.id)
+        .await
+        .map_err(db_err)?;
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        audit_actor(&user),
+        AuditEvent::TermRestored {
+            project_id: id,
+            term_id,
+            restored_from_version: version,
+            new_version: restored.version,
+            source_lang: &restored.source_lang,
+            pos_id: restored.pos_id,
+            archived: restored.archived_at.is_some(),
+        },
+    )
+    .await
+    .map_err(|_| prts_common::Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    load_term(&state, id, term_id).await.map(Json)
 }
 
 /// 只匹配当前 primary 的 active terms。
@@ -532,7 +681,7 @@ pub async fn confirm_term_import(
     let created = existing.iter().filter(|id| id.is_none()).count();
     let updated = existing.len() - created;
     for row in &resolved {
-        prts_db::terms::upsert_import_tx(
+        let term = prts_db::terms::upsert_import_tx(
             &mut tx,
             id,
             &row.source_lang,
@@ -545,6 +694,9 @@ pub async fn confirm_term_import(
         )
         .await
         .map_err(map_term_db_error)?;
+        prts_db::terms::append_version_tx(&mut tx, term.id, "import", user.id)
+            .await
+            .map_err(db_err)?;
     }
     prts_db::audit::append_event_tx(
         &mut tx,
@@ -914,9 +1066,30 @@ fn term_dto(term: prts_db::models::TermWithPos) -> TermDto {
         pos_name_en: term.pos_name_en,
         archived: term.archived_at.is_some(),
         archived_at: term.archived_at.map(|value| value.to_rfc3339()),
+        version: term.version,
+        deleted: term.deleted_at.is_some(),
+        deleted_at: term.deleted_at.map(|value| value.to_rfc3339()),
         created_by: term.created_by,
         updated_by: term.updated_by,
         created_at: term.created_at.to_rfc3339(),
         updated_at: term.updated_at.to_rfc3339(),
+    }
+}
+
+fn term_version_dto(version: prts_db::models::TermVersion) -> TermVersionDto {
+    TermVersionDto {
+        version: version.version,
+        kind: version.kind,
+        source_lang: version.source_lang,
+        source_text: version.source_text,
+        translation: version.translation,
+        notes: version.notes,
+        pos_id: version.pos_id,
+        archived: version.archived_at.is_some(),
+        deleted: version.deleted_at.is_some(),
+        editor_id: version.editor_id,
+        editor_name: version.editor_name,
+        editor_avatar_url: version.editor_avatar_url,
+        created_at: version.created_at.to_rfc3339(),
     }
 }

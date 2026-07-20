@@ -21,6 +21,8 @@ pub struct UserDto {
     pub description: String,
     /// 个人翻译语言偏好（BCP-47）。
     pub translation_langs: Vec<String>,
+    /// 词条历史差分模式：character_inline|word_inline|side_by_side。
+    pub entry_diff_mode: String,
     /// Exact contribution tenths; one stored unit equals 0.1 CP.
     pub cp_tenths: i64,
     /// 平台角色（super_admin|admin|maintainer），普通用户为 null。
@@ -42,6 +44,7 @@ impl From<&User> for UserDto {
             avatar_url: u.avatar_url.clone(),
             description: u.description.clone(),
             translation_langs: u.translation_langs.clone(),
+            entry_diff_mode: u.entry_diff_mode.clone(),
             cp_tenths: u.cp_tenths,
             platform_role: u.platform_role.clone(),
             platform_capabilities: capabilities::PlatformCapabilitiesDto::from_role(

@@ -88,6 +88,13 @@
     "cp": "Contribution points",
     "description": "Profile description",
     "translationLanguages": "Preferred translation languages",
+    "entryDiffMode": "Entry history diff mode",
+    "entryDiffModeHint": "Saved to your account and used for entry history on every device.",
+    "diffModes": {
+      "character": "Inline character diff",
+      "word": "Inline word diff",
+      "sideBySide": "Side by side"
+    },
     "save": "Save profile",
     "saved": "Profile saved",
     "saveFailed": "Failed to save profile",
@@ -151,6 +158,20 @@
     "createdAt": "Created",
     "save": "Save",
     "cancel": "Cancel",
+    "online": {
+      "heading": "Project members online",
+      "count": "{count} people online now",
+      "empty": "No members are online"
+    },
+    "comments": {
+      "policy": "Entry comment permissions",
+      "private": "Private",
+      "privateHint": "Everyone who can view the project can read; only project members can comment.",
+      "internal": "Internal",
+      "internalHint": "Only project members can read and comment.",
+      "public": "Public",
+      "publicHint": "Everyone who can view the project can read; any signed-in non-guest user can comment."
+    },
     "sections": {
       "info": "Information",
       "files": "Files",
@@ -433,9 +454,12 @@
     "restorePrimaryOnly": "Only terms in the current primary source language can be restored as active",
     "restored": "Term restored as active",
     "delete": "Delete term",
-    "deleteConfirm": "Permanently delete this term? This cannot be undone.",
+    "deleteConfirm": "Delete this term? It will move to Deleted and can later be restored from version history.",
     "deleted": "Term deleted",
     "deleteFailed": "Failed to delete term",
+    "versionHistory": "Version history",
+    "restoreVersion": "Restore this version",
+    "versionRestored": "Term version restored",
     "export": "Export",
     "exportFailed": "Export failed",
     "loadMore": "Load more terms",
@@ -446,7 +470,8 @@
     "scopes": {
       "current": "Current",
       "archived": "Archived",
-      "mixed": "All"
+      "mixed": "All",
+      "deleted": "Deleted"
     },
     "fields": {
       "sourceLang": "Source language",
@@ -581,7 +606,35 @@
     "unhide": "Unhide",
     "translation": "Translation",
     "entryHistory": "Entry history",
-    "noHistory": "No history"
+    "noHistory": "No history",
+    "editArea": "Editor",
+    "contextArea": "Details",
+    "expandEntryList": "Expand entry list",
+    "expandContext": "Expand details pane",
+    "termsTab": "Terms",
+    "commentsTab": "Comments",
+    "noTerms": "No terms match this entry",
+    "clickTermToInsert": "Click to insert at the translation cursor",
+    "selectForContext": "Select an entry to view terms, history, and comments",
+    "fileOnlineCount": "{count} people are online in this file",
+    "noFileOnline": "Nobody is online in this file",
+    "markQuestioned": "Mark as questioned",
+    "questionReason": "Reason (optional)",
+    "questionReasonHint": "When provided, it is automatically published as an entry comment.",
+    "confirmQuestioned": "Save and mark questioned",
+    "translationDiff": "Translation changes",
+    "sourceDiff": "Source changes",
+    "systemActor": "System",
+    "comment": "Comment",
+    "publishComment": "Publish comment",
+    "commentReadOnly": "Your current permissions allow reading comments only.",
+    "commentDeleted": "This comment was deleted",
+    "noComments": "No comments yet",
+    "editComment": "Edit comment",
+    "saveComment": "Save comment",
+    "deleteComment": "Delete comment",
+    "deleteCommentConfirm": "Delete this comment?",
+    "loadMoreComments": "Load more comments"
   },
   "admin": {
     "title": "Administration",

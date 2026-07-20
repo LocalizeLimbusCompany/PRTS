@@ -43,6 +43,8 @@ mod admin_settings_routes;
 mod auth_routes;
 #[path = "../src/routes/entries.rs"]
 mod entries_routes;
+#[path = "../src/routes/entry_comments.rs"]
+mod entry_comments_routes;
 #[path = "../src/routes/files.rs"]
 mod files_routes;
 #[path = "../src/routes/language_resolution.rs"]
@@ -106,6 +108,7 @@ static UPLOAD_LIFECYCLE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::
 static FILE_HISTORY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TASK_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static TERMINOLOGY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static EDITOR_COLLABORATION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static STAGE7_ADMIN_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static CONTRIBUTION_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -2159,6 +2162,7 @@ async fn audit_contract_upload_revalidates_permission_after_project_lock() {
             visibility: None,
             source_langs: None,
             target_lang: None,
+            comment_policy: None,
         }),
     ));
     audit_contract_wait_for_postgres_block(
@@ -2279,6 +2283,7 @@ async fn audit_contract_upload_revalidates_permission_after_project_lock() {
             state: "translated".to_string(),
             version: entry.version,
             force_presence: false,
+            question_reason: None,
         }),
     ));
     audit_contract_wait_for_postgres_block(
@@ -2513,6 +2518,437 @@ async fn audit_contract_create_user(
     }
 }
 
+/// 词条评论策略、作者编辑、管理治理删除与 questioned reason 必须按一个 release 的
+/// 权限/事务合同工作；审计失败不得留下状态或评论的半提交结果。
+#[tokio::test]
+async fn editor_comments_and_question_reason_are_permissioned_and_atomic() {
+    use axum::extract::{Path, Query, State};
+    use axum::response::IntoResponse;
+    use axum::Json;
+
+    let _guard = EDITOR_COLLABORATION_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner = audit_contract_create_user(&state.db, "comment-owner", Some("maintainer")).await;
+    let translator = audit_contract_create_user(&state.db, "comment-translator", None).await;
+    let outsider = audit_contract_create_user(&state.db, "comment-outsider", None).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Editor comments {}", owner.id),
+            slug: Some(format!("editor-comments-{}", owner.id)),
+            description: None,
+            visibility: Some("public".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建评论合同项目");
+    projects_routes::add_member(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(projects_routes::AddMemberReq {
+            username: translator.username.clone(),
+            role: "translator".to_string(),
+        }),
+    )
+    .await
+    .expect_api("添加评论合同 translator");
+    let Json(uploaded) = entries_routes::upload(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(audit_contract_upload_req(
+            "comments/main.json",
+            &[("comment-key", "Comment source")],
+        )),
+    )
+    .await
+    .expect_api("创建评论合同词条");
+    let entry: prts_db::models::Entry = sqlx::query_as(
+        "SELECT * FROM entries WHERE project_id=$1 AND file_id=$2 AND key='comment-key'",
+    )
+    .bind(project.id)
+    .bind(uploaded.file_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+
+    let Json(private_guest_page) = entry_comments_routes::list_comments(
+        State(state.clone()),
+        auth::MaybeUser(None),
+        Path((project.id, entry.id)),
+        Query(entry_comments_routes::EntryCommentListQuery {
+            after: None,
+            limit: Some(100),
+        }),
+    )
+    .await
+    .expect_api("private policy 允许公开项目游客读取");
+    assert!(!private_guest_page.can_comment);
+    let outsider_private = entry_comments_routes::create_comment(
+        State(state.clone()),
+        audit_contract_current_user(&outsider),
+        Path((project.id, entry.id)),
+        Json(entry_comments_routes::EntryCommentWriteRequest {
+            content: "private outsider".to_string(),
+        }),
+    )
+    .await
+    .expect_err_api("private policy 拒绝非成员评论");
+    assert_eq!(
+        outsider_private.into_response().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+
+    let (_, Json(created)) = entry_comments_routes::create_comment(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path((project.id, entry.id)),
+        Json(entry_comments_routes::EntryCommentWriteRequest {
+            content: "first comment".to_string(),
+        }),
+    )
+    .await
+    .expect_api("private policy 允许成员评论");
+    assert!(created.can_edit && created.can_delete);
+    let Json(edited) = entry_comments_routes::update_comment(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path((project.id, entry.id, created.id)),
+        Json(entry_comments_routes::EntryCommentWriteRequest {
+            content: "edited comment".to_string(),
+        }),
+    )
+    .await
+    .expect_api("作者编辑自己的评论");
+    assert_eq!(edited.content, "edited comment");
+    let owner_cannot_rewrite = entry_comments_routes::update_comment(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, entry.id, created.id)),
+        Json(entry_comments_routes::EntryCommentWriteRequest {
+            content: "manager rewrite".to_string(),
+        }),
+    )
+    .await
+    .expect_err_api("管理可治理删除但不能改写他人评论");
+    assert_eq!(
+        owner_cannot_rewrite.into_response().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+    entry_comments_routes::delete_comment(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, entry.id, created.id)),
+    )
+    .await
+    .expect_api("管理治理删除评论");
+    let stored_deleted: (String, bool) =
+        sqlx::query_as("SELECT content, deleted_at IS NOT NULL FROM entry_comments WHERE id=$1")
+            .bind(created.id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(stored_deleted, (String::new(), true));
+
+    for policy in ["internal", "public"] {
+        let _ = projects_routes::update_project(
+            State(state.clone()),
+            audit_contract_current_user(&owner),
+            Path(project.id),
+            Json(projects_routes::UpdateProjectReq {
+                name: None,
+                description: None,
+                visibility: None,
+                source_langs: None,
+                target_lang: None,
+                comment_policy: Some(policy.to_string()),
+            }),
+        )
+        .await
+        .expect_api("切换评论策略");
+        if policy == "internal" {
+            let denied = entry_comments_routes::list_comments(
+                State(state.clone()),
+                auth::MaybeUser(Some(audit_contract_current_user(&outsider))),
+                Path((project.id, entry.id)),
+                Query(entry_comments_routes::EntryCommentListQuery {
+                    after: None,
+                    limit: Some(100),
+                }),
+            )
+            .await
+            .expect_err_api("internal 策略拒绝非成员读取");
+            assert_eq!(
+                denied.into_response().status(),
+                axum::http::StatusCode::FORBIDDEN
+            );
+        }
+    }
+    let (_, Json(public_comment)) = entry_comments_routes::create_comment(
+        State(state.clone()),
+        audit_contract_current_user(&outsider),
+        Path((project.id, entry.id)),
+        Json(entry_comments_routes::EntryCommentWriteRequest {
+            content: "public outsider".to_string(),
+        }),
+    )
+    .await
+    .expect_api("public 策略允许已登录非成员评论");
+    assert_eq!(public_comment.author_id, Some(outsider.id));
+
+    let question_marker = format!("QUESTION_REASON_{}", translator.id);
+    let Json(questioned) = entries_routes::update_entry(
+        State(state.clone()),
+        audit_contract_current_user(&translator),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "存在疑问的译文".to_string(),
+            state: "questioned".to_string(),
+            version: entry.version,
+            force_presence: false,
+            question_reason: Some(question_marker.clone()),
+        }),
+    )
+    .await
+    .expect_api("疑问状态与原因同事务保存");
+    let reason_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM entry_comments
+         WHERE project_id=$1 AND entry_id=$2 AND author_id=$3 AND content=$4",
+    )
+    .bind(project.id)
+    .bind(entry.id)
+    .bind(translator.id)
+    .bind(&question_marker)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(reason_count, 1);
+
+    let failing_state = audit_contract_state_with_db(audit_contract_failing_audit_db().await).await;
+    let failed_marker = format!("QUESTION_ROLLBACK_{}", translator.id);
+    let failure = entries_routes::update_entry(
+        State(failing_state),
+        audit_contract_current_user(&translator),
+        Path((project.id, entry.id)),
+        Json(entries_routes::UpdateEntryReq {
+            translation: "不应提交的译文".to_string(),
+            state: "questioned".to_string(),
+            version: questioned.version,
+            force_presence: false,
+            question_reason: Some(failed_marker.clone()),
+        }),
+    )
+    .await
+    .expect_err_api("审计失败回滚疑问状态与评论");
+    assert_eq!(
+        failure.into_response().status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let unchanged: prts_db::models::Entry = sqlx::query_as("SELECT * FROM entries WHERE id=$1")
+        .bind(entry.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(unchanged.version, questioned.version);
+    assert_eq!(unchanged.translation, questioned.translation);
+    let failed_reason_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM entry_comments WHERE content=$1")
+            .bind(&failed_marker)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(failed_reason_count, 0);
+
+    replacement_test_cleanup(
+        &state.db,
+        owner.id,
+        project.id,
+        &std::env::temp_dir().join("prts-editor-comments-no-temp"),
+    )
+    .await;
+    sqlx::query("DELETE FROM users WHERE id=ANY($1::BIGINT[])")
+        .bind(&[translator.id, outsider.id][..])
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+/// 术语的每次完整更新、软删除、历史恢复和同 identity 重建都必须追加新快照，旧版本不改写。
+#[tokio::test]
+async fn term_versions_are_append_only_and_deleted_identity_can_be_restored() {
+    use axum::extract::{Path, Query, State};
+    use axum::Json;
+
+    let _guard = TERMINOLOGY_TEST_LOCK.lock().await;
+    let state = audit_contract_state().await;
+    let owner =
+        audit_contract_create_user(&state.db, "term-version-owner", Some("maintainer")).await;
+    let Json(project) = projects_routes::create_project(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Json(projects_routes::CreateProjectReq {
+            name: format!("Term versions {}", owner.id),
+            slug: Some(format!("term-versions-{}", owner.id)),
+            description: None,
+            visibility: Some("private".to_string()),
+            source_langs: vec!["en".to_string()],
+            primary_source_lang: None,
+            target_lang: "zh-Hans".to_string(),
+        }),
+    )
+    .await
+    .expect_api("创建术语版本项目");
+    let (_, Json(created)) = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: "versioned term".to_string(),
+            translation: "版本一".to_string(),
+            notes: "baseline note".to_string(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_api("创建有版本术语");
+    let Json(updated) = terms_routes::update_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, created.id)),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: "versioned term".to_string(),
+            translation: "版本二".to_string(),
+            notes: "updated note".to_string(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_api("更新术语追加版本");
+    assert_eq!(updated.version, created.version + 1);
+    terms_routes::delete_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, created.id)),
+    )
+    .await
+    .expect_api("软删除术语追加版本");
+    let Json(deleted_page) = terms_routes::list_terms(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Query(terms_routes::TermListQuery {
+            scope: Some(terms_routes::TermScope::Deleted),
+            after: None,
+            limit: Some(100),
+        }),
+    )
+    .await
+    .expect_api("已删除范围可见软删除术语");
+    let deleted = deleted_page
+        .items
+        .iter()
+        .find(|term| term.id == created.id)
+        .expect("软删除术语仍存在");
+    assert!(deleted.deleted);
+    let deleted_version = deleted.version;
+    let Json(versions) = terms_routes::list_term_versions(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path((project.id, created.id)),
+        Query(terms_routes::TermVersionListQuery {
+            after: None,
+            limit: Some(100),
+        }),
+    )
+    .await
+    .expect_api("读取术语完整历史");
+    assert_eq!(
+        versions
+            .items
+            .iter()
+            .map(|version| version.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["delete", "update", "create"]
+    );
+    let create_snapshot = versions
+        .items
+        .iter()
+        .find(|version| version.kind == "create")
+        .unwrap();
+    assert_eq!(create_snapshot.translation, "版本一");
+    assert!(!create_snapshot.deleted);
+
+    let Json(restored) = terms_routes::restore_term_version(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, created.id, create_snapshot.version)),
+    )
+    .await
+    .expect_api("恢复任意历史快照为新版本");
+    assert_eq!(restored.translation, "版本一");
+    assert!(!restored.deleted);
+    assert_eq!(restored.version, deleted_version + 1);
+    terms_routes::delete_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path((project.id, created.id)),
+    )
+    .await
+    .expect_api("再次软删除以验证同 identity 重建");
+    let (_, Json(recreated)) = terms_routes::create_term(
+        State(state.clone()),
+        audit_contract_current_user(&owner),
+        Path(project.id),
+        Json(terms_routes::TermWriteRequest {
+            source_lang: "en".to_string(),
+            source_text: "versioned term".to_string(),
+            translation: "重建版本".to_string(),
+            notes: "recreated note".to_string(),
+            pos_id: None,
+            archived: false,
+        }),
+    )
+    .await
+    .expect_api("相同 identity 创建恢复原记录");
+    assert_eq!(recreated.id, created.id);
+    assert!(!recreated.deleted);
+    let kinds: Vec<String> =
+        sqlx::query_scalar("SELECT kind FROM term_versions WHERE term_id=$1 ORDER BY version")
+            .bind(created.id)
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        kinds,
+        vec![
+            "create",
+            "update",
+            "delete",
+            "restore",
+            "delete",
+            "restore_create"
+        ]
+    );
+
+    projects::delete_test_fixture(&state.db, project.id)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id=$1")
+        .bind(owner.id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
 /// P6 贡献事件 schema 必须只追加正分事件，并为平台周期与项目榜提供有界索引。
 #[tokio::test]
 async fn contribution_schema_has_exact_event_ledger_and_runtime_grants() {
@@ -2618,6 +3054,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "translated".to_string(),
             version: entry.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -2631,6 +3068,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "checked".to_string(),
             version: translated.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -2644,6 +3082,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "reviewed".to_string(),
             version: checked.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -2754,6 +3193,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "reviewed".to_string(),
             version: current.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -4559,6 +4999,7 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
             description: Some(profile_marker.to_string()),
             avatar_url: Some("https://example.invalid/avatar.png".to_string()),
             translation_langs: Some(vec!["en".to_string(), "zh-Hans".to_string()]),
+            entry_diff_mode: None,
         }),
     )
     .await
@@ -5411,6 +5852,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             state: "translated".to_string(),
             version: entry.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -5501,6 +5943,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             visibility: Some("public".to_string()),
             source_langs: None,
             target_lang: None,
+            comment_policy: None,
         }),
     )
     .await
@@ -6911,6 +7354,30 @@ async fn upload_replacement_handler_applies_typed_plan_history_stats_and_states(
     .await
     .unwrap();
     assert_eq!(operations, ["update", "restore", "create", "tombstone"]);
+    for key in ["changed", "restored"] {
+        let entry_id = by_key[key].0;
+        let source_version: (
+            serde_json::Value,
+            String,
+            String,
+            Option<i64>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT original, translation, state, editor_id, editor_name
+                 FROM entry_versions
+                 WHERE entry_id = $1 AND kind = 'source_update'
+                 ORDER BY version DESC, id DESC LIMIT 1",
+        )
+        .bind(entry_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(source_version.0, by_key[key].2);
+        assert_eq!(source_version.1, by_key[key].3);
+        assert_eq!(source_version.2, by_key[key].4);
+        assert_eq!(source_version.3, Some(user_id));
+        assert!(source_version.4.is_some());
+    }
     let snapshot = prts_db::uploads::find_batch(&pool, project_id, batch.batch.id)
         .await
         .unwrap()
@@ -8927,7 +9394,23 @@ async fn projects_files_entries_roundtrip() {
     assert_eq!(k1b.state, "untranslated"); // 已重置
     assert_eq!(k1b.translation, "你好"); // 译文保留
     let history = entries::list_versions(&pool, k1.id, 50).await.unwrap();
-    assert!(history.iter().any(|v| v.kind == "source_update"));
+    let source_update = history
+        .iter()
+        .find(|version| version.kind == "source_update")
+        .expect("源文变化应写上传后的完整快照");
+    assert_eq!(source_update.version, k1b.version);
+    assert_eq!(source_update.original.as_ref().unwrap()["en"], "Hello!");
+    assert_eq!(source_update.translation.as_deref(), Some("你好"));
+    assert_eq!(source_update.state.as_deref(), Some("untranslated"));
+    assert_eq!(source_update.editor_id, Some(owner.id));
+    assert_eq!(source_update.editor_name.as_deref(), Some("itest_owner"));
+    assert!(history.iter().any(|version| {
+        version.version < source_update.version
+            && version
+                .original
+                .as_ref()
+                .is_some_and(|value| value["en"] == "Hello")
+    }));
 
     // 锁定标志
     let locked = entries::set_flags(&pool, proj.id, k1.id, Some(true), None)
@@ -11346,6 +11829,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             state: "translated".to_string(),
             version: current.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -11370,6 +11854,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             state: "untranslated".to_string(),
             version: current.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -11711,7 +12196,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
         .map(|entry| entry.id)
         .collect::<Vec<_>>();
     assert!(scope_ids.contains(&new_entry_id));
-    assert!(!scope_ids.contains(&hidden_id));
+    assert!(scope_ids.contains(&hidden_id));
     assert!(!scope_ids.contains(&outside_entry_id));
     let conflicting_scope = entries_routes::list_entries(
         State(state.clone()),
@@ -12055,6 +12540,7 @@ async fn terminology_schema_enforces_null_safe_identity_and_explicit_foreign_key
         fk_delete_rules,
         vec![
             ("created_by".to_string(), "SET NULL".to_string()),
+            ("deleted_by".to_string(), "SET NULL".to_string()),
             ("pos_id".to_string(), "SET NULL".to_string()),
             ("project_id".to_string(), "CASCADE".to_string()),
             ("updated_by".to_string(), "SET NULL".to_string()),
@@ -14696,6 +15182,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: entry.version,
             force_presence: true,
+            question_reason: None,
         }),
     )
     .await
@@ -14714,6 +15201,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: entry.version,
             force_presence: true,
+            question_reason: None,
         }),
     )
     .await
@@ -14729,6 +15217,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: entry.version,
             force_presence: true,
+            question_reason: None,
         }),
     )
     .await
@@ -14747,6 +15236,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "checked".to_string(),
             version: updated.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -14760,6 +15250,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "checked".to_string(),
             version: checked.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -14774,6 +15265,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: preserved.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await
@@ -14787,6 +15279,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "checked".to_string(),
             version: downgraded.version,
             force_presence: false,
+            question_reason: None,
         }),
     )
     .await

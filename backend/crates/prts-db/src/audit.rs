@@ -339,6 +339,15 @@ pub enum AuditEvent<'a> {
         pos_id: Option<i64>,
         archived: bool,
     },
+    TermRestored {
+        project_id: i64,
+        term_id: i64,
+        restored_from_version: i64,
+        new_version: i64,
+        source_lang: &'a str,
+        pos_id: Option<i64>,
+        archived: bool,
+    },
     TermImported {
         project_id: i64,
         created: usize,
@@ -466,6 +475,22 @@ pub enum AuditEvent<'a> {
         entry_id: i64,
         locked: bool,
         hidden: bool,
+    },
+    EntryCommentCreated {
+        project_id: i64,
+        entry_id: i64,
+        comment_id: i64,
+    },
+    EntryCommentUpdated {
+        project_id: i64,
+        entry_id: i64,
+        comment_id: i64,
+    },
+    EntryCommentDeleted {
+        project_id: i64,
+        entry_id: i64,
+        comment_id: i64,
+        moderated: bool,
     },
     ProjectExported {
         project_id: i64,
@@ -1004,6 +1029,27 @@ pub async fn append_event_tx(
                 "archived": archived,
             }),
         ),
+        AuditEvent::TermRestored {
+            project_id,
+            term_id,
+            restored_from_version,
+            new_version,
+            source_lang,
+            pos_id,
+            archived,
+        } => (
+            "term.restored",
+            "term",
+            term_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "restored_from_version": restored_from_version,
+                "new_version": new_version,
+                "source_lang": source_lang,
+                "pos_id": pos_id,
+                "archived": archived,
+            }),
+        ),
         AuditEvent::TermImported {
             project_id,
             created,
@@ -1350,6 +1396,40 @@ pub async fn append_event_tx(
             entry_id.to_string(),
             Some(project_id),
             serde_json::json!({"locked": locked, "hidden": hidden}),
+        ),
+        AuditEvent::EntryCommentCreated {
+            project_id,
+            entry_id,
+            comment_id,
+        } => (
+            "entry.comment_created",
+            "entry_comment",
+            comment_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"entry_id": entry_id}),
+        ),
+        AuditEvent::EntryCommentUpdated {
+            project_id,
+            entry_id,
+            comment_id,
+        } => (
+            "entry.comment_updated",
+            "entry_comment",
+            comment_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"entry_id": entry_id}),
+        ),
+        AuditEvent::EntryCommentDeleted {
+            project_id,
+            entry_id,
+            comment_id,
+            moderated,
+        } => (
+            "entry.comment_deleted",
+            "entry_comment",
+            comment_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"entry_id": entry_id, "moderated": moderated}),
         ),
         AuditEvent::ProjectExported {
             project_id,

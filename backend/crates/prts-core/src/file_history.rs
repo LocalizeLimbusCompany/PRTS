@@ -99,6 +99,18 @@ pub struct MaterializedFileStats {
     pub checked: i64,
     /// 已审核数。
     pub reviewed: i64,
+    /// 隐藏但未 tombstone 的词条总数。
+    pub hidden_total: i64,
+    /// 隐藏未翻译数。
+    pub hidden_untranslated: i64,
+    /// 隐藏已翻译数。
+    pub hidden_translated: i64,
+    /// 隐藏有疑问数。
+    pub hidden_questioned: i64,
+    /// 隐藏已检查数。
+    pub hidden_checked: i64,
+    /// 隐藏已审核数。
+    pub hidden_reviewed: i64,
 }
 
 impl AddAssign for MaterializedFileStats {
@@ -109,6 +121,12 @@ impl AddAssign for MaterializedFileStats {
         self.questioned += rhs.questioned;
         self.checked += rhs.checked;
         self.reviewed += rhs.reviewed;
+        self.hidden_total += rhs.hidden_total;
+        self.hidden_untranslated += rhs.hidden_untranslated;
+        self.hidden_translated += rhs.hidden_translated;
+        self.hidden_questioned += rhs.hidden_questioned;
+        self.hidden_checked += rhs.hidden_checked;
+        self.hidden_reviewed += rhs.hidden_reviewed;
     }
 }
 
@@ -123,22 +141,39 @@ impl Neg for MaterializedFileStats {
             questioned: -self.questioned,
             checked: -self.checked,
             reviewed: -self.reviewed,
+            hidden_total: -self.hidden_total,
+            hidden_untranslated: -self.hidden_untranslated,
+            hidden_translated: -self.hidden_translated,
+            hidden_questioned: -self.hidden_questioned,
+            hidden_checked: -self.hidden_checked,
+            hidden_reviewed: -self.hidden_reviewed,
         }
     }
 }
 
 impl MaterializedFileStats {
     fn add_entry(&mut self, entry: &EntryHistorySnapshot, amount: i64) {
-        if entry.deleted || entry.hidden {
+        if entry.deleted {
             return;
         }
-        self.visible_total += amount;
-        match entry.state {
-            EntryState::Untranslated => self.untranslated += amount,
-            EntryState::Translated => self.translated += amount,
-            EntryState::Questioned => self.questioned += amount,
-            EntryState::Checked => self.checked += amount,
-            EntryState::Reviewed => self.reviewed += amount,
+        if entry.hidden {
+            self.hidden_total += amount;
+            match entry.state {
+                EntryState::Untranslated => self.hidden_untranslated += amount,
+                EntryState::Translated => self.hidden_translated += amount,
+                EntryState::Questioned => self.hidden_questioned += amount,
+                EntryState::Checked => self.hidden_checked += amount,
+                EntryState::Reviewed => self.hidden_reviewed += amount,
+            }
+        } else {
+            self.visible_total += amount;
+            match entry.state {
+                EntryState::Untranslated => self.untranslated += amount,
+                EntryState::Translated => self.translated += amount,
+                EntryState::Questioned => self.questioned += amount,
+                EntryState::Checked => self.checked += amount,
+                EntryState::Reviewed => self.reviewed += amount,
+            }
         }
     }
 
@@ -1488,6 +1523,39 @@ mod tests {
                 ..MaterializedFileStats::default()
             }
         );
+    }
+
+    #[test]
+    fn rollback_tracks_hidden_state_changes_without_touching_visible_total() {
+        let current_file = file(5, None, "file.json", None, MaterializedFileStats::default());
+        let target_file = current_file.clone();
+        let current = entry(10, "hidden", EntryState::Reviewed, true, false);
+        let target = entry(10, "hidden", EntryState::Translated, true, false);
+
+        let plan = plan_file_rollback(
+            id(42),
+            id(41),
+            MaterializedFileVersion {
+                file: current_file,
+                entries: vec![current],
+            },
+            MaterializedFileVersion {
+                file: target_file,
+                entries: vec![target],
+            },
+            &ActivePathIndex::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.project_stats_delta,
+            MaterializedFileStats {
+                hidden_translated: 1,
+                hidden_reviewed: -1,
+                ..MaterializedFileStats::default()
+            }
+        );
+        assert_eq!(plan.file_stats_delta, Some((5, plan.project_stats_delta)));
     }
 
     #[test]

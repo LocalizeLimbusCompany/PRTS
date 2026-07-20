@@ -4,7 +4,7 @@
 //! effective-visible 谓词在 recall/fetch 每一阶段复用，避免先召回后越权取行。
 use pgvector::Vector;
 use prts_core::search_query::{CanonicalSearchCondition, SearchField, SearchOperator};
-use sqlx::{PgPool, Postgres, QueryBuilder};
+use sqlx::{FromRow, PgPool, Postgres, QueryBuilder};
 
 use crate::models::Entry;
 
@@ -144,6 +144,58 @@ pub struct SearchExecutionFilter<'a> {
     pub states: &'a [String],
     pub conditions: &'a [CanonicalSearchCondition],
     pub include_hidden: bool,
+}
+
+/// 完整查询排名页。总数来自同一个 RRF score 集合，避免把单页 recall 数误当总数。
+#[derive(Debug, FromRow)]
+pub struct RankedSearchRow {
+    pub id: i64,
+    pub file_id: i64,
+    pub project_id: i64,
+    pub key: String,
+    pub original: serde_json::Value,
+    pub translation: String,
+    pub state: String,
+    pub locked: bool,
+    pub hidden: bool,
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub deleted_by: Option<i64>,
+    pub deletion_change_set_id: Option<uuid::Uuid>,
+    pub version: i64,
+    pub updated_by: Option<i64>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub rrf_score: f64,
+    pub total_items: i64,
+}
+
+impl RankedSearchRow {
+    pub fn into_parts(self) -> (Entry, f64, i64) {
+        let score = self.rrf_score;
+        let total = self.total_items;
+        (
+            Entry {
+                id: self.id,
+                file_id: self.file_id,
+                project_id: self.project_id,
+                key: self.key,
+                original: self.original,
+                translation: self.translation,
+                state: self.state,
+                locked: self.locked,
+                hidden: self.hidden,
+                deleted_at: self.deleted_at,
+                deleted_by: self.deleted_by,
+                deletion_change_set_id: self.deletion_change_set_id,
+                version: self.version,
+                updated_by: self.updated_by,
+                created_at: self.created_at,
+                updated_at: self.updated_at,
+            },
+            score,
+            total,
+        )
+    }
 }
 
 /// 公共过滤：scope / state / conditions / effective-visible。push 到已开头的 WHERE。
@@ -380,6 +432,126 @@ pub async fn filter_only_search(
     qb.push(" ORDER BY entry.id ASC LIMIT ")
         .push_bind(limit.max(1));
     qb.build_query_scalar().fetch_all(pool).await
+}
+
+/// 为结构化 filter-only 搜索计算精确总数；调用方应缓存该结果，分页读取仍使用 cursor。
+pub async fn count_filtered(
+    pool: &PgPool,
+    project_id: i64,
+    filter: &SearchExecutionFilter<'_>,
+) -> Result<i64, sqlx::Error> {
+    let mut qb = QueryBuilder::new(
+        "SELECT count(*)::BIGINT FROM entries AS entry WHERE entry.project_id = ",
+    );
+    qb.push_bind(project_id);
+    push_filters(&mut qb, filter);
+    qb.build_query_scalar().fetch_one(pool).await
+}
+
+/// 对有 query 的结构化搜索在 PostgreSQL 内完成完整 lexical 排名、RRF、总数与键集分页。
+///
+/// FTS/trgm 不截断，因此总数不是 recall 上限的近似值。vector 仍按产品既有语义只取
+/// 最近的 `vector_recall_limit` 项，再与完整 lexical 集合融合。
+#[allow(clippy::too_many_arguments)]
+pub async fn ranked_search_page(
+    pool: &PgPool,
+    project_id: i64,
+    query: &str,
+    src_lang: &str,
+    tgt_lang: &str,
+    filter: &SearchExecutionFilter<'_>,
+    query_vector: Option<&[f32]>,
+    vector_recall_limit: i64,
+    after: Option<(f64, i64)>,
+    limit: i64,
+) -> Result<Vec<RankedSearchRow>, sqlx::Error> {
+    let mut qb = QueryBuilder::<Postgres>::new(
+        "WITH fts_ranked AS (
+             SELECT entry.id,
+                    row_number() OVER (
+                        ORDER BY (ts_rank(entry.source_tsv, sq.query)
+                                  + ts_rank(entry.translation_tsv, tq.query)) DESC,
+                                 entry.id ASC
+                    )::FLOAT8 AS rank
+             FROM entries AS entry,
+                  plainto_tsquery(prts_ts_config(",
+    );
+    qb.push_bind(src_lang.to_string())
+        .push("), ")
+        .push_bind(query.to_string())
+        .push(") AS sq(query), plainto_tsquery(prts_ts_config(")
+        .push_bind(tgt_lang.to_string())
+        .push("), ")
+        .push_bind(query.to_string())
+        .push(") AS tq(query) WHERE entry.project_id = ")
+        .push_bind(project_id)
+        .push(" AND (entry.source_tsv @@ sq.query OR entry.translation_tsv @@ tq.query)");
+    push_filters(&mut qb, filter);
+    qb.push(
+        "), trgm_ranked AS (
+             SELECT entry.id,
+                    row_number() OVER (
+                        ORDER BY GREATEST(similarity(entry.source_text, ",
+    )
+    .push_bind(query.to_string())
+    .push("), similarity(entry.translation, ")
+    .push_bind(query.to_string())
+    .push("), similarity(entry.key, ")
+    .push_bind(query.to_string())
+    .push(
+        ")) DESC, entry.id ASC
+                    )::FLOAT8 AS rank
+             FROM entries AS entry WHERE entry.project_id = ",
+    )
+    .push_bind(project_id)
+    .push(" AND (entry.source_text % ")
+    .push_bind(query.to_string())
+    .push(" OR entry.translation % ")
+    .push_bind(query.to_string())
+    .push(" OR entry.key % ")
+    .push_bind(query.to_string())
+    .push(")");
+    push_filters(&mut qb, filter);
+    qb.push("), ranks AS (SELECT id, 1.0::FLOAT8 / (60.0 + rank) AS score FROM fts_ranked UNION ALL SELECT id, 1.0::FLOAT8 / (60.0 + rank) AS score FROM trgm_ranked");
+    if let Some(vector) = query_vector {
+        qb.push(
+            " UNION ALL SELECT id, 1.0::FLOAT8 / (60.0 + rank) AS score FROM (
+                 SELECT entry.id,
+                        row_number() OVER (ORDER BY entry.embedding <=> ",
+        )
+        .push_bind(Vector::from(vector.to_vec()))
+        .push(
+            ", entry.id ASC)::FLOAT8 AS rank
+                 FROM entries AS entry WHERE entry.project_id = ",
+        )
+        .push_bind(project_id)
+        .push(" AND entry.embedding IS NOT NULL");
+        push_filters(&mut qb, filter);
+        qb.push(" ORDER BY entry.embedding <=> ")
+            .push_bind(Vector::from(vector.to_vec()))
+            .push(", entry.id ASC LIMIT ")
+            .push_bind(vector_recall_limit.max(1))
+            .push(") AS vector_ranked");
+    }
+    qb.push(
+        "), scores AS (
+             SELECT id, sum(score)::FLOAT8 AS rrf_score FROM ranks GROUP BY id
+         ), total AS (SELECT count(*)::BIGINT AS total_items FROM scores)
+         SELECT entry.*, scores.rrf_score, total.total_items
+         FROM scores JOIN entries AS entry ON entry.id = scores.id CROSS JOIN total WHERE TRUE",
+    );
+    if let Some((score, entry_id)) = after {
+        qb.push(" AND (scores.rrf_score < ")
+            .push_bind(score)
+            .push(" OR (scores.rrf_score = ")
+            .push_bind(score)
+            .push(" AND entry.id > ")
+            .push_bind(entry_id)
+            .push("))");
+    }
+    qb.push(" ORDER BY scores.rrf_score DESC, entry.id ASC LIMIT ")
+        .push_bind(limit.max(1));
+    qb.build_query_as().fetch_all(pool).await
 }
 
 // ────────────────────────────────────────────────────────────────

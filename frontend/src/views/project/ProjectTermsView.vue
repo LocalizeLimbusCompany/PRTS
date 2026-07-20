@@ -10,6 +10,7 @@ import {
   type PosDto,
   type TermDto,
   type TermScope,
+  type TermVersionDto,
   type TermWriteRequest,
 } from '@/api'
 import TermImportDialog from '@/components/terms/TermImportDialog.vue'
@@ -31,17 +32,21 @@ const exporting = ref(false)
 const importOpen = ref(false)
 const editOpen = ref(false)
 const editingId = ref<number | null>(null)
+const historyOpen = ref(false)
+const historyTerm = ref<TermDto | null>(null)
+const termVersions = ref<TermVersionDto[]>([])
+const canRestoreVersion = ref(false)
+const loadingVersions = ref(false)
 const form = ref<TermWriteRequest>(emptyForm())
 let loadRequest = 0
 
-const canManage = computed(() =>
-  hasProjectCapability(detail.value?.capabilities, 'manage_terms'),
-)
+const canManage = computed(() => hasProjectCapability(detail.value?.capabilities, 'manage_terms'))
 const canExport = computed(() => hasProjectCapability(detail.value?.capabilities, 'download'))
 const scopeOptions = computed(() => [
   { label: t('terminology.scopes.current'), value: 'current' },
   { label: t('terminology.scopes.archived'), value: 'archived' },
   { label: t('terminology.scopes.mixed'), value: 'mixed' },
+  { label: t('terminology.scopes.deleted'), value: 'deleted' },
 ])
 const posOptions = computed(() =>
   presets.value.map((preset) => ({
@@ -95,7 +100,10 @@ async function loadPresets() {
   try {
     presets.value = await posApi.list()
   } catch (error) {
-    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('terminology.pos.loadFailed')) })
+    $q.notify({
+      type: 'negative',
+      message: apiErrorMessage(error, t('terminology.pos.loadFailed')),
+    })
   }
 }
 
@@ -201,6 +209,32 @@ async function exportTerms(format: TerminologyDocumentFormat) {
   }
 }
 
+async function openHistory(term: TermDto) {
+  historyTerm.value = term
+  historyOpen.value = true
+  loadingVersions.value = true
+  try {
+    const page = await termsApi.versions(projectId.value, term.id, { limit: 100 })
+    termVersions.value = page.items
+    canRestoreVersion.value = page.can_restore
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    loadingVersions.value = false
+  }
+}
+
+async function restoreVersion(version: number) {
+  if (!historyTerm.value) return
+  try {
+    await termsApi.restoreVersion(projectId.value, historyTerm.value.id, version)
+    await Promise.all([openHistory(historyTerm.value), load(true)])
+    $q.notify({ type: 'positive', message: t('terminology.versionRestored') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  }
+}
+
 onMounted(() => {
   void Promise.all([load(true), loadPresets()])
 })
@@ -284,7 +318,7 @@ watch(scope, () => load(true))
             <th>{{ $t('terminology.fields.pos') }}</th>
             <th>{{ $t('terminology.fields.notes') }}</th>
             <th>{{ $t('terminology.fields.status') }}</th>
-            <th v-if="canManage" class="text-right">{{ $t('terminology.fields.actions') }}</th>
+            <th class="text-right">{{ $t('terminology.fields.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -295,19 +329,35 @@ watch(scope, () => load(true))
             <td>{{ termPosName(term) || '—' }}</td>
             <td class="terms-view__notes">{{ term.notes || '—' }}</td>
             <td>
-              <q-badge :color="term.archived ? 'grey' : 'positive'" outline>
+              <q-badge
+                :color="term.deleted ? 'negative' : term.archived ? 'grey' : 'positive'"
+                outline
+              >
                 {{
-                  term.archived
-                    ? $t('terminology.scopes.archived')
-                    : $t('terminology.active')
+                  term.deleted
+                    ? $t('terminology.scopes.deleted')
+                    : term.archived
+                      ? $t('terminology.scopes.archived')
+                      : $t('terminology.active')
                 }}
               </q-badge>
             </td>
-            <td v-if="canManage" class="text-right terms-view__row-actions">
-              <q-btn flat round dense icon="mdi-pencil-outline" @click="openEdit(term)">
+            <td class="text-right terms-view__row-actions">
+              <q-btn flat round dense icon="mdi-history" @click="openHistory(term)"
+                ><q-tooltip>{{ $t('terminology.versionHistory') }}</q-tooltip></q-btn
+              >
+              <q-btn
+                v-if="canManage && !term.deleted"
+                flat
+                round
+                dense
+                icon="mdi-pencil-outline"
+                @click="openEdit(term)"
+              >
                 <q-tooltip>{{ $t('terminology.edit') }}</q-tooltip>
               </q-btn>
               <q-btn
+                v-if="canManage && !term.deleted"
                 flat
                 round
                 dense
@@ -326,6 +376,7 @@ watch(scope, () => load(true))
                 </q-tooltip>
               </q-btn>
               <q-btn
+                v-if="canManage && !term.deleted"
                 flat
                 round
                 dense
@@ -389,18 +440,11 @@ watch(scope, () => load(true))
             :options="posOptions"
             :label="$t('terminology.fields.pos')"
           />
-          <q-input
-            v-model="form.notes"
-            outlined
-            autogrow
-            :label="$t('terminology.fields.notes')"
-          />
+          <q-input v-model="form.notes" outlined autogrow :label="$t('terminology.fields.notes')" />
           <q-toggle
             v-model="form.archived"
             :label="$t('terminology.fields.archived')"
-            :disable="
-              form.archived && form.source_lang !== detail?.project.primary_source_lang
-            "
+            :disable="form.archived && form.source_lang !== detail?.project.primary_source_lang"
           />
         </q-card-section>
         <q-card-actions align="right">
@@ -425,6 +469,50 @@ watch(scope, () => load(true))
       :project-id="projectId"
       @confirmed="load(true)"
     />
+
+    <q-dialog v-model="historyOpen">
+      <q-card class="terms-view__history-dialog">
+        <q-card-section
+          ><div class="prts-label">{{ $t('terminology.versionHistory') }}</div>
+          <div class="prts-h2">{{ historyTerm?.source_text }}</div></q-card-section
+        >
+        <q-card-section class="terms-view__versions">
+          <q-spinner v-if="loadingVersions" color="primary" />
+          <article
+            v-for="version in termVersions"
+            v-else
+            :key="version.version"
+            class="terms-view__version"
+          >
+            <header>
+              <q-avatar size="28px" color="primary" text-color="dark"
+                ><img
+                  v-if="version.editor_avatar_url"
+                  :src="version.editor_avatar_url"
+                  alt=""
+                /><span v-else>{{ version.editor_name.charAt(0).toUpperCase() }}</span></q-avatar
+              ><strong>{{ version.editor_name }}</strong
+              ><span class="prts-dim">{{ new Date(version.created_at).toLocaleString() }}</span
+              ><q-space /><q-badge outline :label="`v${version.version} · ${version.kind}`" />
+            </header>
+            <div>{{ version.source_text }} → {{ version.translation }}</div>
+            <div v-if="version.notes" class="prts-dim">{{ version.notes }}</div>
+            <q-btn
+              v-if="canRestoreVersion"
+              flat
+              dense
+              no-caps
+              icon="mdi-backup-restore"
+              :label="$t('terminology.restoreVersion')"
+              @click="restoreVersion(version.version)"
+            />
+          </article>
+        </q-card-section>
+        <q-card-actions align="right"
+          ><q-btn v-close-popup flat no-caps :label="$t('common.close')"
+        /></q-card-actions>
+      </q-card>
+    </q-dialog>
   </section>
 </template>
 
@@ -499,6 +587,28 @@ watch(scope, () => load(true))
 .terms-view__dialog {
   width: min(680px, 94vw);
   max-width: 680px;
+}
+.terms-view__history-dialog {
+  width: min(680px, 94vw);
+  max-width: 680px;
+}
+.terms-view__versions {
+  display: grid;
+  gap: 10px;
+  max-height: 70vh;
+  overflow: auto;
+}
+.terms-view__version {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--prts-border-soft);
+}
+.terms-view__version header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
 }
 
 .terms-view__form {

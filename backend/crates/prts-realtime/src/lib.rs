@@ -30,12 +30,25 @@ pub enum RoomEvent {
     Leave { user_id: i64 },
     /// 某用户正在编辑某词条。
     Editing { user_id: i64, entry_id: i64 },
+    /// Redis 权威 presence 快照；一个用户可因多标签页同时出现在多个文件/词条。
+    PresenceSnapshot { presences: Vec<PresenceState> },
     /// 某词条已更新（携带新版本号，供客户端实时刷新 / 乐观锁对齐）。
     EntryUpdated {
         entry_id: i64,
         version: i64,
         by: i64,
     },
+    /// 词条评论发生变化，客户端只需刷新当前词条评论页。
+    EntryCommentChanged { entry_id: i64, by: i64 },
+}
+
+/// 单个浏览器连接的 presence 状态。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PresenceState {
+    pub connection_id: String,
+    pub user_id: i64,
+    pub file_id: Option<i64>,
+    pub entry_id: Option<i64>,
 }
 
 /// 用户通知事件（用户频道专用，区别于 project 房间的 [`RoomEvent`]）。
@@ -69,8 +82,6 @@ pub enum UserEvent {
 
 struct Room {
     tx: broadcast::Sender<String>,
-    /// user_id → 连接数（同一用户可能多标签页）。
-    presence: HashMap<i64, usize>,
 }
 
 struct Inner {
@@ -111,62 +122,157 @@ impl Hub {
         &self,
         room: RoomId,
         user_id: i64,
-    ) -> (broadcast::Receiver<String>, Vec<i64>) {
-        let (rx, online, newly) = {
+        connection_id: &str,
+    ) -> (broadcast::Receiver<String>, Vec<PresenceState>) {
+        let rx = {
             let mut rooms = self.inner.rooms.write().await;
             let r = rooms.entry(room).or_insert_with(|| Room {
                 tx: broadcast::channel(256).0,
-                presence: HashMap::new(),
             });
-            let rx = r.tx.subscribe();
-            let c = r.presence.entry(user_id).or_insert(0);
-            *c += 1;
-            let newly = *c == 1;
-            let online: Vec<i64> = r.presence.keys().copied().collect();
-            (rx, online, newly)
+            r.tx.subscribe()
         };
-        if newly {
-            self.publish(
-                room,
-                &RoomEvent::Join {
-                    user_id,
-                    online: online.clone(),
-                },
-            )
+        self.write_presence(room, connection_id, user_id, None, None)
             .await;
-        }
-        (rx, online)
+        let snapshot = self.presence_snapshot(room).await;
+        self.publish(
+            room,
+            &RoomEvent::PresenceSnapshot {
+                presences: snapshot.clone(),
+            },
+        )
+        .await;
+        (rx, snapshot)
     }
 
-    /// 离开房间：用户全部连接断开后广播 Leave。
-    pub async fn leave(&self, room: RoomId, user_id: i64) {
-        let gone = {
-            let mut rooms = self.inner.rooms.write().await;
-            match rooms.get_mut(&room) {
-                Some(r) => {
-                    let gone = match r.presence.get_mut(&user_id) {
-                        Some(c) => {
-                            *c -= 1;
-                            if *c == 0 {
-                                r.presence.remove(&user_id);
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        None => false,
-                    };
-                    if r.presence.is_empty() {
-                        rooms.remove(&room);
-                    }
-                    gone
-                }
-                None => false,
-            }
+    /// 更新连接所在文件/词条并广播完整权威快照。
+    pub async fn update_presence(
+        &self,
+        room: RoomId,
+        connection_id: &str,
+        user_id: i64,
+        file_id: Option<i64>,
+        entry_id: Option<i64>,
+    ) {
+        self.write_presence(room, connection_id, user_id, file_id, entry_id)
+            .await;
+        self.publish_presence_snapshot(room).await;
+    }
+
+    /// 心跳只续租当前连接；快照广播同时清理其它异常过期连接。
+    pub async fn touch_presence(&self, room: RoomId, connection_id: &str) {
+        let key = presence_key(room, connection_id);
+        let index = presence_index(room);
+        let mut conn = self.inner.publish.clone();
+        let _: Result<(), _> = redis::pipe()
+            .atomic()
+            .cmd("EXPIRE")
+            .arg(&key)
+            .arg(30)
+            .ignore()
+            .cmd("EXPIRE")
+            .arg(&index)
+            .arg(60)
+            .ignore()
+            .query_async(&mut conn)
+            .await;
+        self.publish_presence_snapshot(room).await;
+    }
+
+    /// 删除当前浏览器连接的租约并广播收敛后的快照。
+    pub async fn leave(&self, room: RoomId, connection_id: &str) {
+        let key = presence_key(room, connection_id);
+        let index = presence_index(room);
+        let mut conn = self.inner.publish.clone();
+        let _: Result<(), _> = redis::pipe()
+            .atomic()
+            .cmd("DEL")
+            .arg(key)
+            .ignore()
+            .cmd("SREM")
+            .arg(index)
+            .arg(connection_id)
+            .ignore()
+            .query_async(&mut conn)
+            .await;
+        self.publish_presence_snapshot(room).await;
+    }
+
+    async fn write_presence(
+        &self,
+        room: RoomId,
+        connection_id: &str,
+        user_id: i64,
+        file_id: Option<i64>,
+        entry_id: Option<i64>,
+    ) {
+        let state = PresenceState {
+            connection_id: connection_id.to_string(),
+            user_id,
+            file_id,
+            entry_id,
         };
-        if gone {
-            self.publish(room, &RoomEvent::Leave { user_id }).await;
+        let Ok(payload) = serde_json::to_string(&state) else {
+            return;
+        };
+        let key = presence_key(room, connection_id);
+        let index = presence_index(room);
+        let mut conn = self.inner.publish.clone();
+        let _: Result<(), _> = redis::pipe()
+            .atomic()
+            .cmd("SETEX")
+            .arg(key)
+            .arg(30)
+            .arg(payload)
+            .ignore()
+            .cmd("SADD")
+            .arg(&index)
+            .arg(connection_id)
+            .ignore()
+            .cmd("EXPIRE")
+            .arg(index)
+            .arg(60)
+            .ignore()
+            .query_async(&mut conn)
+            .await;
+    }
+
+    async fn presence_snapshot(&self, room: RoomId) -> Vec<PresenceState> {
+        let index = presence_index(room);
+        let mut conn = self.inner.publish.clone();
+        let connections: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(&index)
+            .query_async(&mut conn)
+            .await
+            .unwrap_or_default();
+        let mut snapshot: Vec<PresenceState> = Vec::with_capacity(connections.len());
+        let mut stale = Vec::new();
+        for connection_id in connections {
+            let payload: Option<String> = redis::cmd("GET")
+                .arg(presence_key(room, &connection_id))
+                .query_async(&mut conn)
+                .await
+                .ok()
+                .flatten();
+            match payload.and_then(|value| serde_json::from_str(&value).ok()) {
+                Some(state) => snapshot.push(state),
+                None => stale.push(connection_id),
+            }
         }
+        if !stale.is_empty() {
+            let _: Result<(), _> = redis::cmd("SREM")
+                .arg(index)
+                .arg(stale)
+                .query_async(&mut conn)
+                .await;
+        }
+        snapshot.sort_by(|a, b| (a.user_id, &a.connection_id).cmp(&(b.user_id, &b.connection_id)));
+        snapshot
+    }
+
+    async fn publish_presence_snapshot(&self, room: RoomId) {
+        let presences = self.presence_snapshot(room).await;
+        self.publish(room, &RoomEvent::PresenceSnapshot { presences })
+            .await;
     }
 
     /// 发布事件到房间（经 Redis 广播；所有实例含自身经订阅中继投递给本地连接）。
@@ -210,6 +316,14 @@ impl Hub {
             .query_async(&mut conn)
             .await;
     }
+}
+
+fn presence_index(room: RoomId) -> String {
+    format!("prts:presence:{room}:connections")
+}
+
+fn presence_key(room: RoomId, connection_id: &str) -> String {
+    format!("prts:presence:{room}:{connection_id}")
 }
 
 /// Redis 订阅中继：把频道消息投递给本地对应房间的广播通道。断线自动重连。
@@ -338,7 +452,6 @@ mod tests {
             let mut w = rooms.write().await;
             let r = w.entry(7).or_insert_with(|| Room {
                 tx: broadcast::channel(16).0,
-                presence: HashMap::new(),
             });
             r.tx.subscribe()
         };

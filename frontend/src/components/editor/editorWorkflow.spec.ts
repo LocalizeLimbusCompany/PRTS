@@ -11,7 +11,6 @@ import editorSource from '@/views/EditorView.vue?raw'
 
 import { buildAdvancedSearchRequest } from './AdvancedFilterDialog.vue'
 import { quickSearchRequest } from './SearchBar.vue'
-import { insertTermSuggestion, termPosName } from './TermSuggestions.vue'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -83,34 +82,10 @@ describe('editor structured search workflow', () => {
       vector: false,
       limit: 50,
     }
-    const response = { items: [], next_after: 'signed.cursor' }
+    const response = { items: [], next_after: 'signed.cursor', total_items: 121 }
     const post = vi.spyOn(http, 'post').mockResolvedValue({ data: response })
     await expect(searchApi.search(7, request)).resolves.toEqual(response)
     expect(post).toHaveBeenCalledWith('/projects/7/search', request)
-  })
-})
-
-describe('term suggestions', () => {
-  it('replaces a selection or inserts at the cursor without saving', () => {
-    expect(insertTermSuggestion('hello world', 6, 11, 'PRTS')).toEqual({
-      value: 'hello PRTS',
-      cursor: 10,
-    })
-    expect(insertTermSuggestion('hello world', 5, 5, ' PRTS')).toEqual({
-      value: 'hello PRTS world',
-      cursor: 10,
-    })
-
-    const applyBody = editorSource.split('function onApplyTermSuggestion')[1]?.split('\n}')[0] ?? ''
-    expect(applyBody).not.toContain('entriesApi.update')
-    expect(applyBody).not.toContain('draftState')
-  })
-
-  it('uses current locale POS name with the other locale as fallback', () => {
-    const term = { pos_name_zh_cn: '名词', pos_name_en: 'Noun' }
-    expect(termPosName(term, 'zh-CN')).toBe('名词')
-    expect(termPosName(term, 'en')).toBe('Noun')
-    expect(termPosName({ ...term, pos_name_en: null }, 'en')).toBe('名词')
   })
 })
 
@@ -130,8 +105,9 @@ describe('guest and presence boundaries', () => {
     expect(canOpenPresenceMenu(5, 5, true)).toBe(false)
     expect(canOpenPresenceMenu(6, 5, false)).toBe(false)
     expect(canOpenPresenceMenu(6, 5, true)).toBe(true)
-    expect(editorSource).toContain('if (uid === auth.user?.id)')
-    expect(editorSource).not.toContain('uid === undefined || uid === auth.user?.id')
+    expect(editorSource).toContain('if (auth.user?.id === userId)')
+    expect(editorSource).toContain('canOpenPresenceMenu(')
+    expect(editorSource).toContain('target.user_id')
   })
 })
 

@@ -29,6 +29,7 @@ pub struct ProjectDto {
     pub name: String,
     pub description: String,
     pub visibility: String,
+    pub comment_policy: String,
     pub source_langs: Vec<String>,
     pub primary_source_lang: Option<String>,
     pub target_lang: String,
@@ -57,6 +58,7 @@ impl From<&prts_db::models::Project> for ProjectDto {
             name: p.name.clone(),
             description: p.description.clone(),
             visibility: p.visibility.clone(),
+            comment_policy: p.comment_policy.clone(),
             source_langs: p.source_langs.clone(),
             primary_source_lang: p.primary_source_lang.clone(),
             target_lang: p.target_lang.clone(),
@@ -309,6 +311,8 @@ pub struct UpdateProjectReq {
     pub visibility: Option<String>,
     pub source_langs: Option<Vec<String>>,
     pub target_lang: Option<String>,
+    /// private|internal|public；控制词条评论的读取与写入范围。
+    pub comment_policy: Option<String>,
 }
 
 /// 主源语言切换请求。移除当前主源时必须在同一请求中提交替代后的完整源语言集合。
@@ -427,7 +431,7 @@ pub async fn change_primary_source(
     .map_err(db_err)?;
     let term_plan = prts_core::terms::plan_primary_source_terms(&primary_source_lang)
         .map_err(|error| prts_common::Error::bad_request(error.code()))?;
-    prts_db::terms::apply_primary_source_plan_tx(&mut tx, id, &term_plan)
+    prts_db::terms::apply_primary_source_plan_tx(&mut tx, id, &term_plan, user.id)
         .await
         .map_err(db_err)?;
     let updated = prts_db::projects::change_primary_source_tx(
@@ -475,10 +479,13 @@ fn primary_source_change_error(
 
 /// 更新项目元信息。需项目「管理」权限。
 #[utoipa::path(put, path = "/projects/{id}", tag = "project", request_body = UpdateProjectReq,
+    description = "Atomically update project metadata under project.manage. comment_policy accepts private, internal, or public; language tags are canonicalized, the primary source must remain unchanged here, and target language becomes immutable after the first entry.",
     responses(
         (status = 200, body = ProjectDto),
-        (status = 403),
-        (status = 404),
+        (status = 400, description = "Invalid comment policy/language update or locked target language", body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+        (status = 404, body = ErrorResponse),
+        (status = 409, description = "Project language resolution is required", body = ErrorResponse),
         (status = 503, description = "审计服务不可用，项目未更新", body = ErrorResponse)
     ))]
 pub async fn update_project(
@@ -513,6 +520,12 @@ pub async fn update_project(
     let requested_target_lang = req
         .target_lang
         .unwrap_or_else(|| before.target_lang.clone());
+    let comment_policy = req
+        .comment_policy
+        .unwrap_or_else(|| before.comment_policy.clone());
+    if !matches!(comment_policy.as_str(), "private" | "internal" | "public") {
+        return Err(Error::bad_request("invalid_comment_policy").into());
+    }
     let primary_source_lang = before.primary_source_lang.as_deref();
     let (source_langs, canonical_primary, target_lang) =
         prts_core::language::canonicalize_project_languages(
@@ -535,7 +548,7 @@ pub async fn update_project(
     if Some(canonical_primary.as_str()) != primary_source_lang {
         return Err(Error::bad_request("主源语言只能通过专用重建流程更改").into());
     }
-    let mut changed_fields = Vec::with_capacity(5);
+    let mut changed_fields = Vec::with_capacity(6);
     if name != before.name {
         changed_fields.push("name");
     }
@@ -551,6 +564,9 @@ pub async fn update_project(
     if target_lang != before.target_lang {
         changed_fields.push("target_lang");
     }
+    if comment_policy != before.comment_policy {
+        changed_fields.push("comment_policy");
+    }
     let updated = prts_db::projects::update_tx(
         &mut tx,
         id,
@@ -559,6 +575,7 @@ pub async fn update_project(
         &visibility,
         &source_langs,
         &target_lang,
+        &comment_policy,
     )
     .await
     .map_err(db_err)?;

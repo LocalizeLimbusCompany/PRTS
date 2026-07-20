@@ -7,6 +7,7 @@ export interface UserDto {
   avatar_url: string | null
   description: string
   translation_langs: string[]
+  entry_diff_mode: EntryDiffMode
   cp_tenths: number
   platform_role: string | null
   platform_capabilities: PlatformCapabilities
@@ -100,6 +101,7 @@ export interface ProjectDto {
   name: string
   description: string
   visibility: string
+  comment_policy: CommentPolicy
   source_langs: string[]
   primary_source_lang: string | null
   target_lang: string
@@ -251,11 +253,37 @@ export interface EntryDto {
 export interface EntryVersionDto {
   version: number
   kind: string
-  translation: string | null
-  state: string | null
-  original: Record<string, string> | null
+  translation: string
+  state: EntryState
+  original: Record<string, string>
   editor_id: number | null
+  editor_name: string | null
+  editor_avatar_url: string | null
   created_at: string
+}
+
+export type EntryDiffMode = 'character_inline' | 'word_inline' | 'side_by_side'
+export type CommentPolicy = 'private' | 'internal' | 'public'
+
+export interface EntryCommentDto {
+  id: number
+  entry_id: number
+  author_id: number | null
+  author_name: string
+  author_avatar_url: string | null
+  content: string
+  deleted: boolean
+  can_edit: boolean
+  can_delete: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface EntryCommentPageDto {
+  items: EntryCommentDto[]
+  next_after: number | null
+  can_comment: boolean
+  policy: CommentPolicy
 }
 
 /** 服务端下发的上传运行时限制；上传客户端不得复制这些默认值。 */
@@ -372,6 +400,7 @@ export interface SearchHitDto extends EntryDto {
 export interface StructuredSearchResponse {
   items: SearchHitDto[]
   next_after: string | null
+  total_items: number
 }
 
 /** 搜索 / 向量化配置（可写部分）。 */

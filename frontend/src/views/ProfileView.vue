@@ -3,7 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
-import { apiErrorMessage, usersApi, type ApiKeyDto, type ExternalAccountDto } from '@/api'
+import {
+  apiErrorMessage,
+  usersApi,
+  type ApiKeyDto,
+  type EntryDiffMode,
+  type ExternalAccountDto,
+} from '@/api'
 import { COMMON_LANGS, langLabel } from '@/lib/langs'
 import { roleLabel } from '@/lib/states'
 import { useAuthStore } from '@/stores/auth'
@@ -15,6 +21,7 @@ const localizedLangLabel = (code: string) => langLabel(code, locale.value)
 
 const desc = ref('')
 const langs = ref<string[]>([])
+const diffMode = ref<EntryDiffMode>('word_inline')
 const saving = ref(false)
 const keys = ref<ApiKeyDto[]>([])
 const accounts = ref<ExternalAccountDto[]>([])
@@ -23,6 +30,7 @@ onMounted(async () => {
   await auth.refreshMe()
   desc.value = auth.user?.description ?? ''
   langs.value = [...(auth.user?.translation_langs ?? [])]
+  diffMode.value = auth.user?.entry_diff_mode ?? 'word_inline'
   try {
     keys.value = await usersApi.listApiKeys()
     accounts.value = await usersApi.accounts()
@@ -34,7 +42,11 @@ onMounted(async () => {
 async function saveProfile() {
   saving.value = true
   try {
-    await usersApi.updateMe({ description: desc.value, translation_langs: langs.value })
+    await usersApi.updateMe({
+      description: desc.value,
+      translation_langs: langs.value,
+      entry_diff_mode: diffMode.value,
+    })
     await auth.refreshMe()
     $q.notify({ type: 'positive', message: t('profile.saved') })
   } catch (e) {
@@ -166,6 +178,23 @@ async function revokeKey(id: number) {
         <div class="fld">
           <div class="prts-label q-mb-xs">{{ t('profile.description') }}</div>
           <q-input v-model="desc" outlined dense type="textarea" autogrow :disable="saving" />
+        </div>
+        <div class="fld">
+          <div class="prts-label q-mb-xs">{{ t('profile.entryDiffMode') }}</div>
+          <q-select
+            v-model="diffMode"
+            outlined
+            dense
+            emit-value
+            map-options
+            :options="[
+              { label: t('profile.diffModes.character'), value: 'character_inline' },
+              { label: t('profile.diffModes.word'), value: 'word_inline' },
+              { label: t('profile.diffModes.sideBySide'), value: 'side_by_side' },
+            ]"
+            :hint="t('profile.entryDiffModeHint')"
+            :disable="saving"
+          />
         </div>
         <div class="fld">
           <div class="prts-label q-mb-xs">{{ t('profile.translationLanguages') }}</div>

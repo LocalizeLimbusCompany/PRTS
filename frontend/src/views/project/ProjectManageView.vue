@@ -20,7 +20,7 @@ const $q = useQuasar()
 const { t } = useI18n()
 const router = useRouter()
 const saving = ref(false)
-const form = ref({ name: '', description: '', visibility: 'public' })
+const form = ref({ name: '', description: '', visibility: 'public', comment_policy: 'private' })
 const changingPrimary = ref(false)
 const showResolution = ref(false)
 const languageForm = ref({ source_langs: [] as string[], primary_source_lang: '' })
@@ -73,6 +73,7 @@ watch(
       name: project.name,
       description: project.description,
       visibility: project.visibility,
+      comment_policy: project.comment_policy,
     }
     languageForm.value = {
       source_langs: [...project.source_langs],
@@ -91,6 +92,7 @@ async function save() {
       name: form.value.name.trim(),
       description: form.value.description,
       visibility: form.value.visibility,
+      comment_policy: form.value.comment_policy,
     })
     await reload()
     $q.notify({ type: 'positive', message: t('project.manage.saved') })
@@ -339,6 +341,19 @@ async function cancelDeletion() {
               { label: $t('project.private'), value: 'private' },
             ]"
             :label="$t('project.visibility')"
+          />
+          <q-select
+            v-model="form.comment_policy"
+            outlined
+            emit-value
+            map-options
+            :options="[
+              { label: $t('project.comments.private'), value: 'private' },
+              { label: $t('project.comments.internal'), value: 'internal' },
+              { label: $t('project.comments.public'), value: 'public' },
+            ]"
+            :label="$t('project.comments.policy')"
+            :hint="$t(`project.comments.${form.comment_policy}Hint`)"
           />
           <MarkdownEditor
             v-model="form.description"

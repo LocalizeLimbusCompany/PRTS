@@ -6,6 +6,7 @@
 pub mod api_keys;
 pub mod audit;
 pub mod auth_sessions;
+pub mod comments;
 pub mod contributions;
 pub mod entries;
 pub mod file_history;

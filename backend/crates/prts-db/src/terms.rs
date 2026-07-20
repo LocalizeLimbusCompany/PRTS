@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, PgPool};
 
-use crate::models::{Term, TermWithPos};
+use crate::models::{Term, TermVersion, TermWithPos};
 
 const TERM_WITH_POS_SELECT: &str =
     "SELECT term.*, pos.name_zh_cn AS pos_name_zh_cn, pos.name_en AS pos_name_en
@@ -16,6 +16,7 @@ pub enum TermListScope {
     Current,
     Archived,
     Mixed,
+    Deleted,
 }
 
 /// 按 id DESC 键集列出术语。
@@ -31,14 +32,20 @@ pub async fn list(
         TermListScope::Current => "current",
         TermListScope::Archived => "archived",
         TermListScope::Mixed => "mixed",
+        TermListScope::Deleted => "deleted",
     };
     sqlx::query_as::<_, TermWithPos>(&format!(
         "{TERM_WITH_POS_SELECT}
          WHERE term.project_id = $1
+           AND CASE WHEN $4::TEXT = 'deleted'
+                    THEN term.deleted_at IS NOT NULL
+                    ELSE term.deleted_at IS NULL
+               END
            AND ($3::BIGINT IS NULL OR term.id < $3)
            AND CASE $4::TEXT
                  WHEN 'current' THEN term.archived_at IS NULL AND term.source_lang = $2
                  WHEN 'archived' THEN term.archived_at IS NOT NULL
+                 WHEN 'deleted' THEN TRUE
                  ELSE TRUE
                END
          ORDER BY term.id DESC LIMIT $5"
@@ -59,7 +66,8 @@ pub async fn find(
     term_id: i64,
 ) -> Result<Option<TermWithPos>, sqlx::Error> {
     sqlx::query_as::<_, TermWithPos>(&format!(
-        "{TERM_WITH_POS_SELECT} WHERE term.project_id = $1 AND term.id = $2"
+        "{TERM_WITH_POS_SELECT}
+         WHERE term.project_id = $1 AND term.id = $2 AND term.deleted_at IS NULL"
     ))
     .bind(project_id)
     .bind(term_id)
@@ -92,12 +100,21 @@ pub async fn create_tx(
     pos_id: Option<i64>,
     archived_at: Option<DateTime<Utc>>,
     actor_id: i64,
-) -> Result<Term, sqlx::Error> {
+) -> Result<Option<Term>, sqlx::Error> {
     sqlx::query_as::<_, Term>(
         "INSERT INTO terms (
              project_id, source_lang, source_text, translation, notes, pos_id,
              archived_at, created_by, updated_by
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+         ON CONFLICT ON CONSTRAINT terms_identity_unique DO UPDATE
+         SET translation = EXCLUDED.translation,
+             notes = EXCLUDED.notes,
+             archived_at = EXCLUDED.archived_at,
+             deleted_at = NULL,
+             deleted_by = NULL,
+             updated_by = EXCLUDED.updated_by,
+             version = terms.version + 1
+         WHERE terms.deleted_at IS NOT NULL
          RETURNING *",
     )
     .bind(project_id)
@@ -108,7 +125,7 @@ pub async fn create_tx(
     .bind(pos_id)
     .bind(archived_at)
     .bind(actor_id)
-    .fetch_one(conn)
+    .fetch_optional(conn)
     .await
 }
 
@@ -129,8 +146,8 @@ pub async fn update_tx(
     sqlx::query_as::<_, Term>(
         "UPDATE terms
          SET source_lang = $3, source_text = $4, translation = $5, notes = $6,
-             pos_id = $7, archived_at = $8, updated_by = $9
-         WHERE project_id = $1 AND id = $2 RETURNING *",
+             pos_id = $7, archived_at = $8, updated_by = $9, version = version + 1
+         WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL RETURNING *",
     )
     .bind(project_id)
     .bind(term_id)
@@ -145,18 +162,23 @@ pub async fn update_tx(
     .await
 }
 
-/// 删除 URL project 绑定的术语。
+/// 软删除 URL project 绑定的术语并递增版本。
 pub async fn delete_tx(
     conn: &mut PgConnection,
     project_id: i64,
     term_id: i64,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query("DELETE FROM terms WHERE project_id = $1 AND id = $2")
-        .bind(project_id)
-        .bind(term_id)
-        .execute(conn)
-        .await
-        .map(|result| result.rows_affected() == 1)
+    actor_id: i64,
+) -> Result<Option<Term>, sqlx::Error> {
+    sqlx::query_as::<_, Term>(
+        "UPDATE terms SET deleted_at = now(), deleted_by = $3,
+             updated_by = $3, version = version + 1
+         WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL RETURNING *",
+    )
+    .bind(project_id)
+    .bind(term_id)
+    .bind(actor_id)
+    .fetch_optional(conn)
+    .await
 }
 
 /// 返回当前 primary active terms 中命中给定源文本的候选；不返回其它语言或归档项。
@@ -171,6 +193,7 @@ pub async fn match_current(
         "{TERM_WITH_POS_SELECT}
          WHERE term.project_id = $1 AND term.source_lang = $2
            AND term.archived_at IS NULL AND position(term.source_text IN $3) > 0
+           AND term.deleted_at IS NULL
          ORDER BY length(term.source_text) DESC, term.id ASC LIMIT $4"
     ))
     .bind(project_id)
@@ -187,7 +210,8 @@ pub async fn list_for_export(
     project_id: i64,
 ) -> Result<Vec<TermWithPos>, sqlx::Error> {
     sqlx::query_as::<_, TermWithPos>(&format!(
-        "{TERM_WITH_POS_SELECT} WHERE term.project_id = $1 ORDER BY term.id ASC"
+        "{TERM_WITH_POS_SELECT}
+         WHERE term.project_id = $1 AND term.deleted_at IS NULL ORDER BY term.id ASC"
     ))
     .bind(project_id)
     .fetch_all(pool)
@@ -200,7 +224,8 @@ pub async fn list_for_export_tx(
     project_id: i64,
 ) -> Result<Vec<TermWithPos>, sqlx::Error> {
     sqlx::query_as::<_, TermWithPos>(&format!(
-        "{TERM_WITH_POS_SELECT} WHERE term.project_id = $1 ORDER BY term.id ASC"
+        "{TERM_WITH_POS_SELECT}
+         WHERE term.project_id = $1 AND term.deleted_at IS NULL ORDER BY term.id ASC"
     ))
     .bind(project_id)
     .fetch_all(conn)
@@ -285,7 +310,10 @@ pub async fn upsert_import_tx(
          SET translation = EXCLUDED.translation,
              notes = EXCLUDED.notes,
              archived_at = EXCLUDED.archived_at,
-             updated_by = EXCLUDED.updated_by
+             deleted_at = NULL,
+             deleted_by = NULL,
+             updated_by = EXCLUDED.updated_by,
+             version = terms.version + 1
          RETURNING *",
     )
     .bind(project_id)
@@ -305,28 +333,132 @@ pub async fn apply_primary_source_plan_tx(
     conn: &mut PgConnection,
     project_id: i64,
     plan: &prts_core::terms::PrimarySourceTermsPlan,
+    actor_id: i64,
 ) -> Result<(u64, u64), sqlx::Error> {
-    let archived = sqlx::query(
-        "UPDATE terms SET archived_at = now()
+    let archived_ids: Vec<i64> = sqlx::query_scalar(
+        "UPDATE terms SET archived_at = now(), updated_by = $3, version = version + 1
          WHERE project_id = $1
-           AND source_lang <> $2 AND archived_at IS NULL",
+           AND source_lang <> $2 AND archived_at IS NULL AND deleted_at IS NULL
+         RETURNING id",
     )
     .bind(project_id)
     .bind(&plan.primary_source_lang)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
-    let activated = sqlx::query(
-        "UPDATE terms SET archived_at = NULL
+    .bind(actor_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for term_id in &archived_ids {
+        append_version_tx(conn, *term_id, "primary_source_archive", actor_id).await?;
+    }
+    let activated_ids: Vec<i64> = sqlx::query_scalar(
+        "UPDATE terms SET archived_at = NULL, updated_by = $3, version = version + 1
          WHERE project_id = $1
-           AND source_lang = $2 AND archived_at IS NOT NULL",
+           AND source_lang = $2 AND archived_at IS NOT NULL AND deleted_at IS NULL
+         RETURNING id",
     )
     .bind(project_id)
     .bind(&plan.primary_source_lang)
-    .execute(conn)
-    .await?
-    .rows_affected();
-    Ok((archived, activated))
+    .bind(actor_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for term_id in &activated_ids {
+        append_version_tx(conn, *term_id, "primary_source_activate", actor_id).await?;
+    }
+    Ok((archived_ids.len() as u64, activated_ids.len() as u64))
+}
+
+/// 为当前术语状态写入一条不可改写完整快照。
+pub async fn append_version_tx(
+    conn: &mut PgConnection,
+    term_id: i64,
+    kind: &str,
+    actor_id: i64,
+) -> Result<TermVersion, sqlx::Error> {
+    sqlx::query_as::<_, TermVersion>(
+        "INSERT INTO term_versions (
+             project_id, term_id, version, kind, source_lang, source_text,
+             translation, notes, pos_id, archived_at, deleted_at,
+             editor_id, editor_name, editor_avatar_url
+         )
+         SELECT term.project_id, term.id, term.version, $2, term.source_lang,
+                term.source_text, term.translation, term.notes, term.pos_id,
+                term.archived_at, term.deleted_at, actor.id, actor.username,
+                actor.avatar_url
+         FROM terms AS term JOIN users AS actor ON actor.id = $3
+         WHERE term.id = $1
+         RETURNING *",
+    )
+    .bind(term_id)
+    .bind(kind)
+    .bind(actor_id)
+    .fetch_one(conn)
+    .await
+}
+
+/// 倒序列出术语版本。
+pub async fn list_versions(
+    pool: &PgPool,
+    project_id: i64,
+    term_id: i64,
+    after: Option<i64>,
+    limit: i64,
+) -> Result<Vec<TermVersion>, sqlx::Error> {
+    sqlx::query_as::<_, TermVersion>(
+        "SELECT * FROM term_versions
+         WHERE project_id = $1 AND term_id = $2
+           AND ($3::BIGINT IS NULL OR version < $3)
+         ORDER BY version DESC, id DESC LIMIT $4",
+    )
+    .bind(project_id)
+    .bind(term_id)
+    .bind(after)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// 锁定指定术语版本。
+pub async fn find_version_for_update_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+    term_id: i64,
+    version: i64,
+) -> Result<Option<TermVersion>, sqlx::Error> {
+    sqlx::query_as::<_, TermVersion>(
+        "SELECT * FROM term_versions
+         WHERE project_id = $1 AND term_id = $2 AND version = $3 FOR UPDATE",
+    )
+    .bind(project_id)
+    .bind(term_id)
+    .bind(version)
+    .fetch_optional(conn)
+    .await
+}
+
+/// 把历史快照恢复为新的当前版本；恢复永远重新激活被删除术语。
+pub async fn restore_version_tx(
+    conn: &mut PgConnection,
+    project_id: i64,
+    term_id: i64,
+    snapshot: &TermVersion,
+    actor_id: i64,
+) -> Result<Term, sqlx::Error> {
+    sqlx::query_as::<_, Term>(
+        "UPDATE terms SET source_lang = $3, source_text = $4, translation = $5,
+             notes = $6, pos_id = $7, archived_at = $8, deleted_at = NULL,
+             deleted_by = NULL, updated_by = $9, version = version + 1
+         WHERE project_id = $1 AND id = $2 RETURNING *",
+    )
+    .bind(project_id)
+    .bind(term_id)
+    .bind(&snapshot.source_lang)
+    .bind(&snapshot.source_text)
+    .bind(&snapshot.translation)
+    .bind(&snapshot.notes)
+    .bind(snapshot.pos_id)
+    .bind(snapshot.archived_at)
+    .bind(actor_id)
+    .fetch_one(conn)
+    .await
 }
 
 /// 兼容 Task 7 尚未创建/已经创建 deletion_scheduled_at 两种 schema 的只读 gate。

@@ -110,6 +110,28 @@ struct ReplacementStagedTotals {
     questioned_delta: i64,
     checked_delta: i64,
     reviewed_delta: i64,
+    hidden_total_delta: i64,
+    hidden_untranslated_delta: i64,
+    hidden_translated_delta: i64,
+    hidden_questioned_delta: i64,
+    hidden_checked_delta: i64,
+    hidden_reviewed_delta: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, FromRow)]
+struct EditorStatsSnapshot {
+    visible_total: i64,
+    untranslated: i64,
+    translated: i64,
+    questioned: i64,
+    checked: i64,
+    reviewed: i64,
+    hidden_total: i64,
+    hidden_untranslated: i64,
+    hidden_translated: i64,
+    hidden_questioned: i64,
+    hidden_checked: i64,
+    hidden_reviewed: i64,
 }
 
 /// 建立当前文件事务专属的 upload staging 与 typed plan 表。
@@ -147,7 +169,13 @@ pub async fn create_replacement_temp_tables_tx(conn: &mut PgConnection) -> Resul
              translated_delta BIGINT NOT NULL,
              questioned_delta BIGINT NOT NULL,
              checked_delta BIGINT NOT NULL,
-             reviewed_delta BIGINT NOT NULL
+             reviewed_delta BIGINT NOT NULL,
+             hidden_total_delta BIGINT NOT NULL,
+             hidden_untranslated_delta BIGINT NOT NULL,
+             hidden_translated_delta BIGINT NOT NULL,
+             hidden_questioned_delta BIGINT NOT NULL,
+             hidden_checked_delta BIGINT NOT NULL,
+             hidden_reviewed_delta BIGINT NOT NULL
          ) ON COMMIT DROP",
     )
     .execute(&mut *conn)
@@ -472,7 +500,9 @@ async fn stage_planned_transitions_tx(
              after_original, after_translation, after_state, after_locked, after_hidden,
              before_value, after_value, history_operation,
              visible_total_delta, untranslated_delta, translated_delta,
-             questioned_delta, checked_delta, reviewed_delta
+             questioned_delta, checked_delta, reviewed_delta,
+             hidden_total_delta, hidden_untranslated_delta, hidden_translated_delta,
+             hidden_questioned_delta, hidden_checked_delta, hidden_reviewed_delta
          ) ",
     );
     builder.push_values(transitions, |mut row, transition| {
@@ -494,7 +524,13 @@ async fn stage_planned_transitions_tx(
             .push_bind(transition.stats_delta.translated)
             .push_bind(transition.stats_delta.questioned)
             .push_bind(transition.stats_delta.checked)
-            .push_bind(transition.stats_delta.reviewed);
+            .push_bind(transition.stats_delta.reviewed)
+            .push_bind(transition.stats_delta.hidden_total)
+            .push_bind(transition.stats_delta.hidden_untranslated)
+            .push_bind(transition.stats_delta.hidden_translated)
+            .push_bind(transition.stats_delta.hidden_questioned)
+            .push_bind(transition.stats_delta.hidden_checked)
+            .push_bind(transition.stats_delta.hidden_reviewed);
     });
     builder.build().execute(conn).await?;
     Ok(())
@@ -540,7 +576,16 @@ pub async fn apply_staged_replacement_tx(
                 COALESCE(sum(translated_delta), 0)::BIGINT AS translated_delta,
                 COALESCE(sum(questioned_delta), 0)::BIGINT AS questioned_delta,
                 COALESCE(sum(checked_delta), 0)::BIGINT AS checked_delta,
-                COALESCE(sum(reviewed_delta), 0)::BIGINT AS reviewed_delta
+                COALESCE(sum(reviewed_delta), 0)::BIGINT AS reviewed_delta,
+                COALESCE(sum(hidden_total_delta), 0)::BIGINT AS hidden_total_delta,
+                COALESCE(sum(hidden_untranslated_delta), 0)::BIGINT
+                    AS hidden_untranslated_delta,
+                COALESCE(sum(hidden_translated_delta), 0)::BIGINT
+                    AS hidden_translated_delta,
+                COALESCE(sum(hidden_questioned_delta), 0)::BIGINT
+                    AS hidden_questioned_delta,
+                COALESCE(sum(hidden_checked_delta), 0)::BIGINT AS hidden_checked_delta,
+                COALESCE(sum(hidden_reviewed_delta), 0)::BIGINT AS hidden_reviewed_delta
          FROM prts_upload_replacement_plan",
     )
     .fetch_one(&mut *conn)
@@ -574,15 +619,31 @@ pub async fn apply_staged_replacement_tx(
         questioned: staged.questioned_delta,
         checked: staged.checked_delta,
         reviewed: staged.reviewed_delta,
+        hidden_total: staged.hidden_total_delta,
+        hidden_untranslated: staged.hidden_untranslated_delta,
+        hidden_translated: staged.hidden_translated_delta,
+        hidden_questioned: staged.hidden_questioned_delta,
+        hidden_checked: staged.hidden_checked_delta,
+        hidden_reviewed: staged.hidden_reviewed_delta,
     };
     if staged_stats != stats_delta {
         return Err(sqlx::Error::Protocol(format!(
             "replacement staged stats mismatch: staged={staged_stats:?}, summary={stats_delta:?}"
         )));
     }
-    let before_stats: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT visible_total, untranslated_count, translated_count,
-                questioned_count, checked_count, reviewed_count
+    let before_stats: EditorStatsSnapshot = sqlx::query_as(
+        "SELECT visible_total,
+                untranslated_count AS untranslated,
+                translated_count AS translated,
+                questioned_count AS questioned,
+                checked_count AS checked,
+                reviewed_count AS reviewed,
+                hidden_total,
+                hidden_untranslated_count AS hidden_untranslated,
+                hidden_translated_count AS hidden_translated,
+                hidden_questioned_count AS hidden_questioned,
+                hidden_checked_count AS hidden_checked,
+                hidden_reviewed_count AS hidden_reviewed
          FROM file_stats WHERE file_id = $1 FOR UPDATE",
     )
     .bind(file_id)
@@ -602,6 +663,12 @@ pub async fn apply_staged_replacement_tx(
             "questioned": stats_delta.questioned,
             "checked": stats_delta.checked,
             "reviewed": stats_delta.reviewed,
+            "hidden_total": stats_delta.hidden_total,
+            "hidden_untranslated": stats_delta.hidden_untranslated,
+            "hidden_translated": stats_delta.hidden_translated,
+            "hidden_questioned": stats_delta.hidden_questioned,
+            "hidden_checked": stats_delta.hidden_checked,
+            "hidden_reviewed": stats_delta.hidden_reviewed,
         },
     });
     sqlx::query(
@@ -666,24 +733,27 @@ pub async fn apply_staged_replacement_tx(
     .await?;
     verify_replacement_rows("insert", inserted_rows.rows_affected(), staged.inserted)?;
 
-    let version_rows = sqlx::query(
+    // Existing entries created by older upload paths may not have a snapshot for their current
+    // version. Preserve that pre-upload baseline once so the first source diff has a left side;
+    // entries already saved/flagged at this version reuse their existing complete snapshot.
+    sqlx::query(
         "INSERT INTO entry_versions (
-             entry_id, version, kind, translation, state, original, editor_id
+             entry_id, version, kind, translation, state, original, editor_id,
+             editor_name, editor_avatar_url
          )
-         SELECT entry.id, entry.version, 'source_update', entry.translation,
-                entry.state, entry.original, $1
+         SELECT entry.id, entry.version, 'baseline', entry.translation,
+                entry.state, entry.original, actor.id, actor.username, actor.avatar_url
          FROM entries AS entry
          JOIN prts_upload_replacement_plan AS plan ON plan.entry_id = entry.id
-         WHERE plan.source_changed",
+         LEFT JOIN users AS actor ON actor.id = entry.updated_by
+         WHERE plan.source_changed
+           AND NOT EXISTS (
+               SELECT 1 FROM entry_versions AS existing
+               WHERE existing.entry_id = entry.id AND existing.version = entry.version
+           )",
     )
-    .bind(actor_id)
     .execute(&mut *conn)
     .await?;
-    verify_replacement_rows(
-        "source version",
-        version_rows.rows_affected(),
-        staged.source_changed,
-    )?;
 
     let source_rows = sqlx::query(
         "UPDATE entries AS entry
@@ -725,6 +795,30 @@ pub async fn apply_staged_replacement_tx(
     .execute(&mut *conn)
     .await?;
     verify_replacement_rows("restore", restored_rows.rows_affected(), staged.restored)?;
+
+    // Record the post-upload state at the new version. This snapshot must be written after both
+    // active source updates and source-changing restores, otherwise a later translator edit would
+    // make the source diff appear under the translator instead of the uploader.
+    let source_version_rows = sqlx::query(
+        "INSERT INTO entry_versions (
+             entry_id, version, kind, translation, state, original, editor_id,
+             editor_name, editor_avatar_url
+         )
+         SELECT entry.id, entry.version, 'source_update', entry.translation,
+                entry.state, entry.original, actor.id, actor.username, actor.avatar_url
+         FROM entries AS entry
+         JOIN prts_upload_replacement_plan AS plan ON plan.entry_id = entry.id
+         LEFT JOIN users AS actor ON actor.id = $1
+         WHERE plan.source_changed",
+    )
+    .bind(actor_id)
+    .execute(&mut *conn)
+    .await?;
+    verify_replacement_rows(
+        "source version",
+        source_version_rows.rows_affected(),
+        staged.source_changed,
+    )?;
 
     let tombstoned_rows = sqlx::query(
         "UPDATE entries AS entry
@@ -770,6 +864,12 @@ pub async fn apply_staged_replacement_tx(
              questioned_count = questioned_count + $5,
              checked_count = checked_count + $6,
              reviewed_count = reviewed_count + $7,
+             hidden_total = hidden_total + $8,
+             hidden_untranslated_count = hidden_untranslated_count + $9,
+             hidden_translated_count = hidden_translated_count + $10,
+             hidden_questioned_count = hidden_questioned_count + $11,
+             hidden_checked_count = hidden_checked_count + $12,
+             hidden_reviewed_count = hidden_reviewed_count + $13,
              updated_at = now()
          WHERE file_id = $1",
     )
@@ -780,6 +880,12 @@ pub async fn apply_staged_replacement_tx(
     .bind(stats_delta.questioned)
     .bind(stats_delta.checked)
     .bind(stats_delta.reviewed)
+    .bind(stats_delta.hidden_total)
+    .bind(stats_delta.hidden_untranslated)
+    .bind(stats_delta.hidden_translated)
+    .bind(stats_delta.hidden_questioned)
+    .bind(stats_delta.hidden_checked)
+    .bind(stats_delta.hidden_reviewed)
     .execute(&mut *conn)
     .await?;
     sqlx::query(
@@ -790,6 +896,12 @@ pub async fn apply_staged_replacement_tx(
              questioned_count = questioned_count + $5,
              checked_count = checked_count + $6,
              reviewed_count = reviewed_count + $7,
+             hidden_total = hidden_total + $8,
+             hidden_untranslated_count = hidden_untranslated_count + $9,
+             hidden_translated_count = hidden_translated_count + $10,
+             hidden_questioned_count = hidden_questioned_count + $11,
+             hidden_checked_count = hidden_checked_count + $12,
+             hidden_reviewed_count = hidden_reviewed_count + $13,
              updated_at = now()
          WHERE project_id = $1",
     )
@@ -800,6 +912,12 @@ pub async fn apply_staged_replacement_tx(
     .bind(stats_delta.questioned)
     .bind(stats_delta.checked)
     .bind(stats_delta.reviewed)
+    .bind(stats_delta.hidden_total)
+    .bind(stats_delta.hidden_untranslated)
+    .bind(stats_delta.hidden_translated)
+    .bind(stats_delta.hidden_questioned)
+    .bind(stats_delta.hidden_checked)
+    .bind(stats_delta.hidden_reviewed)
     .execute(&mut *conn)
     .await?;
     let restored_file = sqlx::query(
@@ -818,22 +936,38 @@ pub async fn apply_staged_replacement_tx(
         ));
     }
     super::files::refresh_entry_count_tx(&mut *conn, file_id).await?;
-    let after_stats: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
-        "SELECT visible_total, untranslated_count, translated_count,
-                questioned_count, checked_count, reviewed_count
+    let after_stats: EditorStatsSnapshot = sqlx::query_as(
+        "SELECT visible_total,
+                untranslated_count AS untranslated,
+                translated_count AS translated,
+                questioned_count AS questioned,
+                checked_count AS checked,
+                reviewed_count AS reviewed,
+                hidden_total,
+                hidden_untranslated_count AS hidden_untranslated,
+                hidden_translated_count AS hidden_translated,
+                hidden_questioned_count AS hidden_questioned,
+                hidden_checked_count AS hidden_checked,
+                hidden_reviewed_count AS hidden_reviewed
          FROM file_stats WHERE file_id = $1",
     )
     .bind(file_id)
     .fetch_one(&mut *conn)
     .await?;
-    let expected = (
-        before_stats.0 + stats_delta.visible_total,
-        before_stats.1 + stats_delta.untranslated,
-        before_stats.2 + stats_delta.translated,
-        before_stats.3 + stats_delta.questioned,
-        before_stats.4 + stats_delta.checked,
-        before_stats.5 + stats_delta.reviewed,
-    );
+    let expected = EditorStatsSnapshot {
+        visible_total: before_stats.visible_total + stats_delta.visible_total,
+        untranslated: before_stats.untranslated + stats_delta.untranslated,
+        translated: before_stats.translated + stats_delta.translated,
+        questioned: before_stats.questioned + stats_delta.questioned,
+        checked: before_stats.checked + stats_delta.checked,
+        reviewed: before_stats.reviewed + stats_delta.reviewed,
+        hidden_total: before_stats.hidden_total + stats_delta.hidden_total,
+        hidden_untranslated: before_stats.hidden_untranslated + stats_delta.hidden_untranslated,
+        hidden_translated: before_stats.hidden_translated + stats_delta.hidden_translated,
+        hidden_questioned: before_stats.hidden_questioned + stats_delta.hidden_questioned,
+        hidden_checked: before_stats.hidden_checked + stats_delta.hidden_checked,
+        hidden_reviewed: before_stats.hidden_reviewed + stats_delta.hidden_reviewed,
+    };
     if after_stats != expected {
         return Err(sqlx::Error::Protocol(format!(
             "replacement stats postcondition failed: expected {expected:?}, got {after_stats:?}"
@@ -944,13 +1078,25 @@ pub async fn bulk_upsert_tx(
                 None => to_insert.push(e),
                 Some((id, old_original)) => {
                     if old_original != &e.original {
-                        // 先记录变更前快照
+                        // 旧上传路径可能尚无当前版本快照；只在缺失时补基线。
                         sqlx::query(
-                            "INSERT INTO entry_versions (entry_id, version, kind, translation, state, original, editor_id)
-                             SELECT id, version, 'source_update', translation, state, original, $2 FROM entries WHERE id = $1",
+                            "INSERT INTO entry_versions (
+                                 entry_id, version, kind, translation, state, original, editor_id,
+                                 editor_name, editor_avatar_url
+                             )
+                             SELECT entry.id, entry.version, 'baseline', entry.translation,
+                                    entry.state, entry.original, actor.id, actor.username,
+                                    actor.avatar_url
+                             FROM entries AS entry
+                             LEFT JOIN users AS actor ON actor.id = entry.updated_by
+                             WHERE entry.id = $1
+                               AND NOT EXISTS (
+                                   SELECT 1 FROM entry_versions AS existing
+                                   WHERE existing.entry_id = entry.id
+                                     AND existing.version = entry.version
+                               )",
                         )
                         .bind(id)
-                        .bind(editor_id)
                         .execute(&mut *conn)
                         .await?;
                         // 覆盖源文、置未翻译、版本+1（保留 translation）
@@ -960,6 +1106,23 @@ pub async fn bulk_upsert_tx(
                         )
                         .bind(id)
                         .bind(&e.original)
+                        .bind(editor_id)
+                        .execute(&mut *conn)
+                        .await?;
+                        // 立即记录上传后的新版本，避免后续编辑者被误标为源文变更操作者。
+                        sqlx::query(
+                            "INSERT INTO entry_versions (
+                                 entry_id, version, kind, translation, state, original, editor_id,
+                                 editor_name, editor_avatar_url
+                             )
+                             SELECT entry.id, entry.version, 'source_update', entry.translation,
+                                    entry.state, entry.original, actor.id, actor.username,
+                                    actor.avatar_url
+                             FROM entries AS entry
+                             LEFT JOIN users AS actor ON actor.id = $2
+                             WHERE entry.id = $1",
+                        )
+                        .bind(id)
                         .bind(editor_id)
                         .execute(&mut *conn)
                         .await?;
@@ -1007,7 +1170,9 @@ pub async fn list(
          WHERE entry.project_id = ",
     );
     qb.push_bind(project_id);
-    qb.push(" AND entry.deleted_at IS NULL AND file.deleted_at IS NULL");
+    qb.push(" AND prts_entry_effective_visible(entry.id, ")
+        .push_bind(filter.include_hidden)
+        .push(")");
 
     if let Some(fid) = filter.file_id {
         qb.push(" AND entry.file_id = ");
@@ -1015,8 +1180,7 @@ pub async fn list(
     }
     if let Some(task_id) = filter.task_id {
         qb.push(
-            " AND prts_entry_is_effectively_visible(entry)
-              AND EXISTS (
+            " AND EXISTS (
                  SELECT 1 FROM task_files AS task_file
                  WHERE task_file.task_id = ",
         );
@@ -1027,9 +1191,6 @@ pub async fn list(
         qb.push(" AND entry.state = ANY(");
         qb.push_bind(filter.states.clone());
         qb.push(")");
-    }
-    if !filter.include_hidden {
-        qb.push(" AND entry.hidden = FALSE");
     }
     if let Some(q) = filter.query.as_deref().filter(|s| !s.is_empty()) {
         let pat = format!("%{q}%");
@@ -1141,14 +1302,19 @@ pub async fn update_translation_tx(
 
     if let Some(ref e) = updated {
         sqlx::query(
-            "INSERT INTO entry_versions (entry_id, version, kind, translation, state, editor_id)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO entry_versions (
+                 entry_id, version, kind, translation, state, original, editor_id,
+                 editor_name, editor_avatar_url
+             )
+             SELECT $1, $2, $3, $4, $5, $6, actor.id, actor.username, actor.avatar_url
+             FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $7",
         )
         .bind(e.id)
         .bind(e.version)
         .bind(kind)
         .bind(&e.translation)
         .bind(&e.state)
+        .bind(&e.original)
         .bind(editor_id)
         .execute(&mut *conn)
         .await?;
@@ -1171,7 +1337,7 @@ pub async fn set_flags(
     hidden: Option<bool>,
 ) -> Result<Option<Entry>, sqlx::Error> {
     let mut connection = pool.acquire().await?;
-    set_flags_tx(&mut connection, project_id, entry_id, locked, hidden).await
+    set_flags_tx(&mut connection, project_id, entry_id, locked, hidden, None).await
 }
 
 /// 在调用方事务内设置词条正交 flags。
@@ -1181,6 +1347,7 @@ pub async fn set_flags_tx(
     entry_id: i64,
     locked: Option<bool>,
     hidden: Option<bool>,
+    actor_id: Option<i64>,
 ) -> Result<Option<Entry>, sqlx::Error> {
     let before: Option<(String, bool)> = sqlx::query_as(
         "SELECT state, prts_entry_is_effectively_visible(entry)
@@ -1191,16 +1358,34 @@ pub async fn set_flags_tx(
     .fetch_optional(&mut *conn)
     .await?;
     let updated = sqlx::query_as::<_, Entry>(
-        "UPDATE entries SET locked = COALESCE($3, locked), hidden = COALESCE($4, hidden)
+        "UPDATE entries SET locked = COALESCE($3, locked), hidden = COALESCE($4, hidden),
+             version = version + 1, updated_by = $5
          WHERE id = $1 AND project_id = $2 RETURNING *",
     )
     .bind(entry_id)
     .bind(project_id)
     .bind(locked)
     .bind(hidden)
+    .bind(actor_id)
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(entry) = &updated {
+        sqlx::query(
+            "INSERT INTO entry_versions (
+                 entry_id, version, kind, translation, state, original, editor_id,
+                 editor_name, editor_avatar_url
+             )
+             SELECT $1, $2, 'flags', $3, $4, $5, actor.id, actor.username, actor.avatar_url
+             FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $6",
+        )
+        .bind(entry.id)
+        .bind(entry.version)
+        .bind(&entry.translation)
+        .bind(&entry.state)
+        .bind(&entry.original)
+        .bind(actor_id)
+        .execute(&mut *conn)
+        .await?;
         let (before_state, before_visible) = before.ok_or_else(|| {
             sqlx::Error::Protocol("entry flag transition snapshot is missing".to_string())
         })?;
@@ -1226,6 +1411,22 @@ pub async fn list_versions(
 ) -> Result<Vec<EntryVersion>, sqlx::Error> {
     sqlx::query_as::<_, EntryVersion>(
         "SELECT * FROM entry_versions WHERE entry_id = $1 ORDER BY version DESC, id DESC LIMIT $2",
+    )
+    .bind(entry_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// 列出词条历史并附带仍存在账号的展示资料。
+pub async fn list_versions_with_editor(
+    pool: &PgPool,
+    entry_id: i64,
+    limit: i64,
+) -> Result<Vec<EntryVersion>, sqlx::Error> {
+    sqlx::query_as::<_, EntryVersion>(
+        "SELECT * FROM entry_versions WHERE entry_id = $1
+         ORDER BY version DESC, id DESC LIMIT $2",
     )
     .bind(entry_id)
     .bind(limit)
