@@ -14,6 +14,7 @@ describe('terminology file contracts', () => {
     expect(TERM_IMPORT_FIELDS).toEqual([
       'source_lang',
       'source_text',
+      'match_mode',
       'translation',
       'pos',
       'notes',

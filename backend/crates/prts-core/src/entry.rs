@@ -14,8 +14,6 @@ pub enum EntryState {
     Untranslated,
     /// 已翻译。
     Translated,
-    /// 有疑问。
-    Questioned,
     /// 已检查。
     Checked,
     /// 已审核。
@@ -28,7 +26,6 @@ impl EntryState {
         match s {
             "untranslated" => Some(Self::Untranslated),
             "translated" => Some(Self::Translated),
-            "questioned" => Some(Self::Questioned),
             "checked" => Some(Self::Checked),
             "reviewed" => Some(Self::Reviewed),
             _ => None,
@@ -40,7 +37,6 @@ impl EntryState {
         match self {
             EntryState::Untranslated => "untranslated",
             EntryState::Translated => "translated",
-            EntryState::Questioned => "questioned",
             EntryState::Checked => "checked",
             EntryState::Reviewed => "reviewed",
         }
@@ -59,6 +55,9 @@ pub struct EntryFlags {
     /// 已隐藏。
     #[serde(default)]
     pub hidden: bool,
+    /// 有疑问标签；独立于翻译工作流。
+    #[serde(default)]
+    pub questioned: bool,
 }
 
 #[cfg(test)]
@@ -75,14 +74,14 @@ mod tests {
             serde_json::to_string(&EntryState::Reviewed).unwrap(),
             "\"reviewed\""
         );
-        let s: EntryState = serde_json::from_str("\"questioned\"").unwrap();
-        assert_eq!(s, EntryState::Questioned);
+        let s: EntryState = serde_json::from_str("\"checked\"").unwrap();
+        assert_eq!(s, EntryState::Checked);
     }
 
     #[test]
     fn default_state_is_untranslated_and_flags_false() {
         assert_eq!(EntryState::default(), EntryState::Untranslated);
         let f = EntryFlags::default();
-        assert!(!f.locked && !f.hidden);
+        assert!(!f.locked && !f.hidden && !f.questioned);
     }
 }

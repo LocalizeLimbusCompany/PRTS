@@ -201,7 +201,7 @@ async function logout() {
   max-width: 1440px;
   margin: 0 auto;
   width: 100%;
-  padding: 0 18px;
+  padding: 0 18px 0 0;
 }
 .prts-brand {
   display: flex;
@@ -243,7 +243,7 @@ async function logout() {
 
 @media (max-width: 599px) {
   .prts-toolbar {
-    padding: 0 10px;
+    padding: 0 10px 0 0;
   }
   .prts-brand__sub {
     display: none;

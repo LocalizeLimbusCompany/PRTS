@@ -14,6 +14,10 @@ use utoipa::{IntoParams, ToSchema};
 pub const PREVIEW_TTL_SECONDS: u64 = 15 * 60;
 const PREVIEW_KEY_PREFIX: &str = "terminology_import_preview:";
 
+fn default_match_mode() -> String {
+    "exact".to_string()
+}
+
 /// 支持的稳定导入导出文档格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -28,6 +32,8 @@ pub enum DocumentFormat {
 pub struct TermDocumentRow {
     pub source_lang: String,
     pub source_text: String,
+    #[serde(default = "default_match_mode")]
+    pub match_mode: String,
     pub translation: String,
     pub pos: Option<String>,
     pub notes: String,
@@ -86,6 +92,7 @@ pub struct TermPreviewRowDto {
     pub row: usize,
     pub source_lang: String,
     pub source_text: String,
+    pub match_mode: String,
     pub translation: String,
     pub pos: Option<String>,
     pub notes: String,
@@ -149,6 +156,7 @@ pub struct ResolvedTermImportRow {
     pub row: usize,
     pub source_lang: String,
     pub source_text: String,
+    pub match_mode: String,
     pub translation: String,
     pub pos: Option<String>,
     pub pos_id: Option<i64>,
@@ -198,13 +206,15 @@ pub fn parse_term_document(
         &[
             "source_lang",
             "source_text",
+            "match_mode",
             "translation",
             "pos",
             "notes",
             "archived",
         ],
+        &["match_mode"],
     )?;
-    let mut seen: HashMap<(String, String, Option<String>), usize> = HashMap::new();
+    let mut seen: HashMap<(String, String, String, Option<String>), usize> = HashMap::new();
     for (index, row) in rows.iter_mut().enumerate() {
         let row_number = index + 1;
         let plan = prts_core::terms::plan_term_write(
@@ -228,13 +238,19 @@ pub fn parse_term_document(
         })?;
         row.source_lang = plan.source_lang;
         row.source_text = row.source_text.trim().to_string();
-        if row.source_text.is_empty() {
-            return Err(ImportRuleError::SourceTextRequired { row: row_number });
-        }
+        prts_core::terms::validate_term_pattern(&row.match_mode, &row.source_text).map_err(
+            |error| match error {
+                prts_core::terms::TermPatternError::EmptyPattern => {
+                    ImportRuleError::SourceTextRequired { row: row_number }
+                }
+                _ => ImportRuleError::InvalidFormat,
+            },
+        )?;
         row.pos = normalize_optional(row.pos.take());
         let key = (
             row.source_lang.clone(),
             row.source_text.clone(),
+            row.match_mode.clone(),
             row.pos.as_ref().map(|value| value.to_lowercase()),
         );
         if let Some(first) = seen.insert(key, row_number) {
@@ -252,8 +268,12 @@ pub fn parse_pos_document(
     format: DocumentFormat,
     content: &str,
 ) -> Result<Vec<PosDocumentRow>, ImportRuleError> {
-    let mut rows: Vec<PosDocumentRow> =
-        decode_document(format, content, &["name_zh_cn", "name_en", "sort_order"])?;
+    let mut rows: Vec<PosDocumentRow> = decode_document(
+        format,
+        content,
+        &["name_zh_cn", "name_en", "sort_order"],
+        &[],
+    )?;
     let mut zh_names = HashMap::new();
     let mut en_names = HashMap::new();
     for (index, row) in rows.iter_mut().enumerate() {
@@ -413,9 +433,15 @@ fn decode_document<T: DeserializeOwned>(
     format: DocumentFormat,
     content: &str,
     expected_headers: &[&str],
+    optional_default_headers: &[&str],
 ) -> Result<Vec<T>, ImportRuleError> {
+    let legacy_headers = expected_headers
+        .iter()
+        .copied()
+        .filter(|header| !optional_default_headers.contains(header))
+        .collect::<Vec<_>>();
     match format {
-        DocumentFormat::Json => decode_json(content, expected_headers),
+        DocumentFormat::Json => decode_json(content, expected_headers, &legacy_headers),
         DocumentFormat::Csv => {
             let mut reader = csv::ReaderBuilder::new()
                 .trim(csv::Trim::Headers)
@@ -423,7 +449,8 @@ fn decode_document<T: DeserializeOwned>(
             let headers = reader
                 .headers()
                 .map_err(|_| ImportRuleError::InvalidFormat)?;
-            if headers.iter().collect::<Vec<_>>() != expected_headers {
+            let actual_headers = headers.iter().collect::<Vec<_>>();
+            if actual_headers != expected_headers && actual_headers != legacy_headers {
                 return Err(ImportRuleError::InvalidFormat);
             }
             reader
@@ -437,15 +464,17 @@ fn decode_document<T: DeserializeOwned>(
 fn decode_json<T: DeserializeOwned>(
     content: &str,
     expected_fields: &[&str],
+    legacy_fields: &[&str],
 ) -> Result<Vec<T>, ImportRuleError> {
     let value: serde_json::Value =
         serde_json::from_str(content).map_err(|_| ImportRuleError::InvalidFormat)?;
     let rows = value.as_array().ok_or(ImportRuleError::InvalidFormat)?;
     let expected = expected_fields.iter().copied().collect::<HashSet<_>>();
+    let legacy = legacy_fields.iter().copied().collect::<HashSet<_>>();
     for row in rows {
         let object = row.as_object().ok_or(ImportRuleError::InvalidFormat)?;
         let actual = object.keys().map(String::as_str).collect::<HashSet<_>>();
-        if actual != expected {
+        if actual != expected && actual != legacy {
             return Err(ImportRuleError::InvalidFormat);
         }
     }
@@ -476,6 +505,7 @@ mod tests {
             TermDocumentRow {
                 source_lang: "en".to_string(),
                 source_text: "Archive".to_string(),
+                match_mode: "exact".to_string(),
                 translation: "档案".to_string(),
                 pos: Some("Noun".to_string()),
                 notes: "keep, commas and \"quotes\"".to_string(),
@@ -484,6 +514,7 @@ mod tests {
             TermDocumentRow {
                 source_lang: "de-DE-u-co-phonebk".to_string(),
                 source_text: "Quelle".to_string(),
+                match_mode: "regex".to_string(),
                 translation: "来源".to_string(),
                 pos: None,
                 notes: "legacy".to_string(),
@@ -507,7 +538,7 @@ mod tests {
         let header = encoded.lines().next().unwrap();
         assert_eq!(
             header,
-            "source_lang,source_text,translation,pos,notes,archived"
+            "source_lang,source_text,match_mode,translation,pos,notes,archived"
         );
         assert!(encoded.contains("de-DE-u-co-phonebk"));
         assert!(encoded.contains(",true"));
@@ -516,8 +547,8 @@ mod tests {
     #[test]
     fn term_parser_canonicalizes_before_duplicate_and_active_validation() {
         let duplicate = r#"[
-          {"source_lang":"EN","source_text":"same","translation":"a","pos":null,"notes":"","archived":false},
-          {"source_lang":"en","source_text":"same","translation":"b","pos":null,"notes":"","archived":false}
+          {"source_lang":"EN","source_text":"same","match_mode":"exact","translation":"a","pos":null,"notes":"","archived":false},
+          {"source_lang":"en","source_text":"same","match_mode":"exact","translation":"b","pos":null,"notes":"","archived":false}
         ]"#;
         assert_eq!(
             parse_term_document(DocumentFormat::Json, duplicate, "en"),
@@ -528,28 +559,27 @@ mod tests {
         );
 
         let invalid =
-            "source_lang,source_text,translation,pos,notes,archived\nnot_a_tag,x,y,,,true\n";
+            "source_lang,source_text,match_mode,translation,pos,notes,archived\nnot_a_tag,x,exact,y,,,true\n";
         assert_eq!(
             parse_term_document(DocumentFormat::Csv, invalid, "en"),
             Err(ImportRuleError::InvalidLanguageTag { row: 1 })
         );
 
         let non_primary_active =
-            "source_lang,source_text,translation,pos,notes,archived\nja,x,y,,,false\n";
+            "source_lang,source_text,match_mode,translation,pos,notes,archived\nja,x,exact,y,,,false\n";
         assert_eq!(
             parse_term_document(DocumentFormat::Csv, non_primary_active, "en"),
             Err(ImportRuleError::ActiveSourceMismatch { row: 1 })
         );
 
         let wrong_headers =
-            "source_text,source_lang,translation,pos,notes,archived\nx,en,y,,,false\n";
+            "source_text,source_lang,match_mode,translation,pos,notes,archived\nx,en,exact,y,,,false\n";
         assert_eq!(
             parse_term_document(DocumentFormat::Csv, wrong_headers, "en"),
             Err(ImportRuleError::InvalidFormat)
         );
 
-        let missing_json_field =
-            r#"[{"source_lang":"en","source_text":"x","translation":"y","pos":null,"notes":""}]"#;
+        let missing_json_field = r#"[{"source_lang":"en","source_text":"x","match_mode":"exact","translation":"y","pos":null,"notes":""}]"#;
         assert_eq!(
             parse_term_document(DocumentFormat::Json, missing_json_field, "en"),
             Err(ImportRuleError::InvalidFormat)
@@ -557,8 +587,19 @@ mod tests {
     }
 
     #[test]
+    fn legacy_term_documents_default_missing_match_mode_to_exact() {
+        let csv =
+            "source_lang,source_text,translation,pos,notes,archived\nen,Archive,档案,Noun,,false\n";
+        let json = r#"[{"source_lang":"en","source_text":"Archive","translation":"档案","pos":"Noun","notes":"","archived":false}]"#;
+        for (format, input) in [(DocumentFormat::Csv, csv), (DocumentFormat::Json, json)] {
+            let rows = parse_term_document(format, input, "en").unwrap();
+            assert_eq!(rows[0].match_mode, "exact");
+        }
+    }
+
+    #[test]
     fn archived_non_project_language_is_preserved_canonically() {
-        let input = "source_lang,source_text,translation,pos,notes,archived\nde-de-u-co-phonebk,Quelle,来源,,legacy,true\n";
+        let input = "source_lang,source_text,match_mode,translation,pos,notes,archived\nde-de-u-co-phonebk,Quelle,exact,来源,,legacy,true\n";
         let rows = parse_term_document(DocumentFormat::Csv, input, "en").unwrap();
         assert_eq!(rows[0].source_lang, "de-DE-u-co-phonebk");
         assert!(rows[0].archived);

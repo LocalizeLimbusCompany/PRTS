@@ -315,6 +315,8 @@ pub struct EntryDto {
     pub state: String,
     pub locked: bool,
     pub hidden: bool,
+    /// 独立于工作流的有疑问标签。
+    pub questioned: bool,
     pub version: i64,
     pub updated_at: String,
 }
@@ -330,6 +332,7 @@ impl From<&prts_db::models::Entry> for EntryDto {
             state: e.state.clone(),
             locked: e.locked,
             hidden: e.hidden,
+            questioned: e.questioned,
             version: e.version,
             updated_at: e.updated_at.to_rfc3339(),
         }
@@ -344,6 +347,8 @@ pub struct EntryListQuery {
     pub task_id: Option<i64>,
     /// 逗号分隔的状态过滤。
     pub state: Option<String>,
+    /// 独立的有疑问标签过滤；缺省时不过滤。
+    pub questioned: Option<bool>,
     pub q: Option<String>,
     pub after: Option<i64>,
     pub limit: Option<i64>,
@@ -393,12 +398,16 @@ pub async fn count_entries(
             .ok_or(Error::NotFound)?;
     }
     let states = super::parse_states(query.state.as_deref());
+    if query.questioned.is_some() && !states.is_empty() {
+        return Err(Error::bad_request("entry_state_and_questioned_count_conflict").into());
+    }
     let total_items = prts_db::stats::editor_entry_total(
         &state.db,
         id,
         query.file_id,
         query.task_id,
         &states,
+        query.questioned,
         query.include_hidden,
     )
     .await
@@ -444,6 +453,7 @@ pub async fn list_entries(
         file_id: q.file_id,
         task_id: q.task_id,
         states,
+        questioned: q.questioned,
         query: q.q,
         include_hidden,
     };
@@ -481,14 +491,16 @@ pub struct UpdateEntryReq {
     /// 只覆盖客户端检测到的 presence 冲突；绝不绕过 expected version。
     #[serde(default)]
     pub force_presence: bool,
-    /// 设置为 questioned 时可同时发布为评论；空白内容等同未提供。
+    /// 同次保存设置或取消有疑问标签；缺省保留当前值。
+    pub questioned: Option<bool>,
+    /// 设置有疑问标签时可同时发布为评论；空白内容等同未提供。
     pub question_reason: Option<String>,
 }
 
 /// 更新词条译文与状态。状态变化按目标状态校验 capability；锁定词条与 presence force
 /// 分别要求显式 capability；无论是否 force，expected version 冲突都返回 409。
 #[utoipa::path(put, path = "/projects/{id}/entries/{entry_id}", tag = "entry", request_body = UpdateEntryReq,
-    description = "Atomically save translation and workflow state with optimistic version checking. locked entries and force_presence require their explicit capabilities; force never bypasses a stale version. When target state is questioned, an optional Markdown reason up to 4000 characters is created as a comment in the same transaction.",
+    description = "Atomically save translation, workflow state and the independent questioned tag with optimistic version checking. locked entries and force_presence require their explicit capabilities; force never bypasses a stale version. When questioned=true is submitted, an optional Markdown reason up to 4000 characters can be created as a comment in the same transaction.",
     responses(
         (status = 200, body = EntryDto),
         (status = 400, description = "Invalid state or question reason", body = ErrorResponse),
@@ -514,8 +526,8 @@ pub async fn update_entry(
     if question_reason.is_some_and(|reason| reason.chars().count() > 4000) {
         return Err(Error::bad_request("invalid_comment_content").into());
     }
-    if question_reason.is_some() && target != EntryState::Questioned {
-        return Err(Error::bad_request("question_reason_requires_questioned_state").into());
+    if question_reason.is_some() && req.questioned != Some(true) {
+        return Err(Error::bad_request("question_reason_requires_questioned_tag").into());
     }
     access.require_node(nodes::PROJECT_ENTRY_EDIT)?;
     if req.force_presence && !access.capabilities(false).force_save_presence {
@@ -552,6 +564,7 @@ pub async fn update_entry(
         req.version,
         &req.translation,
         target.as_str(),
+        req.questioned,
         kind,
         Some(user.id),
     )
@@ -612,6 +625,8 @@ pub async fn update_entry(
                     new_version: e.version,
                     previous_state: &entry.state,
                     new_state: &e.state,
+                    previous_questioned: entry.questioned,
+                    new_questioned: e.questioned,
                     forced_presence: req.force_presence,
                     cp_tenths_awarded: contribution.cp_tenths,
                 },
@@ -742,6 +757,7 @@ pub struct EntryVersionDto {
     pub kind: String,
     pub translation: String,
     pub state: String,
+    pub questioned: bool,
     pub original: serde_json::Value,
     pub editor_id: Option<i64>,
     pub editor_name: Option<String>,
@@ -780,6 +796,7 @@ pub async fn entry_history(
     let mut original = entry.original.clone();
     let mut translation = String::new();
     let mut workflow_state = "untranslated".to_string();
+    let mut questioned = false;
     for version in versions.into_iter().rev() {
         if let Some(value) = version.original {
             original = value;
@@ -790,11 +807,15 @@ pub async fn entry_history(
         if let Some(value) = version.state {
             workflow_state = value;
         }
+        if let Some(value) = version.questioned {
+            questioned = value;
+        }
         materialized.push(EntryVersionDto {
             version: version.version,
             kind: version.kind,
             translation: translation.clone(),
             state: workflow_state.clone(),
+            questioned,
             original: original.clone(),
             editor_id: version.editor_id,
             editor_name: version.editor_name,
@@ -813,6 +834,7 @@ pub async fn entry_history(
             kind: "current".to_string(),
             translation: entry.translation.clone(),
             state: entry.state.clone(),
+            questioned: entry.questioned,
             original: entry.original.clone(),
             editor_id: entry.updated_by,
             editor_name: current_actor.as_ref().map(|actor| actor.username.clone()),

@@ -1,6 +1,112 @@
 //! source-aware 项目术语的框架无关规则与主源切换计划。
 
 use crate::language::{canonicalize_language_tag, LanguageTagError};
+use regex::Regex;
+
+/// 原文术语的匹配模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TermMatchMode {
+    /// 原文包含固定术语文本。
+    Exact,
+    /// `[]` 表示任意文本，仅在原文匹配时生效。
+    Placeholder,
+    /// Rust `regex` crate 的线性时间正则语义。
+    Regex,
+}
+
+impl TermMatchMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Placeholder => "placeholder",
+            Self::Regex => "regex",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "exact" => Some(Self::Exact),
+            "placeholder" => Some(Self::Placeholder),
+            "regex" => Some(Self::Regex),
+            _ => None,
+        }
+    }
+}
+
+/// 匹配表达式的稳定校验错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TermPatternError {
+    InvalidMode,
+    EmptyPattern,
+    PlaceholderRequired,
+    PlaceholderEmptyAnchor,
+    InvalidRegex,
+    PatternTooLong,
+}
+
+impl TermPatternError {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::InvalidMode => "TERM_MATCH_MODE_INVALID",
+            Self::EmptyPattern => "TERM_PATTERN_REQUIRED",
+            Self::PlaceholderRequired => "TERM_PLACEHOLDER_REQUIRED",
+            Self::PlaceholderEmptyAnchor => "TERM_PLACEHOLDER_EMPTY_ANCHOR",
+            Self::InvalidRegex => "TERM_REGEX_INVALID",
+            Self::PatternTooLong => "TERM_PATTERN_TOO_LONG",
+        }
+    }
+}
+
+/// 校验单个术语表达式。`placeholder` 至少含一个 `[]`，且每个固定片段均不能为空。
+pub fn validate_term_pattern(mode: &str, pattern: &str) -> Result<TermMatchMode, TermPatternError> {
+    let mode = TermMatchMode::parse(mode).ok_or(TermPatternError::InvalidMode)?;
+    if pattern.is_empty() {
+        return Err(TermPatternError::EmptyPattern);
+    }
+    if pattern.chars().count() > 2_000 {
+        return Err(TermPatternError::PatternTooLong);
+    }
+    match mode {
+        TermMatchMode::Exact => Ok(mode),
+        TermMatchMode::Placeholder => {
+            let parts = pattern.split("[]").collect::<Vec<_>>();
+            if parts.len() < 2 {
+                return Err(TermPatternError::PlaceholderRequired);
+            }
+            if parts.iter().any(|part| part.is_empty()) {
+                return Err(TermPatternError::PlaceholderEmptyAnchor);
+            }
+            Ok(mode)
+        }
+        TermMatchMode::Regex => Regex::new(pattern)
+            .map(|_| mode)
+            .map_err(|_| TermPatternError::InvalidRegex),
+    }
+}
+
+/// 判断原文是否命中术语；placeholder 的 `[]` 可跨行并匹配空文本。
+pub fn term_matches_source(
+    mode: &str,
+    pattern: &str,
+    source: &str,
+) -> Result<bool, TermPatternError> {
+    match validate_term_pattern(mode, pattern)? {
+        TermMatchMode::Exact => Ok(source.contains(pattern)),
+        TermMatchMode::Placeholder => {
+            let expression = pattern
+                .split("[]")
+                .map(regex::escape)
+                .collect::<Vec<_>>()
+                .join("(?s:.*?)");
+            Regex::new(&expression)
+                .map(|regex| regex.is_match(source))
+                .map_err(|_| TermPatternError::InvalidRegex)
+        }
+        TermMatchMode::Regex => Regex::new(pattern)
+            .map(|regex| regex.is_match(source))
+            .map_err(|_| TermPatternError::InvalidRegex),
+    }
+}
 
 /// 普通术语写入的稳定领域错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

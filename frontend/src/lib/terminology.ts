@@ -2,6 +2,7 @@
 export const TERM_IMPORT_FIELDS = [
   'source_lang',
   'source_text',
+  'match_mode',
   'translation',
   'pos',
   'notes',

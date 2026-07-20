@@ -42,11 +42,15 @@ pub struct UpdateMeReq {
     pub translation_langs: Option<Vec<String>>,
     /// 词条历史差分模式；缺省表示不变。
     pub entry_diff_mode: Option<String>,
+    /// 保存既有非空译文正文变更前是否预览差异。
+    pub preview_translation_diff: Option<bool>,
+    /// AI 来源偏好：auto|personal|project。
+    pub ai_source_preference: Option<String>,
 }
 
 /// 更新当前用户资料。
 #[utoipa::path(put, path = "/me", tag = "user", request_body = UpdateMeReq,
-    description = "Atomically update provided profile fields. Translation languages are canonicalized as BCP-47 tags; entry_diff_mode accepts character_inline, word_inline, or side_by_side and is saved to the account for use across devices.",
+    description = "Atomically update provided profile fields and cross-device editor preferences. Translation languages are canonicalized as BCP-47 tags; entry_diff_mode and AI source preference are allowlisted.",
     responses(
         (status = 200, body = UserDto),
         (status = 400, description = "Invalid or duplicate language tag, or invalid diff mode", body = ErrorResponse),
@@ -86,7 +90,19 @@ pub async fn update_me(
     ) {
         return Err(Error::bad_request("invalid_entry_diff_mode").into());
     }
-    let mut changed_fields = Vec::with_capacity(4);
+    let preview_translation_diff = req
+        .preview_translation_diff
+        .unwrap_or(current.preview_translation_diff);
+    let ai_source_preference = req
+        .ai_source_preference
+        .unwrap_or_else(|| current.ai_source_preference.clone());
+    if !matches!(
+        ai_source_preference.as_str(),
+        "auto" | "personal" | "project"
+    ) {
+        return Err(Error::bad_request("invalid_ai_source_preference").into());
+    }
+    let mut changed_fields = Vec::with_capacity(6);
     if description != current.description {
         changed_fields.push("description");
     }
@@ -98,6 +114,12 @@ pub async fn update_me(
     }
     if diff_mode != current.entry_diff_mode {
         changed_fields.push("entry_diff_mode");
+    }
+    if preview_translation_diff != current.preview_translation_diff {
+        changed_fields.push("preview_translation_diff");
+    }
+    if ai_source_preference != current.ai_source_preference {
+        changed_fields.push("ai_source_preference");
     }
 
     let updated = prts_db::users::update_profile_tx(
@@ -112,6 +134,14 @@ pub async fn update_me(
     let updated = prts_db::users::update_entry_diff_mode_tx(&mut tx, updated.id, &diff_mode)
         .await
         .map_err(db_err)?;
+    let updated = prts_db::users::update_editor_preferences_tx(
+        &mut tx,
+        updated.id,
+        preview_translation_diff,
+        &ai_source_preference,
+    )
+    .await
+    .map_err(db_err)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         AuditActor {

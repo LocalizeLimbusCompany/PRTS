@@ -8,11 +8,13 @@
 //! 加密原语见子模块：[`password`]、[`jwt`]、[`token`]、[`pkce`]。
 
 pub mod jwt;
+#[cfg(feature = "oauth")]
 pub mod oauth2;
 pub mod password;
 pub mod pkce;
 pub mod token;
 
+#[cfg(feature = "oauth")]
 pub use oauth2::{AuthorizationStart, OAuth2Config, OAuth2Error, OAuth2Provider};
 
 use serde::{Deserialize, Serialize};

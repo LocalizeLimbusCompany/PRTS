@@ -5,7 +5,8 @@
 
 use prts_core::permission::nodes::{PLATFORM_POS_MANAGE, PROJECT_TERM_MANAGE};
 use prts_core::terms::{
-    plan_primary_source_term_action, plan_term_write, PrimarySourceTermAction, TermRuleError,
+    plan_primary_source_term_action, plan_term_write, term_matches_source, validate_term_pattern,
+    PrimarySourceTermAction, TermPatternError, TermRuleError,
 };
 use prts_core::{PlatformRole, ProjectRole};
 
@@ -96,4 +97,33 @@ fn reviewer_can_manage_terms_but_pos_mutation_is_platform_admin_only() {
     assert!(!PlatformRole::Maintainer.has(PLATFORM_POS_MANAGE));
     assert!(!ProjectRole::Owner.has(PLATFORM_POS_MANAGE));
     assert!(!ProjectRole::Manager.has(PLATFORM_POS_MANAGE));
+}
+
+#[test]
+fn placeholder_only_matches_source_with_arbitrary_middle_text() {
+    assert!(term_matches_source(
+        "placeholder",
+        "AAAA [] BBBB",
+        "before AAAA XXXXXHUIHIUQA BBBB after"
+    )
+    .unwrap());
+    assert!(term_matches_source("placeholder", "AAAA [] BBBB", "AAAA  BBBB").unwrap());
+    assert!(!term_matches_source("placeholder", "AAAA [] BBBB", "AAAA BBBX").unwrap());
+    assert_eq!(
+        validate_term_pattern("placeholder", "AAAA BBBB"),
+        Err(TermPatternError::PlaceholderRequired)
+    );
+}
+
+#[test]
+fn regex_validation_uses_rust_linear_time_syntax() {
+    assert!(term_matches_source("regex", r"攻(击|防御).*增加", "攻击威力增加").unwrap());
+    assert_eq!(
+        validate_term_pattern("regex", "("),
+        Err(TermPatternError::InvalidRegex)
+    );
+    assert_eq!(
+        validate_term_pattern("invalid", "x"),
+        Err(TermPatternError::InvalidMode)
+    );
 }

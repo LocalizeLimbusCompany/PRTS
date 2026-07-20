@@ -370,12 +370,10 @@ impl ProjectRole {
 }
 
 /// 把词条目标状态映射到所需的权限节点：
-/// 未翻译/已翻译/有疑问 需 `project.entry.edit`；已检查/已审核 需 `project.entry.review`。
+/// 未翻译/已翻译需 `project.entry.edit`；已检查/已审核需 `project.entry.review`。
 pub fn node_for_state(state: EntryState) -> &'static str {
     match state {
-        EntryState::Untranslated | EntryState::Translated | EntryState::Questioned => {
-            nodes::PROJECT_ENTRY_EDIT
-        }
+        EntryState::Untranslated | EntryState::Translated => nodes::PROJECT_ENTRY_EDIT,
         EntryState::Checked | EntryState::Reviewed => nodes::PROJECT_ENTRY_REVIEW,
     }
 }
@@ -512,7 +510,6 @@ mod tests {
     fn node_for_state_maps_edit_vs_review() {
         assert_eq!(node_for_state(EntryState::Untranslated), PROJECT_ENTRY_EDIT);
         assert_eq!(node_for_state(EntryState::Translated), PROJECT_ENTRY_EDIT);
-        assert_eq!(node_for_state(EntryState::Questioned), PROJECT_ENTRY_EDIT);
         assert_eq!(node_for_state(EntryState::Checked), PROJECT_ENTRY_REVIEW);
         assert_eq!(node_for_state(EntryState::Reviewed), PROJECT_ENTRY_REVIEW);
     }

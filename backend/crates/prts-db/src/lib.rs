@@ -3,6 +3,7 @@
 //! 提供 PostgreSQL 连接池、Redis 连接管理器、迁移执行与健康探测，
 //! 以及账号 / API Key / 设置等数据访问（[`models`] + 各仓储模块）。
 
+pub mod ai_settings;
 pub mod api_keys;
 pub mod audit;
 pub mod auth_sessions;

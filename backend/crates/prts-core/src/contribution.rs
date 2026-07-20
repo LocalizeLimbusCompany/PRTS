@@ -21,9 +21,7 @@ impl ContributionKind {
     pub const fn for_target_state(state: EntryState) -> Self {
         match state {
             EntryState::Checked | EntryState::Reviewed => Self::Review,
-            EntryState::Untranslated | EntryState::Translated | EntryState::Questioned => {
-                Self::Edit
-            }
+            EntryState::Untranslated | EntryState::Translated => Self::Edit,
         }
     }
 
@@ -201,10 +199,6 @@ mod tests {
     fn target_state_selects_review_weight_only_for_checked_and_reviewed() {
         assert_eq!(
             ContributionKind::for_target_state(EntryState::Translated),
-            ContributionKind::Edit
-        );
-        assert_eq!(
-            ContributionKind::for_target_state(EntryState::Questioned),
             ContributionKind::Edit
         );
         assert_eq!(

@@ -12,7 +12,7 @@
 
 ## 0. 执行约束与迁移顺序
 
-实现以 [`../specs/2026-07-10-project-workspace-overhaul-design.md`](../specs/2026-07-10-project-workspace-overhaul-design.md) 为唯一总纲。当前数据库最大迁移号为 `0006`，本计划固定使用：
+实现以 [`../specs/2026-07-10-project-workspace-overhaul-design.md`](../specs/2026-07-10-project-workspace-overhaul-design.md) 为唯一总纲。本计划启动时数据库最大迁移号为 `0006`；后续按只增原则已扩展到 `0017`：
 
 | 迁移 | 责任 |
 | --- | --- |
@@ -24,6 +24,9 @@
 | `0012_terminology.sql` | 双语 POS、带 source_lang 的术语、归档、导入预览 |
 | `0013_editor_search.sql` | 删除 context、scrub 历史 JSONB context key、结构化 POST search metadata/indexes/functions |
 | `0014_admin_delete_cp.sql` | 初始密码提醒、`cp_tenths BIGINT` 精确 CP 基础、项目待删除状态与 nullable 非级联 `deletion_job_id` |
+| `0015_contribution_events.sql` | CP 事件账本、项目重新加入累计恢复、平台周期排行榜索引 |
+| `0016_editor_collaboration.sql` | 评论策略、词条评论、术语版本、跨设备历史 diff 偏好与 hidden stats |
+| `0017_editor_ai_terms_mobile.sql` | 四状态 + questioned 标签、保存差异预览、加密 AI 设置、术语 match mode、内置 POS 预设 |
 
 迁移一经其阶段合并、推送或在任一环境应用即不可修改；任何后续纠正只新增更大编号迁移。每个迁移在首次创建任务中完整声明该阶段后续任务所需的表、字段、约束与索引，后续任务不得 retroactively 修改它。
 
@@ -310,7 +313,7 @@ Invoke-Checked { docker compose -f deploy/docker-compose.yml up -d --build }
 
 - [ ] **Step 5: 创建 effective-visible `project_stats` 与 `file_stats` 并接管全部旧 writer**
 
-  `0008` 以规范总纲 §3 的 effective predicate backfill visible total/五状态，并建立集合增量。显式改造 `prts-db/entries.rs` 的 legacy upload/edit/flags 与 `prts-db/files.rs` 的现有硬删除 writer，使业务变化与 stats 同事务。foundation 的 `delete_file/delete_folder` 仍物理删除并正确扣减 project/file stats；所有 `deletion_change_set_id` 保持 NULL，不存在 restore。`0010` 才原子替换为 soft-delete/restore writer。提供按同一谓词的 reconciliation/rebuild，正常读不使用。
+  `0008` 以规范总纲 §3 的 effective predicate backfill visible total/旧五状态并建立集合增量；`0017` 再迁移为四个互斥工作流状态和独立 questioned overlay。显式改造 `prts-db/entries.rs` 的 legacy upload/edit/flags 与 `prts-db/files.rs` 的现有硬删除 writer，使业务变化与 stats 同事务。foundation 的 `delete_file/delete_folder` 仍物理删除并正确扣减 project/file stats；所有 `deletion_change_set_id` 保持 NULL，不存在 restore。`0010` 才原子替换为 soft-delete/restore writer。提供按同一谓词的 reconciliation/rebuild，正常读不使用。
 
 - [ ] **Step 6: 在 canonical repair 边界后启用 `0009` search 派生**
 
@@ -844,7 +847,7 @@ Invoke-Checked { docker compose -f deploy/docker-compose.yml up -d --build }
 
 - [ ] **Step 1: 定义稳定格式**
 
-  术语 CSV 字段为 `source_lang,source_text,translation,pos,notes,archived`；JSON 使用同名字段。POS CSV/JSON 同时包含 `name_zh_cn,name_en,sort_order`。混合导出始终带 source_lang 与 archived。
+  术语 CSV 字段为 `source_lang,source_text,match_mode,translation,pos,notes,archived`；JSON 使用同名字段，legacy 输入缺 `match_mode` 时按 `exact`。POS CSV/JSON 同时包含 `name_zh_cn,name_en,sort_order`。混合导出始终带 source_lang、match_mode 与 archived。
 
 - [ ] **Step 2: 实现 preview token**
 
@@ -1230,5 +1233,13 @@ Invoke-Checked { docker compose -f deploy/docker-compose.yml up -d --build }
 - Create: `backend/crates/prts-api/src/routes/entry_comments.rs`
 - Create: `backend/crates/prts-db/src/comments.rs`
 - Create: `backend/migrations/0016_editor_collaboration.sql`
+- Create: `backend/migrations/0017_editor_ai_terms_mobile.sql`
+- Create: `backend/crates/prts-api/src/routes/ai.rs`
+- Create: `backend/crates/prts-db/src/ai_settings.rs`
+- Create: `frontend/src/components/editor/EntryAiTab.vue`
 - Modify: `frontend/src/views/EditorView.vue`
+- Modify: `frontend/src/views/ProfileView.vue`
+- Modify: `frontend/src/views/project/ProjectManageView.vue`
 - Modify: `scripts/verify-project-workspace.ps1`
+
+`0017` 追加以下已确认合同：工作流只含 untranslated/translated/checked/reviewed，questioned 为任意状态可叠加标签；原文/译文限高，移动端优化；用户级保存差异预览默认关闭且首次空译文不弹；个人/项目 owner 的 OpenAI-compatible AI 仅显式点击分析 primary source；术语支持 exact/placeholder/regex 原文匹配、校验工具和内置 POS 预设；默认后端不含 OAuth，`zoot-oauth` 与 `oauth-latest` 为可选安装。

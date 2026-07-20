@@ -19,6 +19,11 @@ pub struct ProjectAccess {
 }
 
 impl ProjectAccess {
+    /// 是否是项目拥有者或显式项目成员；平台跨项目管理权限不会被视作项目成员。
+    pub fn is_project_member(&self) -> bool {
+        self.user_id == Some(self.project.owner_id) || self.project_role.is_some()
+    }
+
     /// 有效项目角色：平台 admin/super_admin 对任意项目等同拥有者；否则取成员角色。
     pub fn effective_role(&self) -> Option<ProjectRole> {
         if let Some(pr) = self.platform_role {

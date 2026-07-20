@@ -5,12 +5,17 @@
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 COPY backend ./backend
-RUN cargo build --release --manifest-path backend/Cargo.toml --bin prts-api
+ARG PRTS_BACKEND_FEATURES=""
+RUN if [ -n "$PRTS_BACKEND_FEATURES" ]; then \
+      cargo build --release --manifest-path backend/Cargo.toml --bin prts-api --features "$PRTS_BACKEND_FEATURES"; \
+    else \
+      cargo build --release --manifest-path backend/Cargo.toml --bin prts-api; \
+    fi
 
 # ---- 运行阶段 ----
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
-# libssl3：reqwest 用 native-tls，Linux 上动态链接 OpenSSL（ZOOT OAuth 调用需要）。
+# libssl3 is harmless in the default image and required by the optional OAuth build.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl libssl3 \
  && rm -rf /var/lib/apt/lists/* \

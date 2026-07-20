@@ -19,12 +19,14 @@ PRTS 是一个面向汉化组与本地化团队的**公开、可扩展、高并�
 - **项目工作区**：信息、文件、任务、术语、下载与管理分区；编辑器使用独立全屏路由。
 - **项目 / 文件夹 / 文件 / 词条** 四级结构，以物化统计、键集分页和批处理面向单项目 20w+ 词条目标。
 - **多源语言 → 单目标语言**（BCP-47，区分简繁），按个人偏好显示源文。
-- **实时协作编辑器**（WebSocket）：在线状态、他人编辑提示、乐观锁防冲突。
+- **实时协作编辑器**（WebSocket）：在线状态、他人编辑提示、乐观锁防冲突；四状态工作流与独立“有疑问”标签、保存前译文差异预览、详细历史和移动端布局。
+- **按需 AI 原文解释**：用户或项目 owner 可配置 OpenAI-compatible provider；显式点击后返回整体含义、去重分词、逐词语境义、词性与语法。
+- **增强术语匹配**：精确、`[]` 填空式和正则三种原文匹配模式，带校验/样例工具、词性预设及编辑器详细术语卡。
 - **结构化混合搜索**：POST tagged scope + PostgreSQL 全文检索 + 三元组模糊 + 可选向量语义（pgvector），RRF 融合和签名键集游标。
 - **持久化流式上传**：500 文件 / 2GB 批次合同、100MB 单文件上限、byte-zero retry、逐文件原子 replacement、取消/过期清理与 30 天可恢复历史。
 - **权限节点 RBAC**：平台级（总管理员/管理员/维护者）+ 项目级（拥有者/管理/校对/翻译）。
 - **贡献分与排行榜**：在线翻译/编辑按 Levenshtein 距离 × 1.0、校对/审核按 × 0.3 精确计分，提供项目累计榜与平台总榜、UTC 月榜和周榜。
-- **可插拔认证插件**：账号密码 + OAuth2（PKCE），内置 ZOOT 接入；支持「仅 OAuth」模式。
+- **可插拔认证插件**：默认安装仅含账号密码；可选 `zoot-oauth` 构建提供 OAuth2（PKCE）/ZOOT 与「仅 OAuth」模式。
 - **历史与审计**：业务 mutation 与 allowlisted 脱敏审计同事务 fail-closed；文件变更集支持回滚/恢复，项目删除采用 owner-only challenge + 24 小时延迟清除。
 - **国际化**：前端中英双语，后端按 `Accept-Language` 返回本地化消息。
 - **全程 Docker 化**，API 全量进 Swagger 文档。
@@ -44,9 +46,20 @@ PRTS 是一个面向汉化组与本地化团队的**公开、可扩展、高并�
 ```bash
 git clone git@github.com:LocalizeLimbusCompany/PRTS.git
 cd PRTS
-cp .env.example .env        # 按需填写数据库 / Redis / JWT / OAuth / Qwen 等
+cp .env.example .env        # 按需填写数据库 / Redis / JWT / Qwen / AI 主密钥等
 docker compose -f deploy/docker-compose.yml up -d
 ```
+
+默认 Compose 明确使用不含 OAuth 的后端。需要 ZOOT 登录时，配置对应 OAuth 环境变量并叠加可选文件：
+
+```bash
+docker compose \
+  -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.oauth.yml \
+  up -d
+```
+
+该组合使用 `prts-backend:oauth-latest`；默认组合使用 `prts-backend:latest`。
 
 数据库迁移账号与应用 runtime 账号必须分离。新空卷会按 `.env` 中的
 `POSTGRES_MIGRATION_*` / `POSTGRES_RUNTIME_*` 自动创建 runtime role，并由一次性

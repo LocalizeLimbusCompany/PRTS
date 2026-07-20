@@ -90,6 +90,33 @@
     "translationLanguages": "Preferred translation languages",
     "entryDiffMode": "Entry history diff mode",
     "entryDiffModeHint": "Saved to your account and used for entry history on every device.",
+    "previewTranslationDiff": "Preview translation changes before saving",
+    "previewTranslationDiffHint": "Shown only when an existing non-empty translation actually changes, not for state- or tag-only saves.",
+    "ai": {
+      "heading": "Personal AI",
+      "description": "Configure an OpenAI-compatible endpoint. The API key is encrypted by the server and is never returned to the browser.",
+      "sourcePreference": "Editor AI source",
+      "sourcePreferenceHint": "Auto prefers personal AI. Explicit personal or project selection never switches silently when unavailable.",
+      "sources": {
+        "auto": "Automatic",
+        "personal": "Personal AI",
+        "project": "Project AI"
+      },
+      "baseUrl": "Base URL",
+      "baseUrlHint": "Must be a publicly reachable HTTPS URL, such as https://api.openai.com/v1",
+      "model": "Model",
+      "apiKey": "API key",
+      "apiKeyRetainHint": "Leave empty to keep the current key.",
+      "apiKeyRequiredHint": "Required for the initial setup.",
+      "enabled": "Allow the editor to use this configuration",
+      "keyConfigured": "Saved key ending in {hint}",
+      "save": "Save AI settings",
+      "saved": "Personal AI settings saved",
+      "saveFailed": "Failed to save personal AI settings",
+      "delete": "Delete AI settings",
+      "deleteConfirm": "Delete the personal AI endpoint and its encrypted key?",
+      "deleted": "Personal AI settings deleted"
+    },
     "diffModes": {
       "character": "Inline character diff",
       "word": "Inline word diff",
@@ -162,6 +189,17 @@
       "heading": "Project members online",
       "count": "{count} people online now",
       "empty": "No members are online"
+    },
+    "ai": {
+      "heading": "Project AI",
+      "description": "Only the project owner can configure it. Signed-in project members can use it in the editor, and the key is never sent to their browsers.",
+      "keyConfigured": "Saved project key ending in {hint}",
+      "save": "Save project AI",
+      "saved": "Project AI settings saved",
+      "saveFailed": "Failed to save project AI settings",
+      "delete": "Delete project AI",
+      "deleteConfirm": "Delete the project AI endpoint and its encrypted key?",
+      "deleted": "Project AI settings deleted"
     },
     "comments": {
       "policy": "Entry comment permissions",
@@ -467,6 +505,17 @@
     "emptyHint": "Choose another scope, or create or import terms if you have permission.",
     "active": "Active",
     "sourceLangHint": "Use canonical BCP-47. A non-primary source can only be saved as archived.",
+    "matchModeHint": "In placeholder mode, [] matches arbitrary source text. Every mode affects source matching only and never substitutes captures into the translation.",
+    "matchModes": {
+      "exact": "Exact contains",
+      "placeholder": "Placeholder",
+      "regex": "Regular expression"
+    },
+    "patternSample": "Sample source text",
+    "testPattern": "Validate and test",
+    "patternInvalid": "Invalid pattern",
+    "patternMatched": "The sample source matches",
+    "patternNotMatched": "The pattern is valid but does not match the sample",
     "scopes": {
       "current": "Current",
       "archived": "Archived",
@@ -476,6 +525,7 @@
     "fields": {
       "sourceLang": "Source language",
       "sourceText": "Source text",
+      "matchMode": "Match mode",
       "translation": "Translation",
       "pos": "Part of speech",
       "notes": "Notes",
@@ -493,7 +543,7 @@
       "previewFailed": "Failed to preview import",
       "confirmFailed": "Failed to confirm import",
       "confirmed": "Import complete: {created} created, {updated} updated",
-      "termFields": "Fields: source_lang, source_text, translation, pos, notes, archived",
+      "termFields": "Fields: source_lang, source_text, match_mode, translation, pos, notes, archived",
       "posFields": "Fields: name_zh_cn, name_en, sort_order",
       "created": "{count} created",
       "updated": "{count} updated",
@@ -619,9 +669,17 @@
     "fileOnlineCount": "{count} people are online in this file",
     "noFileOnline": "Nobody is online in this file",
     "markQuestioned": "Mark as questioned",
+    "removeQuestioned": "Remove questioned tag",
     "questionReason": "Reason (optional)",
     "questionReasonHint": "When provided, it is automatically published as an entry comment.",
     "confirmQuestioned": "Save and mark questioned",
+    "saveDiffPreview": "Preview changes before saving",
+    "saveDiffPreviewHint": "Review this translation change before it is saved.",
+    "confirmSave": "Confirm save",
+    "stateChanged": "Workflow state changed",
+    "questionedChanged": "Questioned tag changed",
+    "questionedAdded": "Added",
+    "questionedRemoved": "Removed",
     "translationDiff": "Translation changes",
     "sourceDiff": "Source changes",
     "systemActor": "System",
@@ -634,7 +692,21 @@
     "saveComment": "Save comment",
     "deleteComment": "Delete comment",
     "deleteCommentConfirm": "Delete this comment?",
-    "loadMoreComments": "Load more comments"
+    "loadMoreComments": "Load more comments",
+    "ai": {
+      "tab": "AI",
+      "heading": "AI source explanation",
+      "description": "Analyzes only this entry's primary source and returns its overall meaning, deduplicated tokens, and contextual explanations.",
+      "analyze": "Analyze source",
+      "analyzeAgain": "Analyze again",
+      "loadFailed": "AI analysis failed",
+      "overallMeaning": "Overall meaning",
+      "grammar": "Grammar notes",
+      "tokens": "Token explanations",
+      "noTokens": "The AI did not return usable tokens.",
+      "provider": "Source: {source}",
+      "cached": "Cached result"
+    }
   },
   "admin": {
     "title": "Administration",

@@ -25,6 +25,7 @@ pub const ENTRY_HISTORY_FIELDS: &[&str] = &[
     "state",
     "locked",
     "hidden",
+    "questioned",
     "deleted_at",
 ];
 
@@ -161,18 +162,22 @@ impl MaterializedFileStats {
             match entry.state {
                 EntryState::Untranslated => self.hidden_untranslated += amount,
                 EntryState::Translated => self.hidden_translated += amount,
-                EntryState::Questioned => self.hidden_questioned += amount,
                 EntryState::Checked => self.hidden_checked += amount,
                 EntryState::Reviewed => self.hidden_reviewed += amount,
+            }
+            if entry.questioned {
+                self.hidden_questioned += amount;
             }
         } else {
             self.visible_total += amount;
             match entry.state {
                 EntryState::Untranslated => self.untranslated += amount,
                 EntryState::Translated => self.translated += amount,
-                EntryState::Questioned => self.questioned += amount,
                 EntryState::Checked => self.checked += amount,
                 EntryState::Reviewed => self.reviewed += amount,
+            }
+            if entry.questioned {
+                self.questioned += amount;
             }
         }
     }
@@ -1284,6 +1289,7 @@ mod tests {
                 state,
                 locked: false,
                 hidden,
+                questioned: false,
                 deleted,
             },
         }
@@ -1608,6 +1614,7 @@ mod tests {
                 "state",
                 "locked",
                 "hidden",
+                "questioned",
                 "deleted_at"
             ]
         );

@@ -27,6 +27,10 @@ const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 100;
 const MAX_MATCH_LIMIT: i64 = 5_000;
 
+fn default_match_mode() -> String {
+    "exact".to_string()
+}
+
 /// 术语列表范围。
 #[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +67,22 @@ pub struct TermMatchRequest {
     pub limit: Option<i64>,
 }
 
+/// 在保存前校验或测试填空/正则表达式。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct TermPatternTestRequest {
+    pub match_mode: String,
+    pub source_text: String,
+    #[serde(default)]
+    pub sample_text: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TermPatternTestDto {
+    pub valid: bool,
+    pub matched: bool,
+    pub error_code: Option<String>,
+}
+
 /// 创建或完整更新一个 source-aware term。
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct TermWriteRequest {
@@ -72,6 +92,8 @@ pub struct TermWriteRequest {
     #[serde(default)]
     pub notes: String,
     pub pos_id: Option<i64>,
+    #[serde(default = "default_match_mode")]
+    pub match_mode: String,
     #[serde(default)]
     pub archived: bool,
 }
@@ -86,6 +108,7 @@ pub struct TermDto {
     pub translation: String,
     pub notes: String,
     pub pos_id: Option<i64>,
+    pub match_mode: String,
     pub pos_name_zh_cn: Option<String>,
     pub pos_name_en: Option<String>,
     pub archived: bool,
@@ -109,6 +132,7 @@ pub struct TermVersionDto {
     pub translation: String,
     pub notes: String,
     pub pos_id: Option<i64>,
+    pub match_mode: String,
     pub archived: bool,
     pub deleted: bool,
     pub editor_id: Option<i64>,
@@ -207,6 +231,7 @@ pub async fn create_term(
         &request.translation,
         &request.notes,
         request.pos_id,
+        &request.match_mode,
         archived_at,
         user.id,
     )
@@ -302,6 +327,9 @@ pub async fn update_term(
     if current.pos_id != request.pos_id {
         changed_fields.push("pos_id");
     }
+    if current.match_mode != request.match_mode {
+        changed_fields.push("match_mode");
+    }
     if current.archived_at.is_some() != plan.archived {
         changed_fields.push("archived");
     }
@@ -314,6 +342,7 @@ pub async fn update_term(
         &request.translation,
         &request.notes,
         request.pos_id,
+        &request.match_mode,
         archived_at,
         user.id,
     )
@@ -506,10 +535,64 @@ pub async fn match_terms(
         .as_deref()
         .ok_or(prts_common::Error::ProjectLanguageResolutionRequired)?;
     let limit = validate_limit(request.limit, MAX_MATCH_LIMIT)?;
-    let rows = prts_db::terms::match_current(&state.db, id, primary, &request.source_text, limit)
-        .await
-        .map_err(db_err)?;
-    Ok(Json(rows.into_iter().map(term_dto).collect()))
+    // regex/placeholder 无法用 exact 的 position 条件预筛；固定读取受控上限，避免请求较小
+    // limit 时漏掉排序靠后的表达式命中。
+    let candidate_limit = MAX_MATCH_LIMIT;
+    let rows = prts_db::terms::match_candidates(
+        &state.db,
+        id,
+        primary,
+        &request.source_text,
+        candidate_limit,
+    )
+    .await
+    .map_err(db_err)?;
+    let matches = rows
+        .into_iter()
+        .filter(|term| {
+            prts_core::terms::term_matches_source(
+                &term.match_mode,
+                &term.source_text,
+                &request.source_text,
+            )
+            .unwrap_or(false)
+        })
+        .take(limit as usize)
+        .map(term_dto)
+        .collect();
+    Ok(Json(matches))
+}
+
+/// 术语表达式辅助工具；不写数据，也不回显到审计。
+#[utoipa::path(post, path = "/projects/{id}/terms/pattern-test", tag = "term",
+    params(("id" = i64, Path)), request_body = TermPatternTestRequest,
+    description = "Validate an exact/placeholder/regex source pattern and test it against an optional sample. Placeholder [] and regex apply only to source matching; translation capture substitution is not supported.",
+    responses((status = 200, body = TermPatternTestDto), (status = 404, body = ErrorResponse)))]
+pub async fn test_term_pattern(
+    State(state): State<AppState>,
+    MaybeUser(user): MaybeUser,
+    Path(id): Path<i64>,
+    Json(request): Json<TermPatternTestRequest>,
+) -> Result<Json<TermPatternTestDto>, ApiError> {
+    let access = paccess::load(&state, user.as_ref(), id).await?;
+    access.require_view()?;
+    let result = prts_core::terms::term_matches_source(
+        &request.match_mode,
+        &request.source_text,
+        &request.sample_text,
+    );
+    Ok(Json(match result {
+        Ok(matched) => TermPatternTestDto {
+            valid: true,
+            matched,
+            error_code: None,
+        },
+        Err(error) => TermPatternTestDto {
+            valid: false,
+            matched: false,
+            error_code: Some(error.code().to_string()),
+        },
+    }))
 }
 
 /// 解析并预览术语 CSV/JSON；只写固定 TTL Redis token，不写 PostgreSQL 业务表。
@@ -552,11 +635,21 @@ pub async fn preview_term_import(
         .iter()
         .map(|row| row.source_text.clone())
         .collect::<Vec<_>>();
+    let match_modes = resolved
+        .iter()
+        .map(|row| row.match_mode.clone())
+        .collect::<Vec<_>>();
     let pos_ids = resolved.iter().map(|row| row.pos_id).collect::<Vec<_>>();
-    let existing =
-        prts_db::terms::existing_import_ids(&state.db, id, &source_langs, &source_texts, &pos_ids)
-            .await
-            .map_err(db_err)?;
+    let existing = prts_db::terms::existing_import_ids(
+        &state.db,
+        id,
+        &source_langs,
+        &source_texts,
+        &match_modes,
+        &pos_ids,
+    )
+    .await
+    .map_err(db_err)?;
     let created = existing.iter().filter(|id| id.is_none()).count();
     let updated = existing.len() - created;
     let preview_rows = rows
@@ -567,6 +660,7 @@ pub async fn preview_term_import(
             row: index + 1,
             source_lang: row.source_lang.clone(),
             source_text: row.source_text.clone(),
+            match_mode: row.match_mode.clone(),
             translation: row.translation.clone(),
             pos: row.pos.clone(),
             notes: row.notes.clone(),
@@ -634,6 +728,7 @@ pub async fn confirm_term_import(
         .map(|row| TermDocumentRow {
             source_lang: row.source_lang.clone(),
             source_text: row.source_text.clone(),
+            match_mode: row.match_mode.clone(),
             translation: row.translation.clone(),
             pos: row.pos.clone(),
             notes: row.notes.clone(),
@@ -673,11 +768,21 @@ pub async fn confirm_term_import(
         .iter()
         .map(|row| row.source_text.clone())
         .collect::<Vec<_>>();
+    let match_modes = resolved
+        .iter()
+        .map(|row| row.match_mode.clone())
+        .collect::<Vec<_>>();
     let pos_ids = resolved.iter().map(|row| row.pos_id).collect::<Vec<_>>();
-    let existing =
-        prts_db::terms::existing_import_ids_tx(&mut tx, id, &source_langs, &source_texts, &pos_ids)
-            .await
-            .map_err(db_err)?;
+    let existing = prts_db::terms::existing_import_ids_tx(
+        &mut tx,
+        id,
+        &source_langs,
+        &source_texts,
+        &match_modes,
+        &pos_ids,
+    )
+    .await
+    .map_err(db_err)?;
     let created = existing.iter().filter(|id| id.is_none()).count();
     let updated = existing.len() - created;
     for row in &resolved {
@@ -689,6 +794,7 @@ pub async fn confirm_term_import(
             &row.translation,
             &row.notes,
             row.pos_id,
+            &row.match_mode,
             row.archived.then(Utc::now),
             user.id,
         )
@@ -721,7 +827,7 @@ pub async fn confirm_term_import(
 /// 导出项目全部 current/archived 术语；稳定格式总是显式包含 source_lang/archived。
 #[utoipa::path(get, path = "/projects/{id}/terms/export", tag = "term",
     params(("id" = i64, Path), ExportQuery),
-    description = "按 CSV 或 JSON 导出可见项目的 mixed 术语集合。每行固定包含 source_lang、source_text、translation、pos、notes、archived；导出成功前必须提交不含正文的审计。",
+    description = "按 CSV 或 JSON 导出可见项目的 mixed 术语集合。每行固定包含 source_lang、source_text、match_mode、translation、pos、notes、archived；导出成功前必须提交不含正文的审计。",
     responses((status = 200, description = "稳定 CSV/JSON 术语文档"),
         (status = 400, body = ErrorResponse), (status = 404, body = ErrorResponse),
         (status = 409, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
@@ -757,6 +863,7 @@ pub async fn export_terms(
         .map(|term| TermDocumentRow {
             source_lang: term.source_lang,
             source_text: term.source_text,
+            match_mode: term.match_mode,
             translation: term.translation,
             pos: term.pos_name_en.or(term.pos_name_zh_cn),
             notes: term.notes,
@@ -822,7 +929,12 @@ fn resolve_term_rows(
                 code: code.clone(),
             });
         }
-        let identity = (row.source_lang.clone(), row.source_text.clone(), pos_id);
+        let identity = (
+            row.source_lang.clone(),
+            row.source_text.clone(),
+            row.match_mode.clone(),
+            pos_id,
+        );
         if identities.insert(identity, row_number).is_some() {
             return Err(prts_common::Error::ImportDuplicateRow.into());
         }
@@ -830,6 +942,7 @@ fn resolve_term_rows(
             row: row_number,
             source_lang: row.source_lang.clone(),
             source_text: row.source_text.clone(),
+            match_mode: row.match_mode.clone(),
             translation: row.translation.clone(),
             pos: row.pos.clone(),
             pos_id,
@@ -994,9 +1107,9 @@ async fn require_pos(conn: &mut sqlx::PgConnection, pos_id: Option<i64>) -> Resu
 }
 
 fn validate_request(request: &TermWriteRequest) -> Result<(), ApiError> {
-    if request.source_text.trim().is_empty() {
-        return Err(prts_common::Error::bad_request("term source text is required").into());
-    }
+    let source_text = request.source_text.trim();
+    prts_core::terms::validate_term_pattern(&request.match_mode, source_text)
+        .map_err(|error| prts_common::Error::bad_request(error.code()))?;
     Ok(())
 }
 
@@ -1062,6 +1175,7 @@ fn term_dto(term: prts_db::models::TermWithPos) -> TermDto {
         translation: term.translation,
         notes: term.notes,
         pos_id: term.pos_id,
+        match_mode: term.match_mode,
         pos_name_zh_cn: term.pos_name_zh_cn,
         pos_name_en: term.pos_name_en,
         archived: term.archived_at.is_some(),
@@ -1085,6 +1199,7 @@ fn term_version_dto(version: prts_db::models::TermVersion) -> TermVersionDto {
         translation: version.translation,
         notes: version.notes,
         pos_id: version.pos_id,
+        match_mode: version.match_mode,
         archived: version.archived_at.is_some(),
         deleted: version.deleted_at.is_some(),
         editor_id: version.editor_id,

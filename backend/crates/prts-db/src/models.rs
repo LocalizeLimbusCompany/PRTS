@@ -16,6 +16,10 @@ pub struct User {
     pub translation_langs: Vec<String>,
     /// 词条历史的个人差分展示模式。
     pub entry_diff_mode: String,
+    /// 保存既有译文变更前是否弹出差异预览。
+    pub preview_translation_diff: bool,
+    /// AI 来源偏好：auto|personal|project。
+    pub ai_source_preference: String,
     /// Exact tenths of one CP; one stored unit equals 0.1 CP.
     pub cp_tenths: i64,
     pub platform_role: Option<String>,
@@ -155,6 +159,8 @@ pub struct Entry {
     pub state: String,
     pub locked: bool,
     pub hidden: bool,
+    /// 独立于工作流的有疑问标签。
+    pub questioned: bool,
     pub deleted_at: Option<DateTime<Utc>>,
     pub deleted_by: Option<i64>,
     pub deletion_change_set_id: Option<uuid::Uuid>,
@@ -189,6 +195,7 @@ pub struct EntryVersion {
     pub kind: String,
     pub translation: Option<String>,
     pub state: Option<String>,
+    pub questioned: Option<bool>,
     pub original: Option<serde_json::Value>,
     pub editor_id: Option<i64>,
     pub editor_name: Option<String>,
@@ -374,6 +381,7 @@ pub struct Term {
     pub translation: String,
     pub notes: String,
     pub pos_id: Option<i64>,
+    pub match_mode: String,
     pub archived_at: Option<DateTime<Utc>>,
     pub version: i64,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -394,6 +402,7 @@ pub struct TermWithPos {
     pub translation: String,
     pub notes: String,
     pub pos_id: Option<i64>,
+    pub match_mode: String,
     pub pos_name_zh_cn: Option<String>,
     pub pos_name_en: Option<String>,
     pub archived_at: Option<DateTime<Utc>>,
@@ -435,12 +444,40 @@ pub struct TermVersion {
     pub translation: String,
     pub notes: String,
     pub pos_id: Option<i64>,
+    pub match_mode: String,
     pub archived_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
     pub editor_id: Option<i64>,
     pub editor_name: String,
     pub editor_avatar_url: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// Encrypted personal OpenAI-compatible endpoint settings.
+#[derive(Debug, Clone, FromRow)]
+pub struct UserAiSetting {
+    pub user_id: i64,
+    pub base_url: String,
+    pub model: String,
+    pub api_key_ciphertext: Vec<u8>,
+    pub api_key_nonce: Vec<u8>,
+    pub api_key_hint: String,
+    pub enabled: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Encrypted project-owner OpenAI-compatible endpoint settings.
+#[derive(Debug, Clone, FromRow)]
+pub struct ProjectAiSetting {
+    pub project_id: i64,
+    pub base_url: String,
+    pub model: String,
+    pub api_key_ciphertext: Vec<u8>,
+    pub api_key_nonce: Vec<u8>,
+    pub api_key_hint: String,
+    pub enabled: bool,
+    pub updated_by: Option<i64>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// 原始文件上传批次；项目删除后以 snapshot id 保留传输历史。

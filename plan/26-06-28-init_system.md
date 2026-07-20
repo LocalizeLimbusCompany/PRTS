@@ -144,17 +144,18 @@ PRTS/
 - `file`：`id`、`project_id`、`folder_id?`、`name`、`format`、软删除与 `deletion_change_set_id`、`stats`（可见词条数/各状态计数，物化）。
 - `entry`（最小翻译单位）：
   - `id`、`file_id`、`key`、`original`(JSONB：`{ "<bcp47>": "源文本" }`)、`translation`、
-  - `state`（工作流枚举，见 §6）、`locked`(bool)、`hidden`(bool)、`deleted_at?`、
+  - `state`（工作流枚举，见 §6）、`questioned`(bool)、`locked`(bool)、`hidden`(bool)、`deleted_at?`、
   - `version`(乐观锁递增)、`updated_by`、`updated_at`。
-- `entry_version`：每次改动的快照（`entry_id`、`version`、`translation`、`state`、`editor_id`、`diff`、`created_at`）。
+- `entry_version`：每次改动的快照（`entry_id`、`version`、`translation`、`state`、`questioned`、`editor_id`、`diff`、`created_at`）。
 - `audit_log`：追加式、action allowlisted 的安全审计（见 §8）。
 - `membership`：`project_id`、`user_id`、`role`(owner/manager/reviewer/translator)、`cp_tenths BIGINT NOT NULL DEFAULT 0`（当前成员的项目累计贡献分）。
 - `platform_role`：`user_id`、`role`(super_admin/admin/maintainer)。
 - `setting`：平台运行时配置（SMTP、注册开关、OAuth 模式、Embedding 开关、上传的文件数/单文件大小/批次大小/浏览器并发等），分类存储。
 - `job`：上传、主源 lexical、Embedding、文件清理与项目清除的持久化状态/阶段/进度/租约/重试；`project_id` 可空并 `ON DELETE SET NULL`，删除后所需 project/media snapshot 存 payload。
 - `task` / `task_file` / `task_baseline_entry`：immutable file/entry snapshot IDs + nullable live FKs（永久删除 SET NULL），历史基线可解释且 NULL live ref 退出分母。
-- `term` / `pos_preset`：带任意合法 canonical `source_lang`/归档状态的项目术语与 zh-CN/en 全局词性；非当前主源语言只能 archived，legacy old-primary 保持 migration-ready。
-- `project_stats` / `file_stats`：排除 hidden 与 soft-deleted 的可见状态计数。
+- `term` / `pos_preset`：带任意合法 canonical `source_lang`/归档状态/`match_mode`（exact/placeholder/regex）的项目术语与 zh-CN/en 全局词性预设；非当前主源语言只能 archived，legacy old-primary 保持 migration-ready。
+- `user_ai_settings` / `project_ai_settings`：OpenAI-compatible Base URL、模型与经 `PRTS__AI__MASTER_KEY` 加密的 API Key；个人设置归用户，项目设置只由唯一 owner 管理。
+- `project_stats` / `file_stats`：排除 hidden 与 soft-deleted 的四个工作流状态计数；`questioned_count` 是可与任意状态重叠的标签计数。
 
 ### 5.2 应对单项目 20w+ 词条的性能策略
 
@@ -171,19 +172,20 @@ PRTS/
 **工作流状态（`state` 枚举，单值）**：
 
 ```
-未翻译 untranslated → 已翻译 translated → 有疑问 questioned / 已检查 checked → 已审核 reviewed
+未翻译 untranslated → 已翻译 translated → 已检查 checked → 已审核 reviewed
 ```
 
 **正交标志位（独立于工作流）**：
 
 | 标志 | 语义 | 谁能改 |
 | --- | --- | --- |
+| `questioned` 有疑问 | 可叠加在任意工作流状态上的标签；可选附带一条疑问原因评论 | 具有词条编辑能力的项目成员 |
 | `locked` 已锁定 | 锁定该词条，独立于翻译流程 | **仅项目「管理」与「拥有者」** 可修改被锁词条 |
 | `hidden` 已隐藏 | 从常规列表/翻译视图中隐藏 | 管理/拥有者设置 |
 
-- 角色对工作流状态的设置权限由**权限节点**约束（见 §7）：翻译可设 `未翻译/已翻译/有疑问`；校对可设 `已检查/已审核` 并修改已审核文本。
+- 角色对工作流状态的设置权限由**权限节点**约束（见 §7）：翻译可设 `未翻译/已翻译` 并独立增删有疑问标签；校对可设 `已检查/已审核` 并修改已审核文本。
 - `locked=true` 时，除「管理」「拥有者」外任何人（含校对/翻译）均不可修改该词条的译文或状态。
-- 上传/下载的 `state` 字段只映射工作流枚举；`locked`/`hidden` 为平台内独立属性。
+- 上传/下载的 `state` 字段只映射工作流枚举；`questioned`/`locked`/`hidden` 为平台内独立属性。
 
 ---
 
@@ -206,7 +208,7 @@ PRTS/
 | 拥有者 owner | 项目内全部，含主源变化、删除项目、改被锁词条；本轮不提供拥有者转让 |
 | 管理 manager | 项目内管理能力，含改被锁词条；**不含主源变化、项目删除或拥有者转让** |
 | 校对 reviewer | 设 `已检查/已审核`、修改已审核文本；翻译能力 |
-| 翻译 translator | 编辑 `未翻译/已翻译/有疑问` 词条并设这三种状态；**不可**设 `已检查/已审核`，不可改被锁词条 |
+| 翻译 translator | 编辑词条、设 `未翻译/已翻译` 并独立增删有疑问标签；**不可**设 `已检查/已审核`，不可改被锁词条 |
 
 > 补全了草稿中被截断的「翻译」角色定义。
 >
@@ -243,12 +245,12 @@ trait AuthProvider {
 }
 ```
 
-- 内置：`PasswordProvider`、通用 `OAuth2Provider`（Authorization Code + PKCE/S256）。
+- 默认安装只编译 `PasswordProvider`；通用 `OAuth2Provider`（Authorization Code + PKCE/S256）及 ZOOT 映射器由 `zoot-oauth` Cargo feature/独立镜像显式启用。
 - **ZOOT = `OAuth2Provider` 的一个配置实例 + 映射器**：
   - `profile` → `username` / 头像 `picture` / `role`
   - `work` → 翻译类别 `work_scope` / `work_content`（如英翻/韩翻/日翻）
   - `external` → `github_id` 等 → 写入 `external_account`（关联账号）
-- 全局模式：`password+oauth`（两者皆可）或 `oauth-only`（禁用密码）。
+- 含 OAuth 的安装可选全局模式：`password+oauth`（两者皆可）或 `oauth-only`（禁用密码）；默认无 OAuth 安装不暴露 OAuth 路由或登录入口。
 
 ### 9.2 注册与会话
 
@@ -258,7 +260,8 @@ trait AuthProvider {
 
 ### 9.3 用户页面
 
-- 自身：描述、API-Key（创建/吊销，明文仅一次）、翻译语言偏好、修改密码。
+- 自身：描述、API-Key（创建/吊销，明文仅一次）、翻译语言偏好、修改密码、保存前译文差异预览开关（跨设备、默认关闭）。
+- AI：用户可保存自己的 OpenAI-compatible Base URL/API Key/Model，并在 `auto/personal/project` 间选择来源；项目唯一 owner 可保存项目 AI。显式选择 personal/project 时缺失配置直接报错，不静默回退；项目 AI 只供实际项目成员使用。
 - 管理员直接建号带持久化初始密码提醒；提醒不阻止使用，成功修改密码后清除。
 - 展示：参与的项目、关联账号（先支持 GitHub）、UID、加入时间与真实累计 CP；管理列表不展示无业务意义的 CP 列。
 
@@ -306,6 +309,11 @@ trait AuthProvider {
 - 布局：左侧词条列表（键集分页 + 搜索/筛选），中间翻译面板（按用户偏好显示源语言与键值）；词条模型不保留 context。
 - 实时：WebSocket + Redis pub/sub 跨实例广播 —— 在线状态、"他人正在编辑此词条"、词条变更实时刷新。
 - 并发安全：保存时**乐观锁版本校验**（`version` 不匹配则提示冲突）；`locked` 词条对非管理/拥有者只读。
+- 原文和译文编辑区均设置响应式最大高度并在内部滚动，避免超长文本撑坏整页；移动端将导航、列表、编辑区与右栏改为可用的单列/抽屉布局。
+- AI 解释只在用户显式点击时分析当前 primary source，返回整体含义、去重分词、逐词语境义、词性与语法；provider 按用户的 `auto/personal/project` 偏好解析，不在读取词条时自动请求第三方。
+- 用户级“保存前预览译文差异”默认关闭并跨设备保存；只在原译文非空且译文发生变化时弹窗，从空译文首次填写不弹。
+- 右栏术语卡展示 source/translation、词性、备注和匹配模式。`placeholder` 中的 `[]` 仅在原文侧代表任意文本，例如 `AAAA [] BBBB` 可命中含 `AAAA … BBBB` 的原文；`regex` 同样只匹配原文，并提供服务端校验/样例测试，不做译文捕获替换。
+- 历史对纯状态/疑问标签变更使用明确的“旧值 → 新值”摘要并隐藏内部 `v1/v2/...`；进度条只按四个互斥工作流状态分段，有疑问数量单独展示为重叠标签。
 - 右下恰好为状态下拉 + 一个智能按钮；服务端给 owner/manager 下发 `force_save_presence` capability，按钮只检查该 capability；强制保存仅越过 presence 占用提示，仍校验版本。
 - 公开项目游客可进入只读编辑器，不保存、改状态、加入可写 presence、poke 或私信。
 
@@ -346,8 +354,9 @@ trait AuthProvider {
 
 ## 15. 配置与安全
 
-- **分层配置**：环境变量（密钥、连接串、媒体/临时卷路径）+ 数据库存储的运行时设置（SMTP、注册开关、OAuth 模式、Embedding、上传限制、文件保留期、删除题型等），并分类管理。
-- 密钥（DB/Redis/JWT/Qwen/OAuth secret）仅经环境变量注入，**绝不下发前端**，`.gitignore` 完全覆盖 `.env`。
+- **分层配置**：环境变量（平台密钥、连接串、媒体/临时卷路径）+ 数据库存储的运行时设置（SMTP、注册开关、OAuth 模式、Embedding、上传限制、文件保留期、删除题型等）+ 用户/项目 AI provider 设置，并分类管理。
+- 平台密钥（DB/Redis/JWT/Qwen/OAuth secret、`PRTS__AI__MASTER_KEY`）仅经环境变量注入；用户/项目 AI API Key 使用 XChaCha20-Poly1305 加密后入库，**绝不把明文或解密密钥下发前端**，`.gitignore` 完全覆盖 `.env`。
+- AI Base URL 仅允许 HTTPS；服务端解析并固定公网地址、拒绝私网/保留地址与重定向，降低 SSRF、DNS rebinding 和密钥外送风险。
 - 安全：全程 HTTPS、CSRF/CORS 策略、输入校验、SQL 参数化（sqlx）、限流、最小权限、审计留痕。
 - 写 **verify 验证代码**（见 §17）。
 
@@ -376,7 +385,7 @@ trait AuthProvider {
 
 ## 18. 部署（Docker / GHCR）
 
-- `docker-compose`：`backend` + `frontend(nginx)` + `postgres(含扩展)` + `redis`，并挂载 media/upload-temp 持久卷；另有 `docker-compose.dev.yml` 供本地开发。
+- 默认 `docker-compose.yml`：无 OAuth 的 `backend` + `frontend(nginx)` + `postgres(含扩展)` + `redis`，并挂载 media/upload-temp 持久卷；叠加 `docker-compose.oauth.yml` 才启用 `zoot-oauth` 与 `oauth-latest` 后端镜像。另有 `docker-compose.dev.yml` 供本地开发。
 - 各服务独立 Dockerfile（后端多阶段构建静态二进制；前端构建后 nginx 托管）。
 - **每完成一个阶段：测试 → verify → 提交(规范) → 推 GitHub → 构建并推 GHCR 镜像**，供生产（`prts.zeroasso.top`）拉取。
 - 阶段 8 使用 `scripts/verify-project-workspace.ps1` 区分默认静态/自动合同、可选 DB 检查与显式手动规模实测；未实际执行的昂贵场景不得声明为通过。

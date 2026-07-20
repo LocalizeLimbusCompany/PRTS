@@ -8,11 +8,40 @@ export interface UserDto {
   description: string
   translation_langs: string[]
   entry_diff_mode: EntryDiffMode
+  preview_translation_diff: boolean
+  ai_source_preference: 'auto' | 'personal' | 'project'
   cp_tenths: number
   platform_role: string | null
   platform_capabilities: PlatformCapabilities
   password_change_required: boolean
   created_at: string
+}
+
+export type AiSourcePreference = 'auto' | 'personal' | 'project'
+
+/** AI endpoint metadata exposed without the encrypted API key. */
+export interface AiSettingsDto {
+  configured: boolean
+  base_url: string | null
+  model: string | null
+  api_key_hint: string | null
+  enabled: boolean
+}
+
+export interface AiTokenExplanation {
+  token: string
+  meaning: string
+  contextual_explanation: string
+  part_of_speech: string
+  grammar_notes: string
+}
+
+export interface AiExplanationDto {
+  overall_meaning: string
+  tokens: AiTokenExplanation[]
+  grammar_notes: string
+  provider_source: 'personal' | 'project'
+  cached: boolean
 }
 
 export interface PlatformCapabilities {
@@ -148,6 +177,7 @@ export interface ProjectCapabilities {
 export interface ProjectDetailDto {
   project: ProjectDto
   state_counts: Record<string, number>
+  questioned_count: number
   entry_count: number
   capabilities: ProjectCapabilities
 }
@@ -195,6 +225,7 @@ export interface FileDto {
   path: string
   entry_count: number
   state_counts: Record<string, number>
+  questioned_count: number
   created_at: string
   updated_at: string
 }
@@ -246,6 +277,7 @@ export interface EntryDto {
   state: EntryState
   locked: boolean
   hidden: boolean
+  questioned: boolean
   version: number
   updated_at: string
 }
@@ -255,6 +287,7 @@ export interface EntryVersionDto {
   kind: string
   translation: string
   state: EntryState
+  questioned: boolean
   original: Record<string, string>
   editor_id: number | null
   editor_name: string | null
@@ -360,7 +393,6 @@ export interface ExternalAccountDto {
 export const ENTRY_STATES = [
   'untranslated',
   'translated',
-  'questioned',
   'checked',
   'reviewed',
 ] as const
@@ -386,6 +418,7 @@ export interface StructuredSearchRequest {
   conditions: SearchCondition[]
   scope: SearchScope
   states: EntryState[]
+  questioned?: boolean
   include_hidden: boolean
   vector: boolean
   after?: string

@@ -57,6 +57,7 @@ describe('editor structured search workflow', () => {
         query: 'needle',
         conditions: [{ field: 'translation', operator: 'contains', value: 'x' }],
         states: ['translated', 'checked'],
+        questioned: false,
         includeHidden: true,
         vector: false,
         ...scopeDraft,

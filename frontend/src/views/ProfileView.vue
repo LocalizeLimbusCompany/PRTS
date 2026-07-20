@@ -4,8 +4,11 @@ import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
 import {
+  aiApi,
   apiErrorMessage,
   usersApi,
+  type AiSettingsDto,
+  type AiSourcePreference,
   type ApiKeyDto,
   type EntryDiffMode,
   type ExternalAccountDto,
@@ -22,18 +25,41 @@ const localizedLangLabel = (code: string) => langLabel(code, locale.value)
 const desc = ref('')
 const langs = ref<string[]>([])
 const diffMode = ref<EntryDiffMode>('word_inline')
+const previewTranslationDiff = ref(false)
+const aiSourcePreference = ref<AiSourcePreference>('auto')
 const saving = ref(false)
 const keys = ref<ApiKeyDto[]>([])
 const accounts = ref<ExternalAccountDto[]>([])
+const aiSettings = ref<AiSettingsDto | null>(null)
+const aiForm = ref({ base_url: '', model: '', api_key: '', enabled: true })
+const aiSaving = ref(false)
+
+function applyAiSettings(setting: AiSettingsDto) {
+  aiSettings.value = setting
+  aiForm.value = {
+    base_url: setting.base_url ?? '',
+    model: setting.model ?? '',
+    api_key: '',
+    enabled: setting.configured ? setting.enabled : true,
+  }
+}
 
 onMounted(async () => {
   await auth.refreshMe()
   desc.value = auth.user?.description ?? ''
   langs.value = [...(auth.user?.translation_langs ?? [])]
   diffMode.value = auth.user?.entry_diff_mode ?? 'word_inline'
+  previewTranslationDiff.value = auth.user?.preview_translation_diff ?? false
+  aiSourcePreference.value = auth.user?.ai_source_preference ?? 'auto'
   try {
-    keys.value = await usersApi.listApiKeys()
-    accounts.value = await usersApi.accounts()
+    const [loadedKeys, loadedAccounts, loadedAi] = await Promise.all([
+      usersApi.listApiKeys(),
+      usersApi.accounts(),
+      aiApi.getPersonalSettings(),
+    ])
+    keys.value = loadedKeys
+    accounts.value = loadedAccounts
+    applyAiSettings(loadedAi)
   } catch (e) {
     $q.notify({ type: 'negative', message: apiErrorMessage(e) })
   }
@@ -46,6 +72,8 @@ async function saveProfile() {
       description: desc.value,
       translation_langs: langs.value,
       entry_diff_mode: diffMode.value,
+      preview_translation_diff: previewTranslationDiff.value,
+      ai_source_preference: aiSourcePreference.value,
     })
     await auth.refreshMe()
     $q.notify({ type: 'positive', message: t('profile.saved') })
@@ -54,6 +82,51 @@ async function saveProfile() {
   } finally {
     saving.value = false
   }
+}
+
+async function savePersonalAi() {
+  if (!aiForm.value.base_url.trim() || !aiForm.value.model.trim()) return
+  aiSaving.value = true
+  try {
+    const apiKey = aiForm.value.api_key.trim()
+    const updated = await aiApi.putPersonalSettings({
+      base_url: aiForm.value.base_url.trim(),
+      model: aiForm.value.model.trim(),
+      api_key: apiKey || undefined,
+      enabled: aiForm.value.enabled,
+    })
+    applyAiSettings(updated)
+    $q.notify({ type: 'positive', message: t('profile.ai.saved') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('profile.ai.saveFailed')) })
+  } finally {
+    aiSaving.value = false
+  }
+}
+
+function deletePersonalAi() {
+  $q.dialog({
+    title: t('profile.ai.delete'),
+    message: t('profile.ai.deleteConfirm'),
+    cancel: true,
+  }).onOk(async () => {
+    aiSaving.value = true
+    try {
+      await aiApi.deletePersonalSettings()
+      applyAiSettings({
+        configured: false,
+        base_url: null,
+        model: null,
+        api_key_hint: null,
+        enabled: false,
+      })
+      $q.notify({ type: 'positive', message: t('profile.ai.deleted') })
+    } catch (error) {
+      $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+    } finally {
+      aiSaving.value = false
+    }
+  })
 }
 
 /* —— 密码修改与持久提醒 —— */
@@ -180,6 +253,31 @@ async function revokeKey(id: number) {
           <q-input v-model="desc" outlined dense type="textarea" autogrow :disable="saving" />
         </div>
         <div class="fld">
+          <q-toggle
+            v-model="previewTranslationDiff"
+            :label="t('profile.previewTranslationDiff')"
+            :disable="saving"
+          />
+          <div class="prts-dim">{{ t('profile.previewTranslationDiffHint') }}</div>
+        </div>
+        <div class="fld">
+          <div class="prts-label q-mb-xs">{{ t('profile.ai.sourcePreference') }}</div>
+          <q-select
+            v-model="aiSourcePreference"
+            outlined
+            dense
+            emit-value
+            map-options
+            :options="[
+              { label: t('profile.ai.sources.auto'), value: 'auto' },
+              { label: t('profile.ai.sources.personal'), value: 'personal' },
+              { label: t('profile.ai.sources.project'), value: 'project' },
+            ]"
+            :hint="t('profile.ai.sourcePreferenceHint')"
+            :disable="saving"
+          />
+        </div>
+        <div class="fld">
           <div class="prts-label q-mb-xs">{{ t('profile.entryDiffMode') }}</div>
           <q-select
             v-model="diffMode"
@@ -221,6 +319,78 @@ async function revokeKey(id: number) {
             :label="t('profile.save')"
             :loading="saving"
             @click="saveProfile"
+          />
+        </div>
+      </div>
+    </q-card>
+
+    <div class="prts-label q-mb-sm">{{ t('profile.ai.heading') }}</div>
+    <q-card flat bordered class="q-pa-lg q-mb-lg">
+      <div class="column q-gutter-md">
+        <div class="prts-dim">{{ t('profile.ai.description') }}</div>
+        <q-banner v-if="aiSettings?.configured" dense rounded class="bg-grey-9">
+          {{ t('profile.ai.keyConfigured', { hint: aiSettings.api_key_hint }) }}
+        </q-banner>
+        <q-input
+          v-model="aiForm.base_url"
+          outlined
+          dense
+          type="url"
+          autocomplete="url"
+          :label="t('profile.ai.baseUrl')"
+          :hint="t('profile.ai.baseUrlHint')"
+          :disable="aiSaving"
+        />
+        <q-input
+          v-model="aiForm.model"
+          outlined
+          dense
+          :label="t('profile.ai.model')"
+          :disable="aiSaving"
+        />
+        <q-input
+          v-model="aiForm.api_key"
+          outlined
+          dense
+          type="password"
+          autocomplete="new-password"
+          :label="t('profile.ai.apiKey')"
+          :hint="
+            aiSettings?.configured
+              ? t('profile.ai.apiKeyRetainHint')
+              : t('profile.ai.apiKeyRequiredHint')
+          "
+          :disable="aiSaving"
+        />
+        <q-toggle
+          v-model="aiForm.enabled"
+          :label="t('profile.ai.enabled')"
+          :disable="aiSaving"
+        />
+        <div class="row q-gutter-sm">
+          <q-btn
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            :label="t('profile.ai.save')"
+            :loading="aiSaving"
+            :disable="
+              !aiForm.base_url.trim() ||
+              !aiForm.model.trim() ||
+              (!aiSettings?.configured && !aiForm.api_key.trim())
+            "
+            @click="savePersonalAi"
+          />
+          <q-btn
+            v-if="aiSettings?.configured"
+            flat
+            no-caps
+            color="negative"
+            icon="mdi-delete-outline"
+            :label="t('profile.ai.delete')"
+            :disable="aiSaving"
+            @click="deletePersonalAi"
           />
         </div>
       </div>

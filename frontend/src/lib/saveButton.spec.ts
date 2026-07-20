@@ -28,7 +28,7 @@ describe('computeSaveButton', () => {
     })
   })
 
-  it.each(['translated', 'questioned', 'checked', 'reviewed'] as const)(
+  it.each(['translated', 'checked', 'reviewed'] as const)(
     'dirty %s saves while preserving the current state',
     (state) => {
       expect(computeSaveButton({ ...base, state, dirty: true })).toEqual({
@@ -110,7 +110,6 @@ describe('computeSaveButton', () => {
     { canEdit: false },
     { locked: true, canEditLocked: false },
     { state: 'untranslated' as const, dirty: false },
-    { state: 'questioned' as const, dirty: false },
     { state: 'reviewed' as const, dirty: false, canReview: true },
   ])('disables non-actionable context %#', (overrides) => {
     expect(computeSaveButton({ ...base, ...overrides })).toMatchObject({

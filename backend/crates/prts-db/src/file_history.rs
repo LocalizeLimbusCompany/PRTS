@@ -755,7 +755,7 @@ pub async fn materialize_file_rollback_tx(
     .await?;
 
     let current_entries = sqlx::query_as::<_, CurrentEntryRow>(
-        "SELECT id, key, original, translation, state, locked, hidden, deleted_at
+        "SELECT id, key, original, translation, state, locked, hidden, questioned, deleted_at
          FROM entries WHERE project_id = $1 AND file_id = $2 ORDER BY id FOR UPDATE",
     )
     .bind(project_id)
@@ -900,6 +900,7 @@ struct CurrentEntryRow {
     state: String,
     locked: bool,
     hidden: bool,
+    questioned: bool,
     deleted_at: Option<DateTime<Utc>>,
 }
 
@@ -918,6 +919,7 @@ impl CurrentEntryRow {
                 })?,
                 locked: self.locked,
                 hidden: self.hidden,
+                questioned: self.questioned,
                 deleted: self.deleted_at.is_some(),
             },
         })
@@ -1002,6 +1004,10 @@ fn decode_entry_snapshot(value: Value) -> Result<EntryHistorySnapshot, sqlx::Err
             .ok_or_else(|| {
                 sqlx::Error::Protocol("file history hidden flag is missing".to_string())
             })?,
+        questioned: object
+            .get("questioned")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         deleted: object
             .get("deleted_at")
             .is_some_and(|value| !value.is_null()),
@@ -1279,10 +1285,10 @@ async fn apply_mutation_tx(
             let result: Option<i64> = sqlx::query_scalar(
                 "UPDATE entries
                  SET key = $4, original = $5, translation = $6, state = $7,
-                     locked = $8, hidden = $9, deleted_at = $10,
-                     deleted_by = CASE WHEN $10::TIMESTAMPTZ IS NULL THEN NULL ELSE $11 END,
-                     deletion_change_set_id = $12, version = version + 1,
-                     updated_by = $11
+                     locked = $8, hidden = $9, questioned = $10, deleted_at = $11,
+                     deleted_by = CASE WHEN $11::TIMESTAMPTZ IS NULL THEN NULL ELSE $12 END,
+                     deletion_change_set_id = $13, version = version + 1,
+                     updated_by = $12
                  WHERE project_id = $1 AND id = $2 AND key = $3
                  RETURNING version",
             )
@@ -1295,6 +1301,7 @@ async fn apply_mutation_tx(
             .bind(after.state.as_str())
             .bind(after.locked)
             .bind(after.hidden)
+            .bind(after.questioned)
             .bind(deleted_at)
             .bind(actor_id)
             .bind(deletion_change_set_id)
@@ -1305,17 +1312,18 @@ async fn apply_mutation_tx(
             })?;
             sqlx::query(
                 "INSERT INTO entry_versions (
-                     entry_id, version, kind, translation, state, original, editor_id,
+                     entry_id, version, kind, translation, state, questioned, original, editor_id,
                      editor_name, editor_avatar_url
                  )
-                 SELECT $1, $2, 'rollback', $3, $4, $5, actor.id, actor.username,
+                 SELECT $1, $2, 'rollback', $3, $4, $5, $6, actor.id, actor.username,
                         actor.avatar_url
-                 FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $6",
+                 FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $7",
             )
             .bind(entry_id)
             .bind(version)
             .bind(&after.translation)
             .bind(after.state.as_str())
+            .bind(after.questioned)
             .bind(json!(after.original))
             .bind(actor_id)
             .execute(conn)
@@ -1408,10 +1416,12 @@ async fn verify_stats_nonnegative_tx(
     let project_valid: bool = sqlx::query_scalar(
         "SELECT visible_total >= 0
             AND visible_total = untranslated_count + translated_count
-                + questioned_count + checked_count + reviewed_count
+                + checked_count + reviewed_count
+            AND questioned_count BETWEEN 0 AND visible_total
             AND hidden_total >= 0
             AND hidden_total = hidden_untranslated_count + hidden_translated_count
-                + hidden_questioned_count + hidden_checked_count + hidden_reviewed_count
+                + hidden_checked_count + hidden_reviewed_count
+            AND hidden_questioned_count BETWEEN 0 AND hidden_total
          FROM project_stats WHERE project_id = $1",
     )
     .bind(project_id)
@@ -1426,10 +1436,12 @@ async fn verify_stats_nonnegative_tx(
         let file_valid: bool = sqlx::query_scalar(
             "SELECT visible_total >= 0
                 AND visible_total = untranslated_count + translated_count
-                    + questioned_count + checked_count + reviewed_count
+                    + checked_count + reviewed_count
+                AND questioned_count BETWEEN 0 AND visible_total
                 AND hidden_total >= 0
                 AND hidden_total = hidden_untranslated_count + hidden_translated_count
-                    + hidden_questioned_count + hidden_checked_count + hidden_reviewed_count
+                    + hidden_checked_count + hidden_reviewed_count
+                AND hidden_questioned_count BETWEEN 0 AND hidden_total
              FROM file_stats WHERE file_id = $1",
         )
         .bind(file_id)

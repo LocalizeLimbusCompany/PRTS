@@ -373,6 +373,7 @@ mod db_tests {
             media: Arc::new(crate::media::LocalMediaStore::new(
                 std::env::temp_dir().join("prts-test-media"),
             )),
+            #[cfg(feature = "zoot-oauth")]
             zoot: Arc::new(None),
             realtime,
             embedder: Arc::new(None),

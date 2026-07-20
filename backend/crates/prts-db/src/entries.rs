@@ -71,6 +71,7 @@ struct ReplacementJoinedRow {
     existing_state: Option<String>,
     existing_locked: Option<bool>,
     existing_hidden: Option<bool>,
+    existing_questioned: Option<bool>,
     existing_deleted_at: Option<DateTime<Utc>>,
     upload_ordinal: Option<i64>,
     upload_key: Option<String>,
@@ -90,6 +91,7 @@ struct ReplacementPlanStagingRow {
     after_state: &'static str,
     after_locked: bool,
     after_hidden: bool,
+    after_questioned: bool,
     before_value: Option<serde_json::Value>,
     after_value: serde_json::Value,
     history_operation: &'static str,
@@ -161,6 +163,7 @@ pub async fn create_replacement_temp_tables_tx(conn: &mut PgConnection) -> Resul
              after_state TEXT NOT NULL,
              after_locked BOOLEAN NOT NULL,
              after_hidden BOOLEAN NOT NULL,
+             after_questioned BOOLEAN NOT NULL,
              before_value JSONB,
              after_value JSONB NOT NULL,
              history_operation TEXT NOT NULL,
@@ -284,6 +287,7 @@ pub async fn declare_replacement_input_cursor_tx(
                 entry.state AS existing_state,
                 entry.locked AS existing_locked,
                 entry.hidden AS existing_hidden,
+                entry.questioned AS existing_questioned,
                 entry.deleted_at AS existing_deleted_at,
                 upload.ordinal AS upload_ordinal,
                 upload.key AS upload_key,
@@ -379,6 +383,7 @@ fn joined_row_to_input(
             flags: EntryFlags {
                 locked: row.existing_locked.unwrap_or(false),
                 hidden: row.existing_hidden.unwrap_or(false),
+                questioned: row.existing_questioned.unwrap_or(false),
             },
             deleted: row.existing_deleted_at.is_some(),
         }),
@@ -480,6 +485,7 @@ fn planned_transition_staging_row(
         after_state: transition.after.state.as_str(),
         after_locked: transition.after.locked,
         after_hidden: transition.after.hidden,
+        after_questioned: transition.after.questioned,
         before_value,
         after_value,
         history_operation,
@@ -498,6 +504,7 @@ async fn stage_planned_transitions_tx(
         "INSERT INTO prts_upload_replacement_plan (
              ordinal, key, entry_id, kind, source_changed,
              after_original, after_translation, after_state, after_locked, after_hidden,
+             after_questioned,
              before_value, after_value, history_operation,
              visible_total_delta, untranslated_delta, translated_delta,
              questioned_delta, checked_delta, reviewed_delta,
@@ -516,6 +523,7 @@ async fn stage_planned_transitions_tx(
             .push_bind(transition.after_state)
             .push_bind(transition.after_locked)
             .push_bind(transition.after_hidden)
+            .push_bind(transition.after_questioned)
             .push_bind(&transition.before_value)
             .push_bind(&transition.after_value)
             .push_bind(transition.history_operation)
@@ -547,6 +555,7 @@ fn history_snapshot_json(
         "state": snapshot.state.as_str(),
         "locked": snapshot.locked,
         "hidden": snapshot.hidden,
+        "questioned": snapshot.questioned,
         "deleted_at": deleted_at,
     })
 }
@@ -712,10 +721,12 @@ pub async fn apply_staged_replacement_tx(
         "WITH inserted AS (
              INSERT INTO entries (
                  file_id, project_id, key, original, translation, state, locked, hidden,
+                 questioned,
                  updated_by
              )
              SELECT $1, $2, plan.key, plan.after_original, plan.after_translation,
-                    plan.after_state, plan.after_locked, plan.after_hidden, $3
+                    plan.after_state, plan.after_locked, plan.after_hidden,
+                    plan.after_questioned, $3
              FROM prts_upload_replacement_plan AS plan
              WHERE plan.kind = 'insert'
              ORDER BY plan.ordinal
@@ -738,11 +749,11 @@ pub async fn apply_staged_replacement_tx(
     // entries already saved/flagged at this version reuse their existing complete snapshot.
     sqlx::query(
         "INSERT INTO entry_versions (
-             entry_id, version, kind, translation, state, original, editor_id,
+             entry_id, version, kind, translation, state, questioned, original, editor_id,
              editor_name, editor_avatar_url
          )
          SELECT entry.id, entry.version, 'baseline', entry.translation,
-                entry.state, entry.original, actor.id, actor.username, actor.avatar_url
+                entry.state, entry.questioned, entry.original, actor.id, actor.username, actor.avatar_url
          FROM entries AS entry
          JOIN prts_upload_replacement_plan AS plan ON plan.entry_id = entry.id
          LEFT JOIN users AS actor ON actor.id = entry.updated_by
@@ -762,6 +773,7 @@ pub async fn apply_staged_replacement_tx(
              state = plan.after_state,
              locked = plan.after_locked,
              hidden = plan.after_hidden,
+             questioned = plan.after_questioned,
              version = entry.version + 1,
              updated_by = $1
          FROM prts_upload_replacement_plan AS plan
@@ -783,6 +795,7 @@ pub async fn apply_staged_replacement_tx(
              state = plan.after_state,
              locked = plan.after_locked,
              hidden = plan.after_hidden,
+             questioned = plan.after_questioned,
              deleted_at = NULL,
              deleted_by = NULL,
              deletion_change_set_id = NULL,
@@ -801,11 +814,11 @@ pub async fn apply_staged_replacement_tx(
     // make the source diff appear under the translator instead of the uploader.
     let source_version_rows = sqlx::query(
         "INSERT INTO entry_versions (
-             entry_id, version, kind, translation, state, original, editor_id,
+             entry_id, version, kind, translation, state, questioned, original, editor_id,
              editor_name, editor_avatar_url
          )
          SELECT entry.id, entry.version, 'source_update', entry.translation,
-                entry.state, entry.original, actor.id, actor.username, actor.avatar_url
+                entry.state, entry.questioned, entry.original, actor.id, actor.username, actor.avatar_url
          FROM entries AS entry
          JOIN prts_upload_replacement_plan AS plan ON plan.entry_id = entry.id
          LEFT JOIN users AS actor ON actor.id = $1
@@ -996,6 +1009,8 @@ pub struct EntryFilter {
     pub file_id: Option<i64>,
     pub task_id: Option<i64>,
     pub states: Vec<String>,
+    /// 独立于 workflow state 的有疑问标签过滤。
+    pub questioned: Option<bool>,
     /// 关键字（P2 用 ILIKE；语义/全文检索见 P4）。
     pub query: Option<String>,
     pub include_hidden: bool,
@@ -1015,7 +1030,6 @@ pub async fn count_project_entries_tx(
 fn normalize_state(s: Option<&str>) -> &'static str {
     match s {
         Some("translated") => "translated",
-        Some("questioned") => "questioned",
         Some("checked") => "checked",
         Some("reviewed") => "reviewed",
         _ => "untranslated",
@@ -1081,11 +1095,11 @@ pub async fn bulk_upsert_tx(
                         // 旧上传路径可能尚无当前版本快照；只在缺失时补基线。
                         sqlx::query(
                             "INSERT INTO entry_versions (
-                                 entry_id, version, kind, translation, state, original, editor_id,
+                                 entry_id, version, kind, translation, state, questioned, original, editor_id,
                                  editor_name, editor_avatar_url
                              )
                              SELECT entry.id, entry.version, 'baseline', entry.translation,
-                                    entry.state, entry.original, actor.id, actor.username,
+                                    entry.state, entry.questioned, entry.original, actor.id, actor.username,
                                     actor.avatar_url
                              FROM entries AS entry
                              LEFT JOIN users AS actor ON actor.id = entry.updated_by
@@ -1112,11 +1126,11 @@ pub async fn bulk_upsert_tx(
                         // 立即记录上传后的新版本，避免后续编辑者被误标为源文变更操作者。
                         sqlx::query(
                             "INSERT INTO entry_versions (
-                                 entry_id, version, kind, translation, state, original, editor_id,
+                                 entry_id, version, kind, translation, state, questioned, original, editor_id,
                                  editor_name, editor_avatar_url
                              )
                              SELECT entry.id, entry.version, 'source_update', entry.translation,
-                                    entry.state, entry.original, actor.id, actor.username,
+                                    entry.state, entry.questioned, entry.original, actor.id, actor.username,
                                     actor.avatar_url
                              FROM entries AS entry
                              LEFT JOIN users AS actor ON actor.id = $2
@@ -1192,6 +1206,10 @@ pub async fn list(
         qb.push_bind(filter.states.clone());
         qb.push(")");
     }
+    if let Some(questioned) = filter.questioned {
+        qb.push(" AND entry.questioned = ");
+        qb.push_bind(questioned);
+    }
     if let Some(q) = filter.query.as_deref().filter(|s| !s.is_empty()) {
         let pat = format!("%{q}%");
         qb.push(" AND (entry.key ILIKE ");
@@ -1245,12 +1263,14 @@ pub async fn get_for_update_tx(
 
 /// 乐观锁更新译文与状态：仅当 `expected_version` 匹配才更新。
 /// 返回 `Ok(None)` 表示版本冲突（已被他人修改）。同时记录一条历史。
+#[allow(clippy::too_many_arguments)]
 pub async fn update_translation(
     pool: &PgPool,
     entry_id: i64,
     expected_version: i64,
     translation: &str,
     state: &str,
+    questioned: Option<bool>,
     kind: &str,
     editor_id: Option<i64>,
 ) -> Result<Option<Entry>, sqlx::Error> {
@@ -1261,6 +1281,7 @@ pub async fn update_translation(
         expected_version,
         translation,
         state,
+        questioned,
         kind,
         editor_id,
     )
@@ -1277,6 +1298,7 @@ pub async fn update_translation_tx(
     expected_version: i64,
     translation: &str,
     state: &str,
+    questioned: Option<bool>,
     kind: &str,
     editor_id: Option<i64>,
 ) -> Result<Option<Entry>, sqlx::Error> {
@@ -1289,13 +1311,15 @@ pub async fn update_translation_tx(
     .fetch_optional(&mut *conn)
     .await?;
     let updated: Option<Entry> = sqlx::query_as::<_, Entry>(
-        "UPDATE entries SET translation = $3, state = $4, version = version + 1, updated_by = $5
+        "UPDATE entries SET translation = $3, state = $4,
+             questioned = COALESCE($5, questioned), version = version + 1, updated_by = $6
          WHERE id = $1 AND version = $2 RETURNING *",
     )
     .bind(entry_id)
     .bind(expected_version)
     .bind(translation)
     .bind(state)
+    .bind(questioned)
     .bind(editor_id)
     .fetch_optional(&mut *conn)
     .await?;
@@ -1303,17 +1327,18 @@ pub async fn update_translation_tx(
     if let Some(ref e) = updated {
         sqlx::query(
             "INSERT INTO entry_versions (
-                 entry_id, version, kind, translation, state, original, editor_id,
+                 entry_id, version, kind, translation, state, questioned, original, editor_id,
                  editor_name, editor_avatar_url
              )
-             SELECT $1, $2, $3, $4, $5, $6, actor.id, actor.username, actor.avatar_url
-             FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $7",
+             SELECT $1, $2, $3, $4, $5, $6, $7, actor.id, actor.username, actor.avatar_url
+             FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $8",
         )
         .bind(e.id)
         .bind(e.version)
         .bind(kind)
         .bind(&e.translation)
         .bind(&e.state)
+        .bind(e.questioned)
         .bind(&e.original)
         .bind(editor_id)
         .execute(&mut *conn)
@@ -1372,16 +1397,17 @@ pub async fn set_flags_tx(
     if let Some(entry) = &updated {
         sqlx::query(
             "INSERT INTO entry_versions (
-                 entry_id, version, kind, translation, state, original, editor_id,
+                 entry_id, version, kind, translation, state, questioned, original, editor_id,
                  editor_name, editor_avatar_url
              )
-             SELECT $1, $2, 'flags', $3, $4, $5, actor.id, actor.username, actor.avatar_url
-             FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $6",
+             SELECT $1, $2, 'flags', $3, $4, $5, $6, actor.id, actor.username, actor.avatar_url
+             FROM (SELECT 1) AS seed LEFT JOIN users AS actor ON actor.id = $7",
         )
         .bind(entry.id)
         .bind(entry.version)
         .bind(&entry.translation)
         .bind(&entry.state)
+        .bind(entry.questioned)
         .bind(&entry.original)
         .bind(actor_id)
         .execute(&mut *conn)

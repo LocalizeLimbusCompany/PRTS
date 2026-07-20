@@ -65,6 +65,7 @@ dotenvy = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 language-tags = "0.3.2"
+regex = "1"
 
 # —— 认证 / 加密（纯 Rust，避免 C / ring 构建）——
 argon2 = { version = "0.5", features = ["std"] }
@@ -72,6 +73,7 @@ hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
+chacha20poly1305 = "0.10"
 # ZOOT/OAuth 的服务端 HTTP 调用。native-tls：Windows 用 SChannel、Linux 用 OpenSSL（见后端 Dockerfile）。
 reqwest = { version = "0.12", features = ["json"] }
 url = "2"

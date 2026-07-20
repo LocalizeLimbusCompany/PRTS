@@ -6,6 +6,27 @@
 
 ---
 
+## PRTS 安装说明
+
+PRTS 默认安装不编译或暴露 OAuth。需要 ZOOT 登录时，先在 `.env` 配置 `PRTS__AUTH__PUBLIC_BASE_URL`、`PRTS__AUTH__ZOOT__CLIENT_ID`、`PRTS__AUTH__ZOOT__CLIENT_SECRET` 及三个 ZOOT 端点，再使用可选 Compose 覆盖：
+
+```bash
+docker compose \
+  -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.oauth.yml \
+  up -d
+```
+
+该组合使用带 `zoot-oauth` feature 的 `prts-backend:oauth-latest`。在 ZOOT 后台登记的 PRTS 回调地址为：
+
+```text
+<PRTS__AUTH__PUBLIC_BASE_URL>/api/auth/oauth/zoot/callback
+```
+
+只运行默认 `deploy/docker-compose.yml` 时，即使填写了 ZOOT 环境变量，也不会注册 OAuth 路由。`oauth-only` 运行时模式也只适用于已启用 `zoot-oauth` 的安装。
+
+---
+
 ## 一、准备工作
 
 1. 联系 ZOOT 管理员，在后台「OAuth 应用管理」中为你的应用创建一个客户端。

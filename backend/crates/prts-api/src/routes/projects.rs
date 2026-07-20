@@ -91,7 +91,10 @@ impl From<&prts_db::models::Project> for ProjectDto {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ProjectDetailDto {
     pub project: ProjectDto,
+    /// 四个互斥工作流状态的数量。
     pub state_counts: HashMap<String, i64>,
+    /// 独立于工作流的有疑问标签数量。
+    pub questioned_count: i64,
     pub entry_count: i64,
     pub capabilities: ProjectCapabilitiesDto,
 }
@@ -287,7 +290,6 @@ pub async fn get_project(
     let mut state_counts = HashMap::new();
     state_counts.insert("untranslated".to_string(), stats.untranslated_count);
     state_counts.insert("translated".to_string(), stats.translated_count);
-    state_counts.insert("questioned".to_string(), stats.questioned_count);
     state_counts.insert("checked".to_string(), stats.checked_count);
     state_counts.insert("reviewed".to_string(), stats.reviewed_count);
     let release_ready = prts_db::foundation::primary_source_release_ready(&state.db)
@@ -298,6 +300,7 @@ pub async fn get_project(
     Ok(Json(ProjectDetailDto {
         project: (&access.project).into(),
         state_counts,
+        questioned_count: stats.questioned_count,
         entry_count: stats.visible_total,
         capabilities,
     }))

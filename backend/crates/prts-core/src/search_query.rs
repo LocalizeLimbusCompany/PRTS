@@ -96,6 +96,9 @@ pub struct StructuredSearchRequest {
     pub scope: SearchScope,
     #[serde(default)]
     pub states: Vec<EntryState>,
+    /// 独立的有疑问标签过滤；`None` 表示不过滤。
+    #[serde(default)]
+    pub questioned: Option<bool>,
     #[serde(default)]
     pub include_hidden: bool,
     #[serde(default)]
@@ -146,6 +149,7 @@ pub struct StructuredSearchPlan {
     pub conditions: Vec<CanonicalSearchCondition>,
     pub scope: SearchScope,
     pub states: Vec<EntryState>,
+    pub questioned: Option<bool>,
     pub include_hidden: bool,
     pub vector: bool,
     pub limit: u16,
@@ -220,9 +224,8 @@ pub fn plan_structured_search(
     states.sort_by_key(|state| match state {
         EntryState::Untranslated => 0,
         EntryState::Translated => 1,
-        EntryState::Questioned => 2,
-        EntryState::Checked => 3,
-        EntryState::Reviewed => 4,
+        EntryState::Checked => 2,
+        EntryState::Reviewed => 3,
     });
     states.dedup();
     let scope = match &request.scope {
@@ -251,6 +254,7 @@ pub fn plan_structured_search(
         conditions,
         scope,
         states,
+        questioned: request.questioned,
         include_hidden: request.include_hidden,
         vector: request.vector,
         limit: request.limit,
@@ -341,6 +345,7 @@ mod tests {
             conditions: Vec::new(),
             scope,
             states: Vec::new(),
+            questioned: None,
             include_hidden: false,
             vector: false,
             after: None,

@@ -142,6 +142,7 @@ pub struct SearchExecutionFilter<'a> {
     pub file_ids: &'a [i64],
     pub restrict_to_file_ids: bool,
     pub states: &'a [String],
+    pub questioned: Option<bool>,
     pub conditions: &'a [CanonicalSearchCondition],
     pub include_hidden: bool,
 }
@@ -158,6 +159,7 @@ pub struct RankedSearchRow {
     pub state: String,
     pub locked: bool,
     pub hidden: bool,
+    pub questioned: bool,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     pub deleted_by: Option<i64>,
     pub deletion_change_set_id: Option<uuid::Uuid>,
@@ -184,6 +186,7 @@ impl RankedSearchRow {
                 state: self.state,
                 locked: self.locked,
                 hidden: self.hidden,
+                questioned: self.questioned,
                 deleted_at: self.deleted_at,
                 deleted_by: self.deleted_by,
                 deletion_change_set_id: self.deletion_change_set_id,
@@ -211,6 +214,9 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, filter: &SearchExecutionFil
         qb.push(" AND entry.state = ANY(")
             .push_bind(filter.states.to_vec())
             .push(")");
+    }
+    if let Some(questioned) = filter.questioned {
+        qb.push(" AND entry.questioned = ").push_bind(questioned);
     }
     qb.push(" AND prts_entry_effective_visible(entry.id, ")
         .push_bind(filter.include_hidden)
@@ -607,7 +613,7 @@ pub async fn suggestions_vector(
          JOIN files f ON f.id = e.file_id
          JOIN memberships m ON m.project_id = p.id AND m.user_id = $2
          WHERE p.target_lang = $3
-           AND e.state IN ('translated','questioned','checked','reviewed')
+           AND e.state IN ('translated','checked','reviewed')
            AND e.translation <> '' AND e.source_text <> ''
            AND e.id <> $4 AND e.embedding IS NOT NULL
            AND e.deleted_at IS NULL AND f.deleted_at IS NULL AND NOT e.hidden
@@ -646,7 +652,7 @@ pub async fn suggestions_trgm(
          JOIN files f ON f.id = e.file_id
          JOIN memberships m ON m.project_id = p.id AND m.user_id = $2
          WHERE p.target_lang = $3
-           AND e.state IN ('translated','questioned','checked','reviewed')
+           AND e.state IN ('translated','checked','reviewed')
            AND e.translation <> '' AND e.source_text <> ''
            AND e.id <> $4
            AND e.deleted_at IS NULL AND f.deleted_at IS NULL AND NOT e.hidden

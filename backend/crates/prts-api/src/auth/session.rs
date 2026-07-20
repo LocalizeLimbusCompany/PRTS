@@ -32,11 +32,15 @@ pub struct RefreshedSession {
 }
 
 /// 令牌签发来源，用于 action-specific 审计。
-#[derive(Debug, Clone, Copy)]
-pub enum IssueKind<'a> {
+#[derive(Debug, Clone)]
+pub enum IssueKind {
     Register,
     Login,
-    OAuth { provider: &'a str, new_user: bool },
+    #[cfg(feature = "zoot-oauth")]
+    OAuth {
+        provider: String,
+        new_user: bool,
+    },
 }
 
 fn session_cache_key(session_handle: &str) -> String {
@@ -51,6 +55,7 @@ fn database_error(error: sqlx::Error) -> Error {
     Error::internal(format!("db error: {error}"))
 }
 
+#[cfg(feature = "zoot-oauth")]
 fn redis_err(error: redis::RedisError) -> Error {
     Error::internal(format!("redis error: {error}"))
 }
@@ -100,11 +105,7 @@ fn build_tokens(
 /// 当前注册、登录和 OAuth route 为了把用户 mutation 纳入同一事务而调用
 /// [`issue_tx`]；保留本入口供无需组合其它 mutation 的签发调用方复用。
 #[allow(dead_code)]
-pub async fn issue(
-    state: &AppState,
-    user_id: i64,
-    kind: IssueKind<'_>,
-) -> Result<IssuedTokens, Error> {
+pub async fn issue(state: &AppState, user_id: i64, kind: IssueKind) -> Result<IssuedTokens, Error> {
     let mut tx = state.db.begin().await.map_err(database_error)?;
     let tokens = issue_tx(&mut tx, state, user_id, kind).await?;
     tx.commit().await.map_err(database_error)?;
@@ -116,7 +117,7 @@ pub async fn issue_tx(
     conn: &mut PgConnection,
     state: &AppState,
     user_id: i64,
-    kind: IssueKind<'_>,
+    kind: IssueKind,
 ) -> Result<IssuedTokens, Error> {
     let session_handle = token::random_token(24);
     let family_handle = token::random_token(24);
@@ -146,7 +147,7 @@ pub async fn issue_tx(
         kind: AuditActorKind::User,
         ip: None,
     };
-    match kind {
+    match &kind {
         IssueKind::Register => {
             prts_db::audit::append_event_tx(
                 &mut *conn,
@@ -172,6 +173,7 @@ pub async fn issue_tx(
             .await
             .map_err(|_| Error::AuditUnavailable)?;
         }
+        #[cfg(feature = "zoot-oauth")]
         IssueKind::OAuth { provider, new_user } => {
             prts_db::audit::append_event_tx(
                 &mut *conn,
@@ -179,16 +181,17 @@ pub async fn issue_tx(
                 AuditEvent::AuthOAuthSucceeded {
                     user_id,
                     provider,
-                    new_user,
+                    new_user: *new_user,
                 },
             )
             .await
             .map_err(|_| Error::AuditUnavailable)?;
         }
     }
-    let method = match kind {
+    let method = match &kind {
         IssueKind::Register | IssueKind::Login => "password",
-        IssueKind::OAuth { provider, .. } => provider,
+        #[cfg(feature = "zoot-oauth")]
+        IssueKind::OAuth { provider, .. } => provider.as_str(),
     };
     prts_db::audit::append_event_tx(
         &mut *conn,
@@ -665,6 +668,7 @@ async fn recover_incomplete_session(db: &prts_db::Db, session_id: i64) -> Result
 }
 
 /// 暂存 OAuth 流程的 `state → code_verifier`（带 TTL，默认 10 分钟）。
+#[cfg(feature = "zoot-oauth")]
 pub async fn store_oauth_state(
     state: &AppState,
     oauth_state: &str,
@@ -683,6 +687,7 @@ pub async fn store_oauth_state(
 }
 
 /// 取回并删除 OAuth 流程暂存的 `code_verifier`（一次性）。
+#[cfg(feature = "zoot-oauth")]
 pub async fn take_oauth_state(
     state: &AppState,
     oauth_state: &str,

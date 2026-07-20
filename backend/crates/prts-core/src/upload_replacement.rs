@@ -66,6 +66,8 @@ pub struct EntryHistorySnapshot {
     pub locked: bool,
     /// 隐藏标志。
     pub hidden: bool,
+    /// 有疑问标签。
+    pub questioned: bool,
     /// 是否应持有 `deleted_at`。
     pub deleted: bool,
 }
@@ -79,6 +81,7 @@ impl From<&ExistingEntry> for EntryHistorySnapshot {
             state: entry.state,
             locked: entry.flags.locked,
             hidden: entry.flags.hidden,
+            questioned: entry.flags.questioned,
             deleted: entry.deleted,
         }
     }
@@ -141,32 +144,36 @@ impl EntryStatsDelta {
     ) -> Self {
         let mut delta = Self::default();
         if let Some(before) = before.filter(|entry| !entry.deleted) {
-            delta.add_entry(before.state, before.hidden, -1);
+            delta.add_entry(before, -1);
         }
         if let Some(after) = after.filter(|entry| !entry.deleted) {
-            delta.add_entry(after.state, after.hidden, 1);
+            delta.add_entry(after, 1);
         }
         delta
     }
 
-    fn add_entry(&mut self, state: EntryState, hidden: bool, amount: i64) {
-        if hidden {
+    fn add_entry(&mut self, entry: &EntryHistorySnapshot, amount: i64) {
+        if entry.hidden {
             self.hidden_total += amount;
-            match state {
+            match entry.state {
                 EntryState::Untranslated => self.hidden_untranslated += amount,
                 EntryState::Translated => self.hidden_translated += amount,
-                EntryState::Questioned => self.hidden_questioned += amount,
                 EntryState::Checked => self.hidden_checked += amount,
                 EntryState::Reviewed => self.hidden_reviewed += amount,
             }
+            if entry.questioned {
+                self.hidden_questioned += amount;
+            }
         } else {
             self.visible_total += amount;
-            match state {
+            match entry.state {
                 EntryState::Untranslated => self.untranslated += amount,
                 EntryState::Translated => self.translated += amount,
-                EntryState::Questioned => self.questioned += amount,
                 EntryState::Checked => self.checked += amount,
                 EntryState::Reviewed => self.reviewed += amount,
+            }
+            if entry.questioned {
+                self.questioned += amount;
             }
         }
     }
@@ -354,6 +361,7 @@ fn plan_insert(uploaded: UploadedEntry) -> PlannedEntryTransition {
         state: uploaded.state.unwrap_or_default(),
         locked: false,
         hidden: false,
+        questioned: false,
         deleted: false,
     };
     changed_transition(
@@ -506,6 +514,7 @@ mod tests {
             EntryFlags {
                 locked: true,
                 hidden: true,
+                questioned: false,
             },
         );
         let transition = plan_transition(ReplacementInput {
@@ -532,6 +541,7 @@ mod tests {
                 EntryFlags {
                     locked: true,
                     hidden: false,
+                    questioned: false,
                 },
             )),
             uploaded: Some(uploaded("Hello again")),
@@ -611,6 +621,7 @@ mod tests {
                 EntryFlags {
                     locked: true,
                     hidden: false,
+                    questioned: false,
                 },
             )),
             uploaded: Some(uploaded("Hello")),
@@ -647,6 +658,7 @@ mod tests {
                 EntryFlags {
                     locked: false,
                     hidden: true,
+                    questioned: false,
                 },
             )),
             uploaded: Some(uploaded("Hello")),
@@ -674,6 +686,7 @@ mod tests {
                 EntryFlags {
                     locked: true,
                     hidden: false,
+                    questioned: false,
                 },
             )),
             uploaded: Some(uploaded("Hello again")),

@@ -12,6 +12,8 @@ name = "prts-api"
 path = "src/main.rs"
 
 [features]
+default = []
+zoot-oauth = ["prts-auth/oauth"]
 # 需要真实 Postgres 的集成测试（CI 起服务后启用）。
 db-tests = []
 
@@ -48,6 +50,9 @@ sha2.workspace = true
 hmac.workspace = true
 base64.workspace = true
 rand.workspace = true
+chacha20poly1305.workspace = true
+reqwest.workspace = true
+url.workspace = true
 
 # OpenAPI / Swagger
 utoipa.workspace = true

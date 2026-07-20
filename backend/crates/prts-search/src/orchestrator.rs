@@ -13,6 +13,7 @@ pub struct OrchestratorInput<'a> {
     pub file_ids: &'a [i64],
     pub restrict_to_file_ids: bool,
     pub states: &'a [String],
+    pub questioned: Option<bool>,
     pub conditions: &'a [CanonicalSearchCondition],
     pub include_hidden: bool,
     pub per_path: i64,
@@ -32,6 +33,7 @@ pub async fn run(
         file_ids: input.file_ids,
         restrict_to_file_ids: input.restrict_to_file_ids,
         states: input.states,
+        questioned: input.questioned,
         conditions: input.conditions,
         include_hidden: input.include_hidden,
     };

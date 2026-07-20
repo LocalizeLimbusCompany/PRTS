@@ -232,6 +232,16 @@ a:hover {
   letter-spacing: 0.04em;
 }
 
+@media (max-width: 599px) {
+  .prts-container {
+    padding: 18px 12px 42px;
+  }
+
+  .q-card.q-pa-lg {
+    padding: 16px;
+  }
+}
+
 .auth-page {
   min-height: calc(100vh - var(--prts-nav-h));
   display: flex;

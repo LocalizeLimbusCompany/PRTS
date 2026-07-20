@@ -98,17 +98,19 @@ pub async fn create_tx(
     translation: &str,
     notes: &str,
     pos_id: Option<i64>,
+    match_mode: &str,
     archived_at: Option<DateTime<Utc>>,
     actor_id: i64,
 ) -> Result<Option<Term>, sqlx::Error> {
     sqlx::query_as::<_, Term>(
         "INSERT INTO terms (
              project_id, source_lang, source_text, translation, notes, pos_id,
-             archived_at, created_by, updated_by
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+             match_mode, archived_at, created_by, updated_by
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
          ON CONFLICT ON CONSTRAINT terms_identity_unique DO UPDATE
          SET translation = EXCLUDED.translation,
              notes = EXCLUDED.notes,
+             match_mode = EXCLUDED.match_mode,
              archived_at = EXCLUDED.archived_at,
              deleted_at = NULL,
              deleted_by = NULL,
@@ -123,6 +125,7 @@ pub async fn create_tx(
     .bind(translation)
     .bind(notes)
     .bind(pos_id)
+    .bind(match_mode)
     .bind(archived_at)
     .bind(actor_id)
     .fetch_optional(conn)
@@ -140,13 +143,15 @@ pub async fn update_tx(
     translation: &str,
     notes: &str,
     pos_id: Option<i64>,
+    match_mode: &str,
     archived_at: Option<DateTime<Utc>>,
     actor_id: i64,
 ) -> Result<Option<Term>, sqlx::Error> {
     sqlx::query_as::<_, Term>(
         "UPDATE terms
          SET source_lang = $3, source_text = $4, translation = $5, notes = $6,
-             pos_id = $7, archived_at = $8, updated_by = $9, version = version + 1
+             pos_id = $7, match_mode = $8, archived_at = $9, updated_by = $10,
+             version = version + 1
          WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL RETURNING *",
     )
     .bind(project_id)
@@ -156,6 +161,7 @@ pub async fn update_tx(
     .bind(translation)
     .bind(notes)
     .bind(pos_id)
+    .bind(match_mode)
     .bind(archived_at)
     .bind(actor_id)
     .fetch_optional(conn)
@@ -181,8 +187,8 @@ pub async fn delete_tx(
     .await
 }
 
-/// 返回当前 primary active terms 中命中给定源文本的候选；不返回其它语言或归档项。
-pub async fn match_current(
+/// 返回当前 primary 的 active term 候选；应用层按 typed matcher 过滤非 exact 模式。
+pub async fn match_candidates(
     pool: &PgPool,
     project_id: i64,
     primary_source_lang: &str,
@@ -192,7 +198,8 @@ pub async fn match_current(
     sqlx::query_as::<_, TermWithPos>(&format!(
         "{TERM_WITH_POS_SELECT}
          WHERE term.project_id = $1 AND term.source_lang = $2
-           AND term.archived_at IS NULL AND position(term.source_text IN $3) > 0
+           AND term.archived_at IS NULL
+           AND (term.match_mode <> 'exact' OR position(term.source_text IN $3) > 0)
            AND term.deleted_at IS NULL
          ORDER BY length(term.source_text) DESC, term.id ASC LIMIT $4"
     ))
@@ -238,9 +245,18 @@ pub async fn existing_import_ids(
     project_id: i64,
     source_langs: &[String],
     source_texts: &[String],
+    match_modes: &[String],
     pos_ids: &[Option<i64>],
 ) -> Result<Vec<Option<i64>>, sqlx::Error> {
-    existing_import_ids_executor(pool, project_id, source_langs, source_texts, pos_ids).await
+    existing_import_ids_executor(
+        pool,
+        project_id,
+        source_langs,
+        source_texts,
+        match_modes,
+        pos_ids,
+    )
+    .await
 }
 
 /// 在 confirm 事务内重新解析 canonical NULL-safe identity。
@@ -249,9 +265,18 @@ pub async fn existing_import_ids_tx(
     project_id: i64,
     source_langs: &[String],
     source_texts: &[String],
+    match_modes: &[String],
     pos_ids: &[Option<i64>],
 ) -> Result<Vec<Option<i64>>, sqlx::Error> {
-    existing_import_ids_executor(conn, project_id, source_langs, source_texts, pos_ids).await
+    existing_import_ids_executor(
+        conn,
+        project_id,
+        source_langs,
+        source_texts,
+        match_modes,
+        pos_ids,
+    )
+    .await
 }
 
 async fn existing_import_ids_executor<'e, E>(
@@ -259,6 +284,7 @@ async fn existing_import_ids_executor<'e, E>(
     project_id: i64,
     source_langs: &[String],
     source_texts: &[String],
+    match_modes: &[String],
     pos_ids: &[Option<i64>],
 ) -> Result<Vec<Option<i64>>, sqlx::Error>
 where
@@ -266,9 +292,9 @@ where
 {
     let rows: Vec<(i64, Option<i64>)> = sqlx::query_as(
         "WITH input AS (
-             SELECT source_lang, source_text, pos_id, ordinality
-             FROM unnest($2::TEXT[], $3::TEXT[], $4::BIGINT[])
-                  WITH ORDINALITY AS value(source_lang, source_text, pos_id, ordinality)
+             SELECT source_lang, source_text, match_mode, pos_id, ordinality
+             FROM unnest($2::TEXT[], $3::TEXT[], $4::TEXT[], $5::BIGINT[])
+                  WITH ORDINALITY AS value(source_lang, source_text, match_mode, pos_id, ordinality)
          )
          SELECT input.ordinality::BIGINT, term.id
          FROM input
@@ -276,12 +302,14 @@ where
            ON term.project_id = $1
           AND term.source_lang = input.source_lang
           AND term.source_text = input.source_text
+          AND term.match_mode = input.match_mode
           AND term.pos_id IS NOT DISTINCT FROM input.pos_id
          ORDER BY input.ordinality",
     )
     .bind(project_id)
     .bind(source_langs)
     .bind(source_texts)
+    .bind(match_modes)
     .bind(pos_ids)
     .fetch_all(executor)
     .await?;
@@ -298,17 +326,19 @@ pub async fn upsert_import_tx(
     translation: &str,
     notes: &str,
     pos_id: Option<i64>,
+    match_mode: &str,
     archived_at: Option<DateTime<Utc>>,
     actor_id: i64,
 ) -> Result<Term, sqlx::Error> {
     sqlx::query_as::<_, Term>(
         "INSERT INTO terms (
              project_id, source_lang, source_text, translation, notes, pos_id,
-             archived_at, created_by, updated_by
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+             match_mode, archived_at, created_by, updated_by
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
          ON CONFLICT ON CONSTRAINT terms_identity_unique DO UPDATE
          SET translation = EXCLUDED.translation,
              notes = EXCLUDED.notes,
+             match_mode = EXCLUDED.match_mode,
              archived_at = EXCLUDED.archived_at,
              deleted_at = NULL,
              deleted_by = NULL,
@@ -322,6 +352,7 @@ pub async fn upsert_import_tx(
     .bind(translation)
     .bind(notes)
     .bind(pos_id)
+    .bind(match_mode)
     .bind(archived_at)
     .bind(actor_id)
     .fetch_one(conn)
@@ -376,12 +407,12 @@ pub async fn append_version_tx(
     sqlx::query_as::<_, TermVersion>(
         "INSERT INTO term_versions (
              project_id, term_id, version, kind, source_lang, source_text,
-             translation, notes, pos_id, archived_at, deleted_at,
+             translation, notes, pos_id, match_mode, archived_at, deleted_at,
              editor_id, editor_name, editor_avatar_url
          )
          SELECT term.project_id, term.id, term.version, $2, term.source_lang,
                 term.source_text, term.translation, term.notes, term.pos_id,
-                term.archived_at, term.deleted_at, actor.id, actor.username,
+                term.match_mode, term.archived_at, term.deleted_at, actor.id, actor.username,
                 actor.avatar_url
          FROM terms AS term JOIN users AS actor ON actor.id = $3
          WHERE term.id = $1
@@ -444,8 +475,9 @@ pub async fn restore_version_tx(
 ) -> Result<Term, sqlx::Error> {
     sqlx::query_as::<_, Term>(
         "UPDATE terms SET source_lang = $3, source_text = $4, translation = $5,
-             notes = $6, pos_id = $7, archived_at = $8, deleted_at = NULL,
-             deleted_by = NULL, updated_by = $9, version = version + 1
+             notes = $6, pos_id = $7, match_mode = $8, archived_at = $9,
+             deleted_at = NULL, deleted_by = NULL, updated_by = $10,
+             version = version + 1
          WHERE project_id = $1 AND id = $2 RETURNING *",
     )
     .bind(project_id)
@@ -455,6 +487,7 @@ pub async fn restore_version_tx(
     .bind(&snapshot.translation)
     .bind(&snapshot.notes)
     .bind(snapshot.pos_id)
+    .bind(&snapshot.match_mode)
     .bind(snapshot.archived_at)
     .bind(actor_id)
     .fetch_one(conn)

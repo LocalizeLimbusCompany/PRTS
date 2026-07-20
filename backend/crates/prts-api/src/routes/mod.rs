@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod admin_settings;
+pub mod ai;
 pub mod auth;
 pub mod entries;
 pub mod entry_comments;
@@ -65,7 +66,7 @@ pub(crate) fn parse_states(s: Option<&str>) -> Vec<String> {
 /// 造成的路由重叠在服务启动时才 panic。
 #[allow(deprecated)]
 fn api_router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::with_openapi(ApiDoc::openapi())
+    let router = OpenApiRouter::with_openapi(ApiDoc::openapi())
         .routes(routes!(health::liveness))
         .routes(routes!(health::readiness))
         .routes(routes!(meta::version))
@@ -76,8 +77,6 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(auth::login))
         .routes(routes!(auth::refresh))
         .routes(routes!(auth::logout))
-        .routes(routes!(auth::oauth_start))
-        .routes(routes!(auth::oauth_callback))
         // 用户自助
         .routes(routes!(users::me, users::update_me))
         .routes(routes!(users::change_password))
@@ -85,6 +84,11 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(users::my_accounts))
         .routes(routes!(users::create_api_key, users::list_api_keys))
         .routes(routes!(users::revoke_api_key))
+        .routes(routes!(
+            ai::get_personal_ai_settings,
+            ai::put_personal_ai_settings,
+            ai::delete_personal_ai_settings
+        ))
         .routes(routes!(leaderboards::platform_leaderboard))
         // 平台管理
         .routes(routes!(admin::get_settings, admin::update_settings))
@@ -117,6 +121,11 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(projects::list_members, projects::add_member))
         .routes(routes!(projects::remove_member))
         .routes(routes!(projects::change_primary_source))
+        .routes(routes!(
+            ai::get_project_ai_settings,
+            ai::put_project_ai_settings,
+            ai::delete_project_ai_settings
+        ))
         .routes(routes!(leaderboards::project_leaderboard))
         .routes(routes!(tasks::list_tasks, tasks::create_task))
         .routes(routes!(
@@ -126,6 +135,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(terms::list_terms, terms::create_term))
         .routes(routes!(terms::match_terms))
+        .routes(routes!(terms::test_term_pattern))
         .routes(routes!(terms::list_term_versions))
         .routes(routes!(terms::restore_term_version))
         .routes(routes!(terms::preview_term_import))
@@ -172,6 +182,7 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(entries::list_entries))
         .routes(routes!(entries::count_entries))
         .routes(routes!(entries::get_entry, entries::update_entry))
+        .routes(routes!(ai::explain_entry))
         .routes(routes!(entries::set_entry_flags))
         .routes(routes!(entries::entry_history))
         .routes(routes!(
@@ -199,7 +210,12 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(messages::list_threads, messages::send))
         .routes(routes!(messages::unread_count))
         .routes(routes!(messages::conversation))
-        .routes(routes!(messages::mark_read))
+        .routes(routes!(messages::mark_read));
+    #[cfg(feature = "zoot-oauth")]
+    let router = router
+        .routes(routes!(auth::oauth_start))
+        .routes(routes!(auth::oauth_callback));
+    router
 }
 
 /// 装配完整应用路由（含状态与中间件）。
@@ -583,12 +599,19 @@ mod tests {
     fn audited_mutations_document_audit_unavailable() {
         let (_, api) = api_router().split_for_parts();
         let document = serde_json::to_value(api).unwrap();
+        let assert_audited = |path: &str, method: &str| {
+            assert_eq!(
+                document["paths"][path][method]["responses"]["503"]["content"]["application/json"]
+                    ["schema"]["$ref"],
+                "#/components/schemas/ErrorResponse",
+                "{method} {path} 应公开 AUDIT_UNAVAILABLE 的稳定错误 schema"
+            );
+        };
         for (path, method) in [
             ("/auth/register", "post"),
             ("/auth/login", "post"),
             ("/auth/refresh", "post"),
             ("/auth/logout", "post"),
-            ("/auth/oauth/{provider}/callback", "get"),
             ("/me", "put"),
             ("/me/password", "put"),
             ("/me/api-keys", "post"),
@@ -643,12 +666,9 @@ mod tests {
             ("/messages/{user_id}/read", "post"),
             ("/jobs/{id}/retry", "post"),
         ] {
-            assert_eq!(
-                document["paths"][path][method]["responses"]["503"]["content"]["application/json"]
-                    ["schema"]["$ref"],
-                "#/components/schemas/ErrorResponse",
-                "{method} {path} 应公开 AUDIT_UNAVAILABLE 的稳定错误 schema"
-            );
+            assert_audited(path, method);
         }
+        #[cfg(feature = "zoot-oauth")]
+        assert_audited("/auth/oauth/{provider}/callback", "get");
     }
 }

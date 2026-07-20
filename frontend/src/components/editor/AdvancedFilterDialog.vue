@@ -7,6 +7,7 @@ export interface AdvancedFilterDraft {
   query: string
   conditions: SearchCondition[]
   states: EntryState[]
+  questioned: boolean
   includeHidden: boolean
   vector: boolean
   scopeType: AdvancedScopeType
@@ -50,6 +51,7 @@ export function buildAdvancedSearchRequest(draft: AdvancedFilterDraft): Structur
     conditions: draft.conditions.map((condition) => ({ ...condition })),
     scope: scopeFromDraft(draft),
     states: [...draft.states],
+    ...(draft.questioned ? { questioned: true } : {}),
     include_hidden: draft.includeHidden,
     vector: draft.vector,
     limit: 50,
@@ -85,6 +87,7 @@ const draft = reactive<AdvancedFilterDraft>({
   query: '',
   conditions: [],
   states: [],
+  questioned: false,
   includeHidden: false,
   vector: false,
   scopeType: 'all',
@@ -251,6 +254,7 @@ function submit() {
           dense
           :label="t('editor.stateFilter')"
         />
+        <q-toggle v-model="draft.questioned" :label="t('project.states.questioned')" />
         <div class="row q-gutter-md">
           <q-toggle
             v-model="draft.includeHidden"

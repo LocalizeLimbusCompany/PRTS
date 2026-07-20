@@ -250,6 +250,24 @@ pub async fn update_entry_diff_mode_tx(
         .await
 }
 
+/// 更新跨设备编辑器偏好；AI 密钥本身由独立设置表管理。
+pub async fn update_editor_preferences_tx(
+    conn: &mut PgConnection,
+    user_id: i64,
+    preview_translation_diff: bool,
+    ai_source_preference: &str,
+) -> Result<User, sqlx::Error> {
+    sqlx::query_as::<_, User>(
+        "UPDATE users SET preview_translation_diff = $2, ai_source_preference = $3
+         WHERE id = $1 RETURNING *",
+    )
+    .bind(user_id)
+    .bind(preview_translation_diff)
+    .bind(ai_source_preference)
+    .fetch_one(conn)
+    .await
+}
+
 /// 设置 / 清除平台角色（`None` 表示降为普通用户）。
 pub async fn set_platform_role(
     pool: &PgPool,

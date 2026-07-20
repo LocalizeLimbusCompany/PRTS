@@ -1,0 +1,12 @@
+services:
+  migrate:
+    build:
+      args:
+        PRTS_BACKEND_FEATURES: zoot-oauth
+    image: ghcr.io/localizelimbuscompany/prts-backend:oauth-latest
+
+  backend:
+    build:
+      args:
+        PRTS_BACKEND_FEATURES: zoot-oauth
+    image: ghcr.io/localizelimbuscompany/prts-backend:oauth-latest

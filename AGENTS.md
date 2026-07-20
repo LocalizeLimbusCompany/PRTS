@@ -33,15 +33,15 @@ deploy/           # docker-compose、Dockerfile、nginx
 
 ## 4. 关键设计约束（务必遵守）
 
-- **词条状态**：工作流枚举 `未翻译→已翻译→有疑问/已检查→已审核`；`locked`、`hidden` 是**正交标志位**，独立于工作流。`locked=true` 时**仅项目「管理」「拥有者」可改**。
-- **权限**：权限节点 RBAC。平台：总管理员/管理员/维护者；项目：拥有者/管理/校对/翻译。翻译只能设 `未翻译/已翻译/有疑问`。
+- **词条状态**：工作流枚举 `未翻译→已翻译→已检查→已审核`；`questioned`（有疑问标签）、`locked`、`hidden` 是**正交标志位**，独立于工作流。`locked=true` 时**仅项目「管理」「拥有者」可改**。
+- **权限**：权限节点 RBAC。平台：总管理员/管理员/维护者；项目：拥有者/管理/校对/翻译。翻译只能设 `未翻译/已翻译`，并可独立增删有疑问标签。
 - **CP**：`权重 × Levenshtein(prev, new)`，翻译/编辑 1、校对 0.3，**不加任何抗刷分逻辑**。
 - **语言码**：BCP-47（`zh-Hans`/`zh-Hant`/`en`/`ja`/`ko`…）。多源语言 → 单目标语言。
 - **搜索**：FTS + `pg_trgm` + `pgvector`，RRF 融合；向量化经 `EmbeddingProvider`（默认 Qwen），不可用时降级。
 - **性能**：单项目可达 20w+ 词条 —— 列表用**键集分页**（禁用大 `OFFSET`），建好 GIN/向量索引，批量上传分批事务。
 - **并发**：编辑器实时协作（WebSocket）；保存做**乐观锁版本校验**。
-- **安全**：密钥仅经环境变量，**绝不下发前端**；sqlx 参数化；全程 HTTPS；最小权限；所有操作写 `audit_log`。
-- **认证**：插件化（Trait + 编译期注册）；ZOOT 是 OAuth2 provider 的一个实例；支持 `password+oauth` / `oauth-only`。
+- **安全**：平台基础设施密钥仅经环境变量；用户/项目 AI API Key 只以 `PRTS__AI__MASTER_KEY` 加密后入库，**绝不下发明文到前端**；sqlx 参数化；全程 HTTPS；最小权限；所有操作写 `audit_log`。
+- **认证**：插件化（Trait + 编译期注册）；默认构建不含 OAuth，启用 `zoot-oauth` 后 ZOOT 作为 OAuth2 provider 实例并支持 `password+oauth` / `oauth-only`。
 
 ## 5. 工作约定
 

@@ -77,7 +77,11 @@ onMounted(async () => {
 
     <q-card flat bordered class="project-info__progress">
       <q-card-section>
-        <ProjectProgress :state-counts="detail.state_counts" :total="detail.entry_count" />
+        <ProjectProgress
+          :state-counts="detail.state_counts"
+          :questioned-count="detail.questioned_count"
+          :total="detail.entry_count"
+        />
       </q-card-section>
     </q-card>
 

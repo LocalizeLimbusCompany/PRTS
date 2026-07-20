@@ -4,12 +4,13 @@
 | --- | --- |
 | 状态 | 已批准，A–F 工作流的生命周期、真值表与冲突裁决唯一规范源 |
 | 日期 | 2026-07-10 |
+| 最新修订 | 2026-07-20：四状态 + questioned 标签、AI 解释、术语模式与可选 OAuth 安装 |
 | 范围 | 项目工作区、上传与历史、任务、术语、编辑器与搜索、平台管理与删除 |
 | 实施计划 | [`../plans/2026-07-10-project-workspace-overhaul.md`](../plans/2026-07-10-project-workspace-overhaul.md) |
 
 ## 1. 优先级与适用方式
 
-本文件记录作者截至 2026-07-10 的直接决定。发生冲突时，按以下顺序解释：
+本文件记录作者截至 2026-07-20 的直接决定。发生冲突时，按以下顺序解释：
 
 1. 作者最新的直接决定与本文件；
 2. 经本轮同步后的 [`plan/26-06-28-init_system.md`](../../../plan/26-06-28-init_system.md) 与 [`docs/architecture.md`](../../architecture.md)；
@@ -35,6 +36,7 @@
 - 升级迁移把 `owner_id` 之外的 `owner` 成员关系降为 `manager`，并写审计与通知；同时补齐唯一拥有者的成员关系。
 - 拥有者只能授予 `manager`、`reviewer`、`translator`；管理只能授予 `reviewer`、`translator`。任何人都不能直接授予 `owner`，本轮不提供拥有者转让。
 - 术语、任务、历史与隐藏数据的能力按各自章节执行；所有服务端写端点再次校验能力，不能依赖前端隐藏控件。
+- 翻译可设置 `untranslated/translated` 并独立增删 `questioned` 标签；`checked/reviewed` 仍要求 review capability。`questioned` 不是工作流状态。
 
 ### 2.3 审计安全与失败语义
 
@@ -44,6 +46,7 @@
 - `0007` 建立 DB-authoritative auth session 状态机和 durable intent/outbox。表只保存 refresh hash、opaque session/family handle、状态 `pending|active|rotating|revoked|expired`、expiry、前后继与 intent lease/retry；任何 DB/job/audit payload 都不保存 raw token。refresh/rotation/revoke 每次先查并锁 DB authoritative state，Redis 只作 cache/pending material；DB 非 active 时，即使 Redis 残留也不可认证。
 - issuance/rotation 的 active/revoked 状态转换与 allowlisted audit 同一 DB 事务提交，提交后才返回 raw token；Redis populate/invalidate 失败由 outbox 重放，不回滚 DB authority。logout/revoke/改密撤销在 DB commit 后立即失效，Redis DEL 失败不恢复有效性。crash worker 清理未完成 intent、重放 cache 操作；stale Redis token 始终受 DB state 否决。
 - 失败认证尝试同步写脱敏事件；若该审计也无法持久化，返回通用 503，而不是返回一个未审计的认证成功或失败结论。不得以易丢失的旁路日志、异步队列或“稍后补写”替代。
+- 默认安装不编译 OAuth；只有 `zoot-oauth` 构建注册 ZOOT 路由并允许 `password+oauth/oauth-only`。用户/项目 AI API Key 是 API key 禁止写审计的例外持久化场景：只允许以 `PRTS__AI__MASTER_KEY` 加密后的密文入专用设置表，明文、主密钥与 provider 响应正文均不得进入审计或前端响应。
 
 ### 2.4 持久化任务通则
 
@@ -91,7 +94,7 @@ effective_visible(entries, files, include_hidden) =
 
 ### 3.3 物化统计
 
-- `0008_workspace_meta_stats.sql` 以 `effective_visible(..., false)` 回填 `file_stats`、`project_stats` 和后续任务统计所需基础；项目与文件的五状态计数及可见总数由写事务集合增量维护，正常读取不实时 `COUNT(*)`/全项目 `GROUP BY`。
+- `0008_workspace_meta_stats.sql` 先建立旧五状态统计基础；`0017_editor_ai_terms_mobile.sql` 把 `questioned` 迁为正交标签。最终项目与文件物化四个互斥工作流状态（untranslated/translated/checked/reviewed）及可见总数，`questioned_count` 是可与任意状态重叠的独立计数；写事务增量维护，正常读取不实时 `COUNT(*)`/全项目 `GROUP BY`。
 - `file_stats` 保留文件内 active、非 hidden entry 的物化计数。删除文件/文件夹时，从 `project_stats` 与受影响 task exposure 中减去 descendant files 的物化统计，不修改 entry tombstone；恢复时只为实际恢复的 files 加回。
 - reconciliation/verify 直接按规范 `effective_visible` 谓词重算并与物化值比较。文件夹 UI 聚合后代 active files；空文件夹最近时间使用自身创建时间。
 - 可见词条总数为零时，项目、文件和文件夹进度显示“—”。任务零基线规则见 §6。
@@ -185,12 +188,12 @@ effective_visible(entries, files, include_hidden) =
 
 ## 7. 工作流 D：术语
 
-- 项目术语保存真实 `source_lang`、`source_text`、目标译文、备注、POS 和归档状态，不能假定源语言是英语。
+- 项目术语保存真实 `source_lang`、`source_text`、目标译文、备注、POS、归档状态和 `match_mode=exact|placeholder|regex`，不能假定源语言是英语。
 - 任意合法 canonical BCP-47 source_lang 的术语都可存，不要求属于项目 source_langs；但 active set 严格为当前 primary 的未归档术语。非主源语言 term 只能 archived，请求 active 必须稳定失败而非静默改写。主源变化时旧主源术语归档，新主源已有归档术语恢复 active；legacy old-primary 保持 archived/migration-ready，可人工迁移。
-- 混合导出显式输出 `source_lang` 与 `archived`。POS 保存 zh-CN/en 名称并回退；只有平台管理员管理 POS。
-- 导入先 preview，再按 `(project_id, source_lang, source_text, pos_id)` 和 `NULLS NOT DISTINCT` upsert。`source_lang` 先执行 §2.5 规范化；未知 POS 置 NULL 并警告。
+- 混合导出显式输出 `source_lang`、`match_mode` 与 `archived`。POS 保存 zh-CN/en 名称并回退；迁移提供常用双语预设，只有平台管理员管理 POS。
+- 导入先 preview，再按 `(project_id, source_lang, source_text, pos_id, match_mode)` 和 `NULLS NOT DISTINCT` upsert。`source_lang` 先执行 §2.5 规范化；未知 POS 置 NULL 并警告；legacy 文件缺 `match_mode` 时稳定按 `exact`。
 - preview token 至少 128-bit entropy、TTL 15 分钟，绑定 `actor_id + project_id + import_kind + canonical content digest`，在 confirm 时原子一次性消费。confirm 必须重新检查当前权限；actor/project/kind/digest 不匹配、过期、已使用或权限已撤销均拒绝且不写业务表。
-- owner/manager/reviewer 管理术语；编辑器只匹配 active set，建议点击只改本地 draft。
+- owner/manager/reviewer 管理术语；编辑器只匹配 active set，建议点击只改本地 draft。`placeholder` 的每个 `[]` 仅在原文侧代表任意文本；`regex` 同样只匹配原文。两者都不做译文捕获替换，并必须提供合法性校验与样例测试。
 
 ## 8. 工作流 E：编辑器、结构化搜索与 context 清理
 
@@ -198,6 +201,9 @@ effective_visible(entries, files, include_hidden) =
 
 - 从数据库、上传 DTO、API、前端类型、界面、历史描述和权威文档中删除词条 `context`；兼容期上传体若仍带字段则忽略。
 - `0013_editor_search.sql` 必须完成三件事：删除 entries.context；创建/更新 POST 搜索所需 metadata、indexes 和 functions；从既有 `file_change_items.before/after` JSONB entry payload 中 scrub `context` key。迁移前已有历史也不得残留该 key。
+- `0017_editor_ai_terms_mobile.sql` 把工作流固定为 `untranslated/translated/checked/reviewed`，新增独立 `questioned` 标签并迁移旧 questioned 行；状态统计与进度条只按四状态互斥分段，有疑问数量单列。原文/译文限高内部滚动，移动端采用可用的单列/抽屉布局。
+- 用户级保存差异预览跨设备保存、默认关闭；仅在替换非空旧译文时弹出。纯状态/标签历史显示明确旧值→新值且隐藏内部 `vN`。
+- AI 只在用户显式点击时分析当前 primary source；个人与项目 owner 可保存 OpenAI-compatible Base URL/API Key/Model，用户选择 `auto/personal/project`。显式 personal/project 缺失配置不得静默回退；项目 AI 只供实际项目成员使用。响应包含整体含义、去重 tokens、逐词语境义、POS 和语法。
 - 右下恰好保留状态下拉 + 一个智能按钮。脏且未翻译→翻译；其它脏状态→保存且状态不变；clean translated/checked 且有 review capability→检查/审核；presence conflict 且有 force capability→强制保存，但仍校验版本；其它禁用。
 - 公开游客只读，不建立可写 presence，不显示 mutation/协作动作。
 

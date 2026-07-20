@@ -2,6 +2,7 @@ import { http } from './http'
 import type { TerminologyDocumentFormat } from '@/lib/terminology'
 
 export type TermScope = 'current' | 'archived' | 'mixed' | 'deleted'
+export type TermMatchMode = 'exact' | 'placeholder' | 'regex'
 
 export interface TermDto {
   id: number
@@ -11,6 +12,7 @@ export interface TermDto {
   translation: string
   notes: string
   pos_id: number | null
+  match_mode: TermMatchMode
   pos_name_zh_cn: string | null
   pos_name_en: string | null
   archived: boolean
@@ -37,6 +39,7 @@ export interface TermVersionDto {
   translation: string
   notes: string
   pos_id: number | null
+  match_mode: TermMatchMode
   archived: boolean
   deleted: boolean
   editor_id: number | null
@@ -57,6 +60,7 @@ export interface TermWriteRequest {
   translation: string
   notes: string
   pos_id: number | null
+  match_mode: TermMatchMode
   archived: boolean
 }
 
@@ -85,6 +89,7 @@ export interface TermPreviewRowDto {
   row: number
   source_lang: string
   source_text: string
+  match_mode: TermMatchMode
   translation: string
   pos: string | null
   notes: string
@@ -124,6 +129,17 @@ export const termsApi = {
         source_text: sourceText,
         limit,
       })
+      .then((response) => response.data)
+  },
+  testPattern(
+    projectId: number,
+    body: { match_mode: TermMatchMode; source_text: string; sample_text: string },
+  ) {
+    return http
+      .post<{ valid: boolean; matched: boolean; error_code: string | null }>(
+        `/projects/${projectId}/terms/pattern-test`,
+        body,
+      )
       .then((response) => response.data)
   },
   list(

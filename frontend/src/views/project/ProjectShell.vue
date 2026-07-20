@@ -249,4 +249,19 @@ watch(() => props.id, load)
     border-bottom: 0;
   }
 }
+
+@media (max-width: 599px) {
+  .project-shell__masthead {
+    flex-direction: column;
+  }
+
+  .project-shell__masthead > .q-btn {
+    width: 100%;
+  }
+
+  .project-shell__layout {
+    gap: 16px;
+    padding-top: 16px;
+  }
+}
 </style>

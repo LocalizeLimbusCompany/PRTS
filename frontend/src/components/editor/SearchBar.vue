@@ -20,6 +20,7 @@ export function quickSearchRequest(
       ? { type: 'current_file', file_id: currentFileId as number }
       : { type: 'all' },
     states: [],
+    questioned: undefined,
     include_hidden: false,
     vector: false,
     limit: 50,

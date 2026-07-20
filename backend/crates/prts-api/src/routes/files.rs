@@ -41,6 +41,8 @@ pub struct FileDto {
     pub path: String,
     pub entry_count: i32,
     pub state_counts: std::collections::HashMap<String, i64>,
+    /// 独立于工作流的有疑问标签数量。
+    pub questioned_count: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -138,7 +140,6 @@ pub async fn get_tree(
                 if let Some(stats) = stats {
                     state_counts.insert("untranslated".to_string(), stats.untranslated_count);
                     state_counts.insert("translated".to_string(), stats.translated_count);
-                    state_counts.insert("questioned".to_string(), stats.questioned_count);
                     state_counts.insert("checked".to_string(), stats.checked_count);
                     state_counts.insert("reviewed".to_string(), stats.reviewed_count);
                 }
@@ -149,6 +150,7 @@ pub async fn get_tree(
                     path: f.path,
                     entry_count: stats.map_or(0, |value| value.visible_total as i32),
                     state_counts,
+                    questioned_count: stats.map_or(0, |value| value.questioned_count),
                     created_at: f.created_at.to_rfc3339(),
                     updated_at: f.updated_at.to_rfc3339(),
                 }

@@ -23,6 +23,10 @@ pub struct UserDto {
     pub translation_langs: Vec<String>,
     /// 词条历史差分模式：character_inline|word_inline|side_by_side。
     pub entry_diff_mode: String,
+    /// 保存非空既有译文的正文变更前是否预览差异。
+    pub preview_translation_diff: bool,
+    /// AI 来源偏好：auto|personal|project。
+    pub ai_source_preference: String,
     /// Exact contribution tenths; one stored unit equals 0.1 CP.
     pub cp_tenths: i64,
     /// 平台角色（super_admin|admin|maintainer），普通用户为 null。
@@ -45,6 +49,8 @@ impl From<&User> for UserDto {
             description: u.description.clone(),
             translation_langs: u.translation_langs.clone(),
             entry_diff_mode: u.entry_diff_mode.clone(),
+            preview_translation_diff: u.preview_translation_diff,
+            ai_source_preference: u.ai_source_preference.clone(),
             cp_tenths: u.cp_tenths,
             platform_role: u.platform_role.clone(),
             platform_capabilities: capabilities::PlatformCapabilitiesDto::from_role(

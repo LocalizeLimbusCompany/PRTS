@@ -27,16 +27,17 @@ pub async fn files(pool: &PgPool, project_id: i64) -> Result<Vec<FileStats>, sql
 
 /// 从物化统计读取编辑器浏览范围的精确可见词条总数。
 ///
-/// 状态过滤只对五个固定计数列求和；文件/任务范围均不扫描 entries 热表。
+/// 工作流状态或 questioned overlay 只读取固定物化列；文件/任务范围均不扫描 entries 热表。
 pub async fn editor_entry_total(
     pool: &PgPool,
     project_id: i64,
     file_id: Option<i64>,
     task_id: Option<i64>,
     states: &[String],
+    questioned: Option<bool>,
     include_hidden: bool,
 ) -> Result<i64, sqlx::Error> {
-    let expression = editor_stats_expression(states, include_hidden);
+    let expression = editor_stats_expression(states, questioned, include_hidden);
     if let Some(file_id) = file_id {
         return sqlx::query_scalar(&format!(
             "SELECT COALESCE({expression}, 0) FROM file_stats AS stats
@@ -81,12 +82,23 @@ pub async fn editor_entry_total(
 }
 
 /// 仅从固定状态白名单组合物化列表达式，不接受任意 SQL 片段。
-fn editor_stats_expression(states: &[String], include_hidden: bool) -> String {
+fn editor_stats_expression(
+    states: &[String],
+    questioned: Option<bool>,
+    include_hidden: bool,
+) -> String {
     let columns = if states.is_empty() {
-        if include_hidden {
-            "stats.visible_total + stats.hidden_total".to_string()
-        } else {
-            "stats.visible_total".to_string()
+        match (questioned, include_hidden) {
+            (None, false) => "stats.visible_total".to_string(),
+            (None, true) => "stats.visible_total + stats.hidden_total".to_string(),
+            (Some(true), false) => "stats.questioned_count".to_string(),
+            (Some(true), true) => {
+                "stats.questioned_count + stats.hidden_questioned_count".to_string()
+            }
+            (Some(false), false) => "stats.visible_total - stats.questioned_count".to_string(),
+            (Some(false), true) => "(stats.visible_total - stats.questioned_count) + \
+                (stats.hidden_total - stats.hidden_questioned_count)"
+                .to_string(),
         }
     } else {
         states
@@ -97,7 +109,6 @@ fn editor_stats_expression(states: &[String], include_hidden: bool) -> String {
                     "stats.hidden_untranslated_count",
                 )),
                 "translated" => Some(("stats.translated_count", "stats.hidden_translated_count")),
-                "questioned" => Some(("stats.questioned_count", "stats.hidden_questioned_count")),
                 "checked" => Some(("stats.checked_count", "stats.hidden_checked_count")),
                 "reviewed" => Some(("stats.reviewed_count", "stats.hidden_reviewed_count")),
                 _ => None,
@@ -147,7 +158,7 @@ pub async fn rebuild_project_tx(
                 ),
                 count(entry.id) FILTER (
                     WHERE entry.deleted_at IS NULL AND NOT entry.hidden
-                      AND entry.state = 'questioned'
+                      AND entry.questioned
                 ),
                 count(entry.id) FILTER (
                     WHERE entry.deleted_at IS NULL AND NOT entry.hidden
@@ -170,7 +181,7 @@ pub async fn rebuild_project_tx(
                 ),
                 count(entry.id) FILTER (
                     WHERE entry.deleted_at IS NULL AND entry.hidden
-                      AND entry.state = 'questioned'
+                      AND entry.questioned
                 ),
                 count(entry.id) FILTER (
                     WHERE entry.deleted_at IS NULL AND entry.hidden
@@ -261,17 +272,31 @@ mod tests {
 
     #[test]
     fn editor_total_expression_uses_only_materialized_visible_and_hidden_columns() {
-        assert_eq!(editor_stats_expression(&[], false), "stats.visible_total");
         assert_eq!(
-            editor_stats_expression(&[], true),
+            editor_stats_expression(&[], None, false),
+            "stats.visible_total"
+        );
+        assert_eq!(
+            editor_stats_expression(&[], None, true),
             "stats.visible_total + stats.hidden_total"
         );
         assert_eq!(
-            editor_stats_expression(&["translated".to_string(), "questioned".to_string()], true),
-            "(stats.translated_count + stats.hidden_translated_count) + \
-(stats.questioned_count + stats.hidden_questioned_count)"
+            editor_stats_expression(&[], Some(true), true),
+            "stats.questioned_count + stats.hidden_questioned_count"
         );
-        assert_eq!(editor_stats_expression(&["invalid".to_string()], true), "0");
+        assert_eq!(
+            editor_stats_expression(
+                &["translated".to_string(), "checked".to_string()],
+                None,
+                true
+            ),
+            "(stats.translated_count + stats.hidden_translated_count) + \
+(stats.checked_count + stats.hidden_checked_count)"
+        );
+        assert_eq!(
+            editor_stats_expression(&["invalid".to_string()], None, true),
+            "0"
+        );
     }
 
     #[test]

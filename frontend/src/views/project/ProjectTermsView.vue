@@ -9,6 +9,7 @@ import {
   termsApi,
   type PosDto,
   type TermDto,
+  type TermMatchMode,
   type TermScope,
   type TermVersionDto,
   type TermWriteRequest,
@@ -37,6 +38,10 @@ const historyTerm = ref<TermDto | null>(null)
 const termVersions = ref<TermVersionDto[]>([])
 const canRestoreVersion = ref(false)
 const loadingVersions = ref(false)
+const patternSample = ref('')
+const patternResult = ref<{ valid: boolean; matched: boolean; error_code: string | null } | null>(
+  null,
+)
 const form = ref<TermWriteRequest>(emptyForm())
 let loadRequest = 0
 
@@ -54,6 +59,12 @@ const posOptions = computed(() =>
     value: preset.id,
   })),
 )
+const matchModeOptions = computed(() =>
+  (['exact', 'placeholder', 'regex'] as TermMatchMode[]).map((value) => ({
+    value,
+    label: t(`terminology.matchModes.${value}`),
+  })),
+)
 
 function emptyForm(): TermWriteRequest {
   return {
@@ -62,6 +73,7 @@ function emptyForm(): TermWriteRequest {
     translation: '',
     notes: '',
     pos_id: null,
+    match_mode: 'exact',
     archived: false,
   }
 }
@@ -177,8 +189,17 @@ function termRequest(term: TermDto): TermWriteRequest {
     translation: term.translation,
     notes: term.notes,
     pos_id: term.pos_id,
+    match_mode: term.match_mode,
     archived: term.archived,
   }
+}
+
+async function testPattern() {
+  patternResult.value = await termsApi.testPattern(projectId.value, {
+    match_mode: form.value.match_mode,
+    source_text: form.value.source_text.trim(),
+    sample_text: patternSample.value,
+  })
 }
 
 function termPosName(term: TermDto): string {
@@ -314,6 +335,7 @@ watch(scope, () => load(true))
           <tr>
             <th>{{ $t('terminology.fields.sourceLang') }}</th>
             <th>{{ $t('terminology.fields.sourceText') }}</th>
+            <th>{{ $t('terminology.fields.matchMode') }}</th>
             <th>{{ $t('terminology.fields.translation') }}</th>
             <th>{{ $t('terminology.fields.pos') }}</th>
             <th>{{ $t('terminology.fields.notes') }}</th>
@@ -325,6 +347,7 @@ watch(scope, () => load(true))
           <tr v-for="term in terms" :key="term.id">
             <td class="prts-mono">{{ term.source_lang }}</td>
             <td class="terms-view__content">{{ term.source_text }}</td>
+            <td>{{ $t(`terminology.matchModes.${term.match_mode}`) }}</td>
             <td class="terms-view__content">{{ term.translation }}</td>
             <td>{{ termPosName(term) || '—' }}</td>
             <td class="terms-view__notes">{{ term.notes || '—' }}</td>
@@ -418,6 +441,37 @@ watch(scope, () => load(true))
             :label="$t('terminology.fields.sourceLang')"
             :hint="$t('terminology.sourceLangHint')"
           />
+          <q-select
+            v-model="form.match_mode"
+            outlined
+            dense
+            emit-value
+            map-options
+            :options="matchModeOptions"
+            :label="$t('terminology.fields.matchMode')"
+            :hint="$t('terminology.matchModeHint')"
+          />
+          <div v-if="form.match_mode !== 'exact'" class="terms-view__pattern-test">
+            <q-input
+              v-model="patternSample"
+              outlined
+              autogrow
+              :label="$t('terminology.patternSample')"
+            />
+            <q-btn outline no-caps :label="$t('terminology.testPattern')" @click="testPattern" />
+            <q-badge
+              v-if="patternResult"
+              outline
+              :color="patternResult.valid && patternResult.matched ? 'positive' : 'warning'"
+              :label="
+                !patternResult.valid
+                  ? patternResult.error_code || $t('terminology.patternInvalid')
+                  : patternResult.matched
+                    ? $t('terminology.patternMatched')
+                    : $t('terminology.patternNotMatched')
+              "
+            />
+          </div>
           <q-input
             v-model="form.source_text"
             outlined
@@ -496,6 +550,7 @@ watch(scope, () => load(true))
               ><q-space /><q-badge outline :label="`v${version.version} · ${version.kind}`" />
             </header>
             <div>{{ version.source_text }} → {{ version.translation }}</div>
+            <div class="prts-dim">{{ $t(`terminology.matchModes.${version.match_mode}`) }}</div>
             <div v-if="version.notes" class="prts-dim">{{ version.notes }}</div>
             <q-btn
               v-if="canRestoreVersion"
@@ -614,6 +669,10 @@ watch(scope, () => load(true))
 .terms-view__form {
   display: grid;
   gap: 12px;
+}
+.terms-view__pattern-test {
+  display: grid;
+  gap: 8px;
 }
 
 @media (max-width: 760px) {

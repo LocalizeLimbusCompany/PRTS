@@ -13,5 +13,6 @@ serde_json.workspace = true
 language-tags.workspace = true
 uuid.workspace = true
 chrono.workspace = true
+regex.workspace = true
 
 [dev-dependencies]

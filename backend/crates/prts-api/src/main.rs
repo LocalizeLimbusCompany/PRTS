@@ -70,7 +70,9 @@ async fn main() -> anyhow::Result<()> {
     // bootstrap：把配置的用户名提升为 super_admin（若已存在且尚无平台角色）。
     bootstrap_admin(&db, &settings).await;
 
+    #[cfg(feature = "zoot-oauth")]
     let zoot = build_zoot_provider(&settings);
+    #[cfg(feature = "zoot-oauth")]
     if zoot.is_some() {
         tracing::info!("ZOOT OAuth provider enabled");
     }
@@ -154,6 +156,7 @@ async fn main() -> anyhow::Result<()> {
         cache,
         settings: Arc::new(settings),
         media,
+        #[cfg(feature = "zoot-oauth")]
         zoot: Arc::new(zoot),
         realtime,
         embedder,
@@ -308,6 +311,7 @@ async fn run_migration_command(settings: &Settings) -> anyhow::Result<()> {
 }
 
 /// 依配置构造 ZOOT OAuth provider（未配置则 None）。
+#[cfg(feature = "zoot-oauth")]
 fn build_zoot_provider(settings: &Settings) -> Option<prts_auth::OAuth2Provider> {
     let z = &settings.auth.zoot;
     if !z.is_configured() {

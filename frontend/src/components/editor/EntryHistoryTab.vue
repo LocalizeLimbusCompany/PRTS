@@ -18,6 +18,10 @@ const comparisons = computed(() =>
     const beforeTranslation = previous?.translation ?? ''
     const beforeSource = props.primarySource ? (previous?.original[props.primarySource] ?? '') : ''
     const afterSource = props.primarySource ? (current.original[props.primarySource] ?? '') : ''
+    const translationChanged = beforeTranslation !== current.translation
+    const sourceChanged = beforeSource !== afterSource
+    const stateChanged = Boolean(previous && previous.state !== current.state)
+    const questionedChanged = Boolean(previous && previous.questioned !== current.questioned)
     return {
       current,
       previous,
@@ -40,6 +44,10 @@ const comparisons = computed(() =>
       beforeTranslation,
       beforeSource,
       afterSource,
+      translationChanged,
+      sourceChanged,
+      stateChanged,
+      questionedChanged,
     }
   }),
 )
@@ -62,22 +70,32 @@ const comparisons = computed(() =>
           <div class="prts-dim">{{ new Date(item.current.created_at).toLocaleString() }}</div>
         </div>
         <q-space />
-        <q-badge
-          outline
-          :label="`v${item.current.version} · ${stateLabel(item.current.state, t)}`"
-        />
+        <q-badge outline :label="stateLabel(item.current.state, t)" />
       </header>
-      <div class="prts-label">{{ $t('editor.translationDiff') }}</div>
-      <div v-if="mode === 'side_by_side'" class="history-card__side">
-        <pre>{{ item.beforeTranslation }}</pre>
-        <pre>{{ item.current.translation }}</pre>
+      <div v-if="item.stateChanged" class="history-card__change">
+        {{ $t('editor.stateChanged') }}：{{ stateLabel(item.previous!.state, t) }} →
+        {{ stateLabel(item.current.state, t) }}
       </div>
-      <div v-else class="history-card__diff">
-        <span v-for="(part, index) in item.translation" :key="index" :class="`diff-${part.kind}`">{{
-          part.text
-        }}</span>
+      <div v-if="item.questionedChanged" class="history-card__change">
+        {{ $t('editor.questionedChanged') }}：
+        {{ $t(item.current.questioned ? 'editor.questionedAdded' : 'editor.questionedRemoved') }}
       </div>
-      <template v-if="item.beforeSource !== item.afterSource">
+      <template v-if="item.translationChanged">
+        <div class="prts-label">{{ $t('editor.translationDiff') }}</div>
+        <div v-if="mode === 'side_by_side'" class="history-card__side">
+          <pre>{{ item.beforeTranslation }}</pre>
+          <pre>{{ item.current.translation }}</pre>
+        </div>
+        <div v-else class="history-card__diff">
+          <span
+            v-for="(part, index) in item.translation"
+            :key="index"
+            :class="`diff-${part.kind}`"
+            >{{ part.text }}</span
+          >
+        </div>
+      </template>
+      <template v-if="item.sourceChanged">
         <div class="prts-label">{{ $t('editor.sourceDiff') }}</div>
         <div v-if="mode === 'side_by_side'" class="history-card__side">
           <pre>{{ item.beforeSource }}</pre>
@@ -116,6 +134,11 @@ const comparisons = computed(() =>
 .history-card__diff {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.history-card__change {
+  padding: 7px 9px;
+  border-left: 2px solid var(--prts-accent);
+  background: var(--prts-accent-dim);
 }
 .history-card__side {
   display: grid;

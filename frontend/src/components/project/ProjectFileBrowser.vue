@@ -383,4 +383,39 @@ function activate(item: ProjectBrowserItem) {
     display: none;
   }
 }
+
+@media (max-width: 640px) {
+  .file-browser__toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .file-browser__toolbar :first-child {
+    grid-column: auto;
+  }
+
+  .file-browser__head {
+    display: none;
+  }
+
+  .file-browser__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+    padding: 10px;
+  }
+
+  .file-browser__progress {
+    grid-column: 1;
+  }
+
+  .file-browser__row > :nth-child(3),
+  .file-browser__row > :nth-child(4) {
+    display: none;
+  }
+
+  .file-browser__actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    min-width: 0;
+  }
+}
 </style>

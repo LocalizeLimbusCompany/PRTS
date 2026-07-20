@@ -167,6 +167,7 @@ async fn search_perf_five_scopes_and_materialized_reads() {
                 file_ids,
                 restrict_to_file_ids: *restrict_to_file_ids,
                 states: &[],
+                questioned: None,
                 conditions: &conditions,
                 include_hidden: false,
                 per_path: 100,

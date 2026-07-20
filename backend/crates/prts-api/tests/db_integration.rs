@@ -620,6 +620,8 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
             "new_version",
             "previous_state",
             "new_state",
+            "previous_questioned",
+            "new_questioned",
             "forced_presence",
             "cp_tenths_awarded",
         ],
@@ -2283,6 +2285,7 @@ async fn audit_contract_upload_revalidates_permission_after_project_lock() {
             state: "translated".to_string(),
             version: entry.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     ));
@@ -2485,6 +2488,7 @@ async fn audit_contract_state_with_db(db: prts_db::Db) -> state::AppState {
         media: Arc::new(media::LocalMediaStore::new(
             std::env::temp_dir().join(format!("prts-audit-media-{}", audit_jobs_unique("state"))),
         )),
+        #[cfg(feature = "zoot-oauth")]
         zoot: Arc::new(None),
         realtime,
         embedder: Arc::new(None),
@@ -2708,14 +2712,17 @@ async fn editor_comments_and_question_reason_are_permissioned_and_atomic() {
         Path((project.id, entry.id)),
         Json(entries_routes::UpdateEntryReq {
             translation: "存在疑问的译文".to_string(),
-            state: "questioned".to_string(),
+            state: "translated".to_string(),
             version: entry.version,
             force_presence: false,
+            questioned: Some(true),
             question_reason: Some(question_marker.clone()),
         }),
     )
     .await
-    .expect_api("疑问状态与原因同事务保存");
+    .expect_api("疑问标签与原因同事务保存");
+    assert_eq!(questioned.state, "translated");
+    assert!(questioned.questioned);
     let reason_count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM entry_comments
          WHERE project_id=$1 AND entry_id=$2 AND author_id=$3 AND content=$4",
@@ -2737,14 +2744,15 @@ async fn editor_comments_and_question_reason_are_permissioned_and_atomic() {
         Path((project.id, entry.id)),
         Json(entries_routes::UpdateEntryReq {
             translation: "不应提交的译文".to_string(),
-            state: "questioned".to_string(),
+            state: "translated".to_string(),
             version: questioned.version,
             force_presence: false,
+            questioned: Some(true),
             question_reason: Some(failed_marker.clone()),
         }),
     )
     .await
-    .expect_err_api("审计失败回滚疑问状态与评论");
+    .expect_err_api("审计失败回滚疑问标签与评论");
     assert_eq!(
         failure.into_response().status(),
         axum::http::StatusCode::SERVICE_UNAVAILABLE
@@ -2756,6 +2764,7 @@ async fn editor_comments_and_question_reason_are_permissioned_and_atomic() {
         .unwrap();
     assert_eq!(unchanged.version, questioned.version);
     assert_eq!(unchanged.translation, questioned.translation);
+    assert!(unchanged.questioned);
     let failed_reason_count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM entry_comments WHERE content=$1")
             .bind(&failed_marker)
@@ -2813,6 +2822,7 @@ async fn term_versions_are_append_only_and_deleted_identity_can_be_restored() {
             translation: "版本一".to_string(),
             notes: "baseline note".to_string(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -2828,6 +2838,7 @@ async fn term_versions_are_append_only_and_deleted_identity_can_be_restored() {
             translation: "版本二".to_string(),
             notes: "updated note".to_string(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -2914,6 +2925,7 @@ async fn term_versions_are_append_only_and_deleted_identity_can_be_restored() {
             translation: "重建版本".to_string(),
             notes: "recreated note".to_string(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -3054,6 +3066,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "translated".to_string(),
             version: entry.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -3068,6 +3081,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "checked".to_string(),
             version: translated.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -3082,6 +3096,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "reviewed".to_string(),
             version: checked.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -3193,6 +3208,7 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             state: "reviewed".to_string(),
             version: current.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -5000,6 +5016,8 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
             avatar_url: Some("https://example.invalid/avatar.png".to_string()),
             translation_langs: Some(vec!["en".to_string(), "zh-Hans".to_string()]),
             entry_diff_mode: None,
+            preview_translation_diff: None,
+            ai_source_preference: None,
         }),
     )
     .await
@@ -5852,6 +5870,7 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             state: "translated".to_string(),
             version: entry.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -9357,6 +9376,7 @@ async fn projects_files_entries_roundtrip() {
         k1.version,
         "你好",
         "translated",
+        None,
         "translate",
         Some(owner.id),
     )
@@ -9372,6 +9392,7 @@ async fn projects_files_entries_roundtrip() {
         k1.version,
         "x",
         "translated",
+        None,
         "edit",
         Some(owner.id),
     )
@@ -9597,6 +9618,7 @@ async fn search_trgm_and_fts_recall() {
         file_ids: &[],
         restrict_to_file_ids: false,
         states: &[],
+        questioned: None,
         conditions: &[],
         include_hidden: false,
     };
@@ -9716,6 +9738,7 @@ async fn search_orchestrator_returns_ranked_hits() {
             file_ids: &[],
             restrict_to_file_ids: false,
             states: &[],
+            questioned: None,
             conditions: &[],
             include_hidden: false,
             per_path: 100,
@@ -9857,6 +9880,7 @@ async fn vector_search_returns_nearest_first() {
         file_ids: &[],
         restrict_to_file_ids: false,
         states: &[],
+        questioned: None,
         conditions: &[],
         include_hidden: false,
     };
@@ -11829,6 +11853,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             state: "translated".to_string(),
             version: current.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -11854,6 +11879,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             state: "untranslated".to_string(),
             version: current.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -12183,6 +12209,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             file_id: None,
             task_id: Some(task.id),
             state: None,
+            questioned: None,
             q: None,
             after: None,
             limit: Some(100),
@@ -12206,6 +12233,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             file_id: Some(file.file_id),
             task_id: Some(task.id),
             state: None,
+            questioned: None,
             q: None,
             after: None,
             limit: Some(100),
@@ -12270,6 +12298,7 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             file_id: None,
             task_id: Some(task.id),
             state: None,
+            questioned: None,
             q: None,
             after: None,
             limit: Some(100),
@@ -12406,22 +12435,28 @@ async fn terminology_schema_enforces_null_safe_identity_and_explicit_foreign_key
 
     let noun_id: i64 = sqlx::query_scalar(
         "INSERT INTO pos_presets (name_zh_cn, name_en, sort_order)
-         VALUES ('名词', 'Noun', 10) RETURNING id",
+         VALUES ($1, $2, 10) RETURNING id",
     )
+    .bind(format!("测试名词-{}", owner.id))
+    .bind(format!("Test noun {}", owner.id))
     .fetch_one(&pool)
     .await
     .unwrap();
     let verb_id: i64 = sqlx::query_scalar(
         "INSERT INTO pos_presets (name_zh_cn, name_en, sort_order)
-         VALUES ('动词', 'Verb', 20) RETURNING id",
+         VALUES ($1, $2, 20) RETURNING id",
     )
+    .bind(format!("测试动词-{}", owner.id))
+    .bind(format!("Test verb {}", owner.id))
     .fetch_one(&pool)
     .await
     .unwrap();
     let adjective_id: i64 = sqlx::query_scalar(
         "INSERT INTO pos_presets (name_zh_cn, name_en, sort_order)
-         VALUES ('形容词', 'Adjective', 30) RETURNING id",
+         VALUES ($1, $2, 30) RETURNING id",
     )
+    .bind(format!("测试形容词-{}", owner.id))
+    .bind(format!("Test adjective {}", owner.id))
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -12517,7 +12552,7 @@ async fn terminology_schema_enforces_null_safe_identity_and_explicit_foreign_key
          WHERE relation.relname = 'terms'
            AND index.indisunique
            AND pg_get_indexdef(index.indexrelid)
-               ILIKE '%(project_id, source_lang, source_text, pos_id)%'",
+               ILIKE '%(project_id, source_lang, source_text, pos_id, match_mode)%'",
     )
     .fetch_one(&pool)
     .await
@@ -12741,6 +12776,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: translation_marker.clone(),
             notes: notes_marker.clone(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -12760,6 +12796,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: "duplicate".to_string(),
             notes: String::new(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -12783,6 +12820,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: String::new(),
             notes: String::new(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: true,
         }),
     )
@@ -12803,6 +12841,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: String::new(),
             notes: String::new(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -12834,6 +12873,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: "日语".to_string(),
             notes: String::new(),
             pos_id: Some(pos.id),
+            match_mode: "exact".to_string(),
             archived: true,
         }),
     )
@@ -12851,6 +12891,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: "来源".to_string(),
             notes: String::new(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: true,
         }),
     )
@@ -12868,6 +12909,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: "forbidden".to_string(),
             notes: String::new(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -12888,6 +12930,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
             translation: updated_translation_marker.clone(),
             notes: notes_marker.clone(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -13230,6 +13273,7 @@ async fn terminology_mutations_roll_back_when_audit_is_unavailable() {
             translation: term_marker.clone(),
             notes: term_marker.clone(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -13277,6 +13321,7 @@ async fn terminology_mutations_roll_back_when_audit_is_unavailable() {
             content: serde_json::to_string(&vec![term_import::TermDocumentRow {
                 source_lang: "en".to_string(),
                 source_text: import_term_marker.clone(),
+                match_mode: "exact".to_string(),
                 translation: import_term_marker.clone(),
                 pos: None,
                 notes: import_term_marker.clone(),
@@ -13415,6 +13460,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
             translation: "before".to_string(),
             notes: String::new(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -13427,6 +13473,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
         term_import::TermDocumentRow {
             source_lang: "EN".to_string(),
             source_text: existing_source.clone(),
+            match_mode: "exact".to_string(),
             translation: "after".to_string(),
             pos: None,
             notes: "updated".to_string(),
@@ -13435,6 +13482,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
         term_import::TermDocumentRow {
             source_lang: "en".to_string(),
             source_text: created_source.clone(),
+            match_mode: "exact".to_string(),
             translation: secret_translation.clone(),
             pos: Some("UNKNOWN_POS_BODY".to_string()),
             notes: secret_notes.clone(),
@@ -13443,6 +13491,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
         term_import::TermDocumentRow {
             source_lang: "de-de-u-co-phonebk".to_string(),
             source_text: format!("IMPORT_ARCHIVED_{}", owner.id),
+            match_mode: "exact".to_string(),
             translation: "archived".to_string(),
             pos: None,
             notes: String::new(),
@@ -13533,6 +13582,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
     let binding_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
         source_lang: "en".to_string(),
         source_text: format!("IMPORT_BINDING_{}", owner.id),
+        match_mode: "exact".to_string(),
         translation: "binding".to_string(),
         pos: None,
         notes: String::new(),
@@ -13632,6 +13682,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
     let primary_change_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
         source_lang: "en".to_string(),
         source_text: primary_change_source.clone(),
+        match_mode: "exact".to_string(),
         translation: "must not persist".to_string(),
         pos: None,
         notes: String::new(),
@@ -13686,6 +13737,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
     let resolution_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
         source_lang: "en".to_string(),
         source_text: resolution_source.clone(),
+        match_mode: "exact".to_string(),
         translation: "must not persist".to_string(),
         pos: None,
         notes: String::new(),
@@ -13802,6 +13854,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
     let active_mismatch_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
         source_lang: "ja".to_string(),
         source_text: "active mismatch".to_string(),
+        match_mode: "exact".to_string(),
         translation: String::new(),
         pos: None,
         notes: String::new(),
@@ -13848,6 +13901,7 @@ async fn terminology_import_preview_confirm_is_bound_one_time_and_fail_closed() 
     let concurrent_content = serde_json::to_string(&vec![term_import::TermDocumentRow {
         source_lang: "en".to_string(),
         source_text: concurrent_source,
+        match_mode: "exact".to_string(),
         translation: "once".to_string(),
         pos: None,
         notes: String::new(),
@@ -14506,6 +14560,7 @@ fn structured_search_request(
         conditions: Vec::new(),
         scope,
         states: Vec::new(),
+        questioned: None,
         include_hidden: false,
         vector: false,
         after: None,
@@ -15059,6 +15114,7 @@ async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_a
             q: None,
             file_id: Some(dir_file.file_id),
             state: None,
+            questioned: None,
             include_hidden: false,
             after: None,
             limit: Some(50),
@@ -15087,6 +15143,7 @@ async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_a
             q: None,
             file_id: None,
             state: None,
+            questioned: None,
             include_hidden: false,
             after: None,
             limit: Some(50),
@@ -15182,6 +15239,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: entry.version,
             force_presence: true,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -15201,6 +15259,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: entry.version,
             force_presence: true,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -15217,6 +15276,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: entry.version,
             force_presence: true,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -15236,6 +15296,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "checked".to_string(),
             version: updated.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -15250,6 +15311,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "checked".to_string(),
             version: checked.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -15265,6 +15327,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "translated".to_string(),
             version: preserved.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -15279,6 +15342,7 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             state: "checked".to_string(),
             version: downgraded.version,
             force_presence: false,
+            questioned: None,
             question_reason: None,
         }),
     )
@@ -15350,6 +15414,7 @@ async fn public_editor_is_anonymous_read_only_and_private_editor_fails_closed() 
             translation: "游客".to_string(),
             notes: String::new(),
             pos_id: None,
+            match_mode: "exact".to_string(),
             archived: false,
         }),
     )
@@ -15383,6 +15448,7 @@ async fn public_editor_is_anonymous_read_only_and_private_editor_fails_closed() 
             file_id: Some(uploaded.file_id),
             task_id: None,
             state: None,
+            questioned: None,
             q: None,
             after: None,
             limit: Some(50),

@@ -47,6 +47,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/backend.Dockerfile
+      args:
+        PRTS_BACKEND_FEATURES: ''
     image: ghcr.io/localizelimbuscompany/prts-backend:latest
     env_file:
       - path: ../.env
@@ -64,6 +66,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/backend.Dockerfile
+      args:
+        PRTS_BACKEND_FEATURES: ''
     image: ghcr.io/localizelimbuscompany/prts-backend:latest
     # 从根目录 .env 注入认证等 PRTS__* 配置；migration URL 被显式清空，runtime
     # 进程不会持有 owner 凭据。

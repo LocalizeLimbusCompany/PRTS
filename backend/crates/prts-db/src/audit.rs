@@ -188,6 +188,12 @@ pub enum AuditEvent<'a> {
         changed_fields: &'a [&'a str],
         translation_lang_count: usize,
     },
+    AiSettingsUpdated {
+        owner_type: &'a str,
+        owner_id: i64,
+        key_present: bool,
+        enabled: bool,
+    },
     UserCreated {
         user_id: i64,
         username: &'a str,
@@ -467,6 +473,8 @@ pub enum AuditEvent<'a> {
         new_version: i64,
         previous_state: &'a str,
         new_state: &'a str,
+        previous_questioned: bool,
+        new_questioned: bool,
         forced_presence: bool,
         cp_tenths_awarded: i64,
     },
@@ -658,6 +666,22 @@ pub async fn append_event_tx(
             serde_json::json!({
                 "changed_fields": changed_fields,
                 "translation_lang_count": translation_lang_count,
+            }),
+        ),
+        AuditEvent::AiSettingsUpdated {
+            owner_type,
+            owner_id,
+            key_present,
+            enabled,
+        } => (
+            "ai_settings.updated",
+            "ai_settings",
+            format!("{owner_type}:{owner_id}"),
+            (owner_type == "project").then_some(owner_id),
+            serde_json::json!({
+                "owner_type": owner_type,
+                "key_present": key_present,
+                "enabled": enabled,
             }),
         ),
         AuditEvent::UserCreated {
@@ -1369,6 +1393,8 @@ pub async fn append_event_tx(
             new_version,
             previous_state,
             new_state,
+            previous_questioned,
+            new_questioned,
             forced_presence,
             cp_tenths_awarded,
         } => (
@@ -1381,6 +1407,8 @@ pub async fn append_event_tx(
                 "new_version": new_version,
                 "previous_state": previous_state,
                 "new_state": new_state,
+                "previous_questioned": previous_questioned,
+                "new_questioned": new_questioned,
                 "forced_presence": forced_presence,
                 "cp_tenths_awarded": cp_tenths_awarded,
             }),

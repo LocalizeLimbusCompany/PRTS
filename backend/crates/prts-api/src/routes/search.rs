@@ -42,6 +42,8 @@ pub struct SearchQuery {
     pub file_id: Option<i64>,
     /// 逗号分隔的 workflow state。
     pub state: Option<String>,
+    /// 独立的有疑问标签过滤。
+    pub questioned: Option<bool>,
     #[serde(default)]
     pub include_hidden: bool,
     pub after: Option<String>,
@@ -137,6 +139,8 @@ struct StructuredSearchRequestSchema {
     scope: SearchScopeSchema,
     #[serde(default)]
     states: Vec<String>,
+    /// 独立的有疑问标签过滤；缺省时不过滤。
+    questioned: Option<bool>,
     #[serde(default)]
     include_hidden: bool,
     #[serde(default)]
@@ -243,6 +247,7 @@ pub async fn search_entries(
             .file_id
             .map_or(SearchScope::All, |file_id| SearchScope::File { file_id }),
         states,
+        questioned: query.questioned,
         include_hidden: query.include_hidden,
         vector: false,
         after: query.after,
@@ -319,6 +324,7 @@ async fn execute_search(
         file_ids: &file_ids,
         restrict_to_file_ids,
         states: &state_filters,
+        questioned: plan.questioned,
         conditions: &plan.conditions,
         include_hidden: plan.include_hidden,
     };
@@ -397,6 +403,7 @@ async fn execute_search(
                 file_ids: &file_ids,
                 restrict_to_file_ids,
                 states: &state_filters,
+                questioned: plan.questioned,
                 conditions: &plan.conditions,
                 include_hidden: plan.include_hidden,
                 per_path: SEARCH_RECALL_LIMIT,
@@ -561,6 +568,7 @@ mod tests {
                 }],
                 scope: SearchScope::All,
                 states: Vec::new(),
+                questioned: None,
                 include_hidden: false,
                 vector: false,
                 after: None,

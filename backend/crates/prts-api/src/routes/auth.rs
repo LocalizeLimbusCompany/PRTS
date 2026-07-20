@@ -1,7 +1,10 @@
 //! 认证端点：注册 / 登录 / 刷新 / 登出 / ZOOT OAuth。
 
-use axum::extract::{Path, Query, State};
+use axum::extract::State;
+#[cfg(feature = "zoot-oauth")]
+use axum::extract::{Path, Query};
 use axum::http::StatusCode;
+#[cfg(feature = "zoot-oauth")]
 use axum::response::Redirect;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -239,6 +242,7 @@ pub async fn logout(
 }
 
 /// OAuth 发起响应。
+#[cfg(feature = "zoot-oauth")]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct OAuthStartResponse {
     /// 引导浏览器跳转的授权 URL。
@@ -246,6 +250,7 @@ pub struct OAuthStartResponse {
 }
 
 /// 发起第三方登录（当前支持 `zoot`）。
+#[cfg(feature = "zoot-oauth")]
 #[utoipa::path(
     get, path = "/auth/oauth/{provider}/start", tag = "auth",
     responses(
@@ -277,6 +282,7 @@ pub async fn oauth_start(
 }
 
 /// OAuth 回调查询参数。
+#[cfg(feature = "zoot-oauth")]
 #[derive(Debug, Deserialize)]
 pub struct OAuthCallbackQuery {
     pub code: Option<String>,
@@ -285,6 +291,7 @@ pub struct OAuthCallbackQuery {
 }
 
 /// 第三方登录回调：换取身份、登录或创建用户，并跳转回前端（令牌经 URL fragment 传递）。
+#[cfg(feature = "zoot-oauth")]
 #[utoipa::path(
     get, path = "/auth/oauth/{provider}/callback", tag = "auth",
     responses(
@@ -369,7 +376,7 @@ pub async fn oauth_callback(
         &state,
         user.id,
         IssueKind::OAuth {
-            provider: &identity.provider,
+            provider: identity.provider.clone(),
             new_user,
         },
     )
@@ -412,6 +419,7 @@ async fn maybe_bootstrap_super_admin_tx(
     Ok(user)
 }
 
+#[cfg(feature = "zoot-oauth")]
 async fn audit_oauth_failure(
     state: &AppState,
     provider: &str,
@@ -442,6 +450,7 @@ async fn audit_oauth_failure(
 }
 
 /// 为 OAuth 新用户找一个未占用的用户名。
+#[cfg(feature = "zoot-oauth")]
 async fn unique_username(
     state: &AppState,
     preferred: &str,

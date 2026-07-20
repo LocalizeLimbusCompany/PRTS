@@ -1,4 +1,4 @@
-export const STATE_ORDER = ['untranslated', 'translated', 'questioned', 'checked', 'reviewed']
+export const STATE_ORDER = ['untranslated', 'translated', 'checked', 'reviewed']
 
 type Translator = (key: string) => string
 

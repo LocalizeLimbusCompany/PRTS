@@ -30,6 +30,7 @@ const { locale } = useI18n()
         {{ displayPosName({ name_zh_cn: term.pos_name_zh_cn, name_en: term.pos_name_en }, locale) }}
       </span>
       <span v-if="term.notes" class="term-card__notes">{{ term.notes }}</span>
+      <span class="term-card__meta">{{ $t(`terminology.matchModes.${term.match_mode}`) }}</span>
     </button>
     <div v-if="terms.length === 0" class="prts-empty">{{ $t('editor.noTerms') }}</div>
   </div>

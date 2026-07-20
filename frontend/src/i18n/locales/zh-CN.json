@@ -90,6 +90,33 @@
     "translationLanguages": "翻译语言偏好",
     "entryDiffMode": "词条历史差分模式",
     "entryDiffModeHint": "保存到账号，并在所有设备的词条历史中使用。",
+    "previewTranslationDiff": "保存前预览译文差异",
+    "previewTranslationDiffHint": "仅在原译文非空且译文正文确实变化时弹出，不影响状态或标签单独变更。",
+    "ai": {
+      "heading": "个人 AI",
+      "description": "配置 OpenAI-compatible 接口。API Key 由服务端加密保存，绝不会下发到浏览器。",
+      "sourcePreference": "编辑器 AI 来源",
+      "sourcePreferenceHint": "自动模式优先使用个人 AI；个人或项目模式不可用时不会静默切换。",
+      "sources": {
+        "auto": "自动选择",
+        "personal": "个人 AI",
+        "project": "项目 AI"
+      },
+      "baseUrl": "Base URL",
+      "baseUrlHint": "必须是可公开访问的 HTTPS 地址，例如 https://api.openai.com/v1",
+      "model": "模型",
+      "apiKey": "API Key",
+      "apiKeyRetainHint": "留空则保留当前密钥。",
+      "apiKeyRequiredHint": "首次配置必须填写。",
+      "enabled": "允许编辑器使用此配置",
+      "keyConfigured": "已保存密钥（尾号 {hint}）",
+      "save": "保存 AI 配置",
+      "saved": "个人 AI 配置已保存",
+      "saveFailed": "个人 AI 配置保存失败",
+      "delete": "删除 AI 配置",
+      "deleteConfirm": "确定删除个人 AI 接口和已加密保存的密钥吗？",
+      "deleted": "个人 AI 配置已删除"
+    },
     "diffModes": {
       "character": "字符行内差分",
       "word": "词级行内差分",
@@ -162,6 +189,17 @@
       "heading": "项目在线成员",
       "count": "当前有 {count} 人在线",
       "empty": "暂无在线成员"
+    },
+    "ai": {
+      "heading": "项目 AI",
+      "description": "仅项目拥有者可以配置；已登录的项目成员可在编辑器中使用。API Key 不会下发到成员浏览器。",
+      "keyConfigured": "已保存项目密钥（尾号 {hint}）",
+      "save": "保存项目 AI",
+      "saved": "项目 AI 配置已保存",
+      "saveFailed": "项目 AI 配置保存失败",
+      "delete": "删除项目 AI",
+      "deleteConfirm": "确定删除项目 AI 接口和已加密保存的密钥吗？",
+      "deleted": "项目 AI 配置已删除"
     },
     "comments": {
       "policy": "词条评论权限",
@@ -467,6 +505,17 @@
     "emptyHint": "切换范围，或由有权限的成员创建、导入术语。",
     "active": "启用",
     "sourceLangHint": "使用规范 BCP-47；非当前主源只能保存为归档。",
+    "matchModeHint": "填空模式中的 [] 可匹配原文中的任意文本；所有模式都只作用于原文，不替换译文捕获内容。",
+    "matchModes": {
+      "exact": "精确包含",
+      "placeholder": "填空匹配",
+      "regex": "正则表达式"
+    },
+    "patternSample": "测试原文",
+    "testPattern": "校验并测试",
+    "patternInvalid": "表达式无效",
+    "patternMatched": "测试原文已命中",
+    "patternNotMatched": "表达式有效，但未命中测试原文",
     "scopes": {
       "current": "当前术语",
       "archived": "已归档",
@@ -476,6 +525,7 @@
     "fields": {
       "sourceLang": "源语言",
       "sourceText": "源文",
+      "matchMode": "匹配方式",
       "translation": "译文",
       "pos": "词性",
       "notes": "备注",
@@ -493,7 +543,7 @@
       "previewFailed": "导入预览失败",
       "confirmFailed": "导入确认失败",
       "confirmed": "导入完成：新建 {created}，更新 {updated}",
-      "termFields": "字段：source_lang, source_text, translation, pos, notes, archived",
+      "termFields": "字段：source_lang, source_text, match_mode, translation, pos, notes, archived",
       "posFields": "字段：name_zh_cn, name_en, sort_order",
       "created": "新建 {count}",
       "updated": "更新 {count}",
@@ -619,9 +669,17 @@
     "fileOnlineCount": "当前文件有 {count} 人在线",
     "noFileOnline": "当前文件暂无在线成员",
     "markQuestioned": "标记为有疑问",
+    "removeQuestioned": "移除有疑问标签",
     "questionReason": "疑问原因（可选）",
     "questionReasonHint": "填写后会自动发布到此词条的评论。",
     "confirmQuestioned": "保存并标记有疑问",
+    "saveDiffPreview": "保存前预览差异",
+    "saveDiffPreviewHint": "确认此次译文修改后再保存。",
+    "confirmSave": "确认保存",
+    "stateChanged": "词条状态变更",
+    "questionedChanged": "有疑问标签变更",
+    "questionedAdded": "已添加",
+    "questionedRemoved": "已移除",
     "translationDiff": "译文变化",
     "sourceDiff": "原文变化",
     "systemActor": "系统",
@@ -635,6 +693,20 @@
     "deleteComment": "删除评论",
     "deleteCommentConfirm": "确定要删除这条评论吗？",
     "loadMoreComments": "加载更多评论"
+    ,"ai": {
+      "tab": "AI",
+      "heading": "AI 原文解释",
+      "description": "点击后仅分析当前词条的主源文本，给出整体含义、去重分词和逐词语境解释。",
+      "analyze": "分析原文",
+      "analyzeAgain": "重新分析",
+      "loadFailed": "AI 分析失败",
+      "overallMeaning": "整体含义",
+      "grammar": "语法说明",
+      "tokens": "分词解释",
+      "noTokens": "AI 未返回可用的分词。",
+      "provider": "来源：{source}",
+      "cached": "缓存结果"
+    }
   },
   "admin": {
     "title": "管理后台",

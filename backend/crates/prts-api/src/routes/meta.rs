@@ -80,7 +80,7 @@ pub async fn auth_config(State(state): State<AppState>) -> Result<Json<AuthConfi
         appsettings::get_bool(&state, appsettings::AUTH_REGISTRATION_OPEN, true)
             .await
             .map_err(db_err)?;
-    let oauth_providers = if state.zoot_provider().is_some() {
+    let oauth_providers = if state.oauth_provider_available() {
         vec!["zoot".to_string()]
     } else {
         Vec::new()

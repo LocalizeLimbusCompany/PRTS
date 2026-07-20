@@ -4,7 +4,13 @@ import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
-import { apiErrorMessage, projectsApi, type MemberDto } from '@/api'
+import {
+  aiApi,
+  apiErrorMessage,
+  projectsApi,
+  type AiSettingsDto,
+  type MemberDto,
+} from '@/api'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import AvatarCropDialog from '@/components/project/AvatarCropDialog.vue'
 import LanguageResolutionDialog from '@/components/project/LanguageResolutionDialog.vue'
@@ -14,11 +20,13 @@ import { useJobProgress } from '@/composables/useJobProgress'
 import { hasProjectCapability } from '@/lib/capabilities'
 import { roleLabel } from '@/lib/states'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
+import { useAuthStore } from '@/stores/auth'
 
 const { detail, projectId, reload } = useProjectWorkspace()
 const $q = useQuasar()
 const { t } = useI18n()
 const router = useRouter()
+const auth = useAuthStore()
 const saving = ref(false)
 const form = ref({ name: '', description: '', visibility: 'public', comment_policy: 'private' })
 const changingPrimary = ref(false)
@@ -34,11 +42,15 @@ const savingMember = ref<number | 'new' | null>(null)
 const newMember = ref({ username: '', role: '' })
 const showDeleteDialog = ref(false)
 const cancellingDeletion = ref(false)
+const projectAiSettings = ref<AiSettingsDto | null>(null)
+const projectAiForm = ref({ base_url: '', model: '', api_key: '', enabled: true })
+const projectAiSaving = ref(false)
 const countdownNow = ref(Date.now())
 let countdownTimer: ReturnType<typeof setInterval> | undefined
 
 const lexicalJobId = computed(() => detail.value?.project.lexical_job_id)
 const embeddingJobId = computed(() => detail.value?.project.embedding_job_id)
+const isProjectOwner = computed(() => detail.value?.project.owner_id === auth.user?.id)
 const lexicalProgress = useJobProgress(lexicalJobId)
 const embeddingProgress = useJobProgress(embeddingJobId)
 const cooldownActive = computed(() => {
@@ -59,8 +71,8 @@ const deletionCountdown = computed(() => {
 })
 
 watch(
-  () => detail.value?.project,
-  (project) => {
+  () => [detail.value?.project, auth.user?.id] as const,
+  ([project, userId]) => {
     if (!project) return
     if (
       !project.deletion_scheduled_at &&
@@ -79,9 +91,73 @@ watch(
       source_langs: [...project.source_langs],
       primary_source_lang: project.primary_source_lang ?? project.source_langs[0] ?? '',
     }
+    if (project.owner_id === userId) void loadProjectAi()
   },
   { immediate: true },
 )
+
+function applyProjectAiSettings(setting: AiSettingsDto) {
+  projectAiSettings.value = setting
+  projectAiForm.value = {
+    base_url: setting.base_url ?? '',
+    model: setting.model ?? '',
+    api_key: '',
+    enabled: setting.configured ? setting.enabled : true,
+  }
+}
+
+async function loadProjectAi() {
+  try {
+    applyProjectAiSettings(await aiApi.getProjectSettings(projectId.value))
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  }
+}
+
+async function saveProjectAi() {
+  if (!projectAiForm.value.base_url.trim() || !projectAiForm.value.model.trim()) return
+  projectAiSaving.value = true
+  try {
+    const apiKey = projectAiForm.value.api_key.trim()
+    const updated = await aiApi.putProjectSettings(projectId.value, {
+      base_url: projectAiForm.value.base_url.trim(),
+      model: projectAiForm.value.model.trim(),
+      api_key: apiKey || undefined,
+      enabled: projectAiForm.value.enabled,
+    })
+    applyProjectAiSettings(updated)
+    $q.notify({ type: 'positive', message: t('project.ai.saved') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('project.ai.saveFailed')) })
+  } finally {
+    projectAiSaving.value = false
+  }
+}
+
+function deleteProjectAi() {
+  $q.dialog({
+    title: t('project.ai.delete'),
+    message: t('project.ai.deleteConfirm'),
+    cancel: true,
+  }).onOk(async () => {
+    projectAiSaving.value = true
+    try {
+      await aiApi.deleteProjectSettings(projectId.value)
+      applyProjectAiSettings({
+        configured: false,
+        base_url: null,
+        model: null,
+        api_key_hint: null,
+        enabled: false,
+      })
+      $q.notify({ type: 'positive', message: t('project.ai.deleted') })
+    } catch (error) {
+      $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+    } finally {
+      projectAiSaving.value = false
+    }
+  })
+}
 
 /** Save only mature metadata; language changes remain gated until Task 2.2. */
 async function save() {
@@ -377,6 +453,79 @@ async function cancelDeletion() {
         </q-card-section>
       </q-card>
 
+      <q-card v-if="isProjectOwner" flat bordered>
+        <q-card-section class="manage-view__ai">
+          <div>
+            <div class="prts-label">{{ $t('project.ai.heading') }}</div>
+            <div class="prts-dim q-mt-xs">{{ $t('project.ai.description') }}</div>
+          </div>
+          <q-banner v-if="projectAiSettings?.configured" dense rounded class="bg-grey-9">
+            {{
+              $t('project.ai.keyConfigured', { hint: projectAiSettings.api_key_hint })
+            }}
+          </q-banner>
+          <q-input
+            v-model="projectAiForm.base_url"
+            outlined
+            type="url"
+            autocomplete="url"
+            :label="$t('profile.ai.baseUrl')"
+            :hint="$t('profile.ai.baseUrlHint')"
+            :disable="projectAiSaving"
+          />
+          <q-input
+            v-model="projectAiForm.model"
+            outlined
+            :label="$t('profile.ai.model')"
+            :disable="projectAiSaving"
+          />
+          <q-input
+            v-model="projectAiForm.api_key"
+            outlined
+            type="password"
+            autocomplete="new-password"
+            :label="$t('profile.ai.apiKey')"
+            :hint="
+              projectAiSettings?.configured
+                ? $t('profile.ai.apiKeyRetainHint')
+                : $t('profile.ai.apiKeyRequiredHint')
+            "
+            :disable="projectAiSaving"
+          />
+          <q-toggle
+            v-model="projectAiForm.enabled"
+            :label="$t('profile.ai.enabled')"
+            :disable="projectAiSaving"
+          />
+          <div class="row q-gutter-sm">
+            <q-btn
+              unelevated
+              no-caps
+              color="primary"
+              text-color="dark"
+              :label="$t('project.ai.save')"
+              :loading="projectAiSaving"
+              :disable="
+                !projectAiForm.base_url.trim() ||
+                !projectAiForm.model.trim() ||
+                (!projectAiSettings?.configured && !projectAiForm.api_key.trim())
+              "
+              @click="saveProjectAi"
+            />
+            <q-btn
+              v-if="projectAiSettings?.configured"
+              flat
+              no-caps
+              color="negative"
+              icon="mdi-delete-outline"
+              :label="$t('project.ai.delete')"
+              :disable="projectAiSaving"
+              @click="deleteProjectAi"
+            />
+          </div>
+        </q-card-section>
+      </q-card>
+
       <q-card flat bordered>
         <q-card-section class="manage-view__language">
           <div class="manage-view__language-head">
@@ -659,6 +808,7 @@ async function cancelDeletion() {
 }
 
 .manage-view__language,
+.manage-view__ai,
 .manage-view__stage,
 .manage-view__language-form {
   display: grid;
@@ -751,6 +901,13 @@ async function cancelDeletion() {
 
   .manage-view__avatar {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .manage-view__actions,
+  .manage-view__language-head,
+  .manage-view__language-action {
+    align-items: stretch;
     flex-direction: column;
   }
 }

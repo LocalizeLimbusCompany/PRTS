@@ -178,6 +178,7 @@ function isTermRow(row: TermPreviewRowDto | PosPreviewRowDto): row is TermPrevie
                   <th>#</th>
                   <th>{{ $t('terminology.fields.sourceLang') }}</th>
                   <th>{{ $t('terminology.fields.sourceText') }}</th>
+                  <th>{{ $t('terminology.fields.matchMode') }}</th>
                   <th>{{ $t('terminology.fields.translation') }}</th>
                   <th>{{ $t('terminology.fields.pos') }}</th>
                   <th>{{ $t('terminology.fields.archived') }}</th>
@@ -197,6 +198,7 @@ function isTermRow(row: TermPreviewRowDto | PosPreviewRowDto): row is TermPrevie
                     <td>{{ row.row }}</td>
                     <td class="prts-mono">{{ row.source_lang }}</td>
                     <td>{{ row.source_text }}</td>
+                    <td>{{ $t(`terminology.matchModes.${row.match_mode}`) }}</td>
                     <td>{{ row.translation }}</td>
                     <td>{{ row.pos || '—' }}</td>
                     <td>{{ row.archived ? $t('common.yes') : $t('common.no') }}</td>

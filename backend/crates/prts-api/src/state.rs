@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "zoot-oauth")]
 use prts_auth::OAuth2Provider;
 use prts_common::config::Settings;
 use prts_db::{Cache, Db};
@@ -18,6 +19,7 @@ pub struct AppState {
     /// 项目头像等媒体的持久化存储。
     pub media: Arc<dyn crate::media::MediaStore>,
     /// ZOOT OAuth provider（未配置则为 None）。
+    #[cfg(feature = "zoot-oauth")]
     pub zoot: Arc<Option<OAuth2Provider>>,
     /// 实时协作 hub（WebSocket + Redis pub/sub）。
     pub realtime: prts_realtime::Hub,
@@ -38,7 +40,18 @@ impl AppState {
     }
 
     /// ZOOT provider（未配置则 None）。
+    #[cfg(feature = "zoot-oauth")]
     pub fn zoot_provider(&self) -> Option<&OAuth2Provider> {
         (*self.zoot).as_ref()
+    }
+
+    #[cfg(not(feature = "zoot-oauth"))]
+    pub fn oauth_provider_available(&self) -> bool {
+        false
+    }
+
+    #[cfg(feature = "zoot-oauth")]
+    pub fn oauth_provider_available(&self) -> bool {
+        self.zoot_provider().is_some()
     }
 }

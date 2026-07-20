@@ -21,6 +21,16 @@ pub struct Settings {
     pub embedding: EmbeddingSettings,
     #[serde(default)]
     pub media: MediaSettings,
+    #[serde(default)]
+    pub ai: AiSettings,
+}
+
+/// AI credential encryption configuration. The key is supplied only via environment variables.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AiSettings {
+    /// Base64-encoded 32-byte XChaCha20-Poly1305 key (`PRTS__AI__MASTER_KEY`).
+    #[serde(default)]
+    pub master_key: String,
 }
 
 /// 用户上传媒体与临时上传流的持久化路径；不包含业务限制或密钥。
@@ -265,6 +275,7 @@ mod tests {
         assert!(s.redis.url.starts_with("redis://"));
         assert_eq!(s.embedding.qwen.dimensions, 1024);
         assert!(s.embedding.qwen.api_key.is_empty());
+        assert!(s.ai.master_key.is_empty());
     }
 
     #[test]

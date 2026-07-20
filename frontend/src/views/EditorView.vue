@@ -26,6 +26,7 @@ import {
 } from '@/api'
 import SearchFilters from '@/components/SearchFilters.vue'
 import SuggestionsPanel from '@/components/SuggestionsPanel.vue'
+import EntryAiTab from '@/components/editor/EntryAiTab.vue'
 import EntryCommentsTab from '@/components/editor/EntryCommentsTab.vue'
 import EntryHistoryTab from '@/components/editor/EntryHistoryTab.vue'
 import EntryTermsTab from '@/components/editor/EntryTermsTab.vue'
@@ -36,6 +37,7 @@ import {
   shouldConnectProjectRealtime,
 } from '@/composables/useRealtime'
 import { computeSaveButton } from '@/lib/saveButton'
+import { diffText } from '@/lib/editorDiff'
 import { STATE_ORDER, stateLabel } from '@/lib/states'
 import { insertTermTranslation } from '@/lib/terminology'
 import { useAuthStore } from '@/stores/auth'
@@ -61,7 +63,7 @@ const canHide = computed(() => capabilities.value?.hide_entry === true)
 const canEdit = computed(() => capabilities.value?.edit_entry === true)
 const canForcePresence = computed(() => capabilities.value?.force_save_presence === true)
 const stateOptions = computed(() =>
-  STATE_ORDER.filter((state) => state !== 'questioned').map((state) => ({
+  STATE_ORDER.map((state) => ({
     label: stateLabel(state, t),
     value: state,
     disable: ['checked', 'reviewed'].includes(state) ? !canReview.value : !canEdit.value,
@@ -205,11 +207,13 @@ const selected = ref<EntryDto | null>(null)
 const draft = ref('')
 const draftState = ref<EntryState>('untranslated')
 const saving = ref(false)
+const diffPreviewOpen = ref(false)
+const pendingSaveState = ref<EntryState | null>(null)
 const translationElement = ref<HTMLTextAreaElement | null>(null)
 const suggestions = ref<SuggestionDto[]>([])
 const matchedTerms = ref<TermDto[]>([])
 const history = ref<EntryVersionDto[]>([])
-const contextTab = ref<'terms' | 'history' | 'comments'>('terms')
+const contextTab = ref<'terms' | 'ai' | 'history' | 'comments'>('terms')
 const commentsRefreshToken = ref(0)
 const questionDialog = ref(false)
 const questionReason = ref('')
@@ -326,6 +330,7 @@ async function persist(targetState: EntryState, questionReasonValue?: string): P
       state: targetState,
       version,
       force_presence: forcePresence,
+      questioned: questionReasonValue ? true : undefined,
       question_reason: questionReasonValue || undefined,
     })
     if (selected.value?.id === entryId) draftState.value = targetState
@@ -352,13 +357,63 @@ async function persist(targetState: EntryState, questionReasonValue?: string): P
 
 async function save() {
   if (!selected.value || saveBtn.value.disabled) return
-  await persist(saveBtn.value.targetState ?? draftState.value)
+  const targetState = saveBtn.value.targetState ?? draftState.value
+  if (
+    auth.user?.preview_translation_diff &&
+    selected.value.translation.length > 0 &&
+    translationDirty.value
+  ) {
+    pendingSaveState.value = targetState
+    diffPreviewOpen.value = true
+    return
+  }
+  await persist(targetState)
+}
+
+const savePreviewDiff = computed(() =>
+  selected.value ? diffText(selected.value.translation, draft.value, 'word') : [],
+)
+
+async function confirmDiffPreview() {
+  const target = pendingSaveState.value
+  diffPreviewOpen.value = false
+  pendingSaveState.value = null
+  if (target) await persist(target)
 }
 
 async function markQuestioned() {
-  if (await persist('questioned', questionReason.value.trim() || undefined)) {
+  if (!selected.value) return
+  const entryId = selected.value.id
+  const reason = questionReason.value.trim()
+  saving.value = true
+  try {
+    const updated = await entriesApi.update(props.id, entryId, {
+      translation: draft.value,
+      state: draftState.value,
+      version: selected.value.version,
+      questioned: !selected.value.questioned,
+      question_reason: !selected.value.questioned && reason ? reason : undefined,
+    })
+    applyUpdated(updated)
+    await refreshEntryHistory(entryId)
+    if (reason && updated.questioned) commentsRefreshToken.value += 1
     questionDialog.value = false
     questionReason.value = ''
+    $q.notify({ type: 'positive', message: t('editor.saved'), timeout: 900 })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('editor.saveFailed')) })
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 添加疑问时允许附评论；移除疑问标签则直接保存，不展示无意义的原因输入框。 */
+function toggleQuestioned() {
+  if (selected.value?.questioned) {
+    void markQuestioned()
+  } else {
+    questionReason.value = ''
+    questionDialog.value = true
   }
 }
 
@@ -671,6 +726,7 @@ onMounted(async () => {
               >
               <q-icon v-if="item.locked" name="mdi-lock-outline" size="14px" />
               <q-icon v-if="item.hidden" name="mdi-eye-off-outline" size="14px" />
+              <q-icon v-if="item.questioned" name="mdi-help-circle" color="warning" size="14px" />
               <div v-if="editorsOf(item.id).length" class="avatar-stack" @click.stop>
                 <q-avatar
                   v-for="editor in editorsOf(item.id)"
@@ -787,9 +843,11 @@ onMounted(async () => {
               size="sm"
               icon="mdi-help-circle-outline"
               :disable="panelReadOnly"
-              :color="selected.state === 'questioned' ? 'warning' : undefined"
-              @click="questionDialog = true"
-              ><q-tooltip>{{ t('editor.markQuestioned') }}</q-tooltip></q-btn
+              :color="selected.questioned ? 'warning' : undefined"
+              @click="toggleQuestioned"
+              ><q-tooltip>{{
+                t(selected.questioned ? 'editor.removeQuestioned' : 'editor.markQuestioned')
+              }}</q-tooltip></q-btn
             ><q-btn
               v-if="canLock"
               flat
@@ -835,10 +893,9 @@ onMounted(async () => {
             v-model="draft"
             type="textarea"
             outlined
-            autogrow
             :readonly="panelReadOnly"
             input-class="prts-translation"
-            :input-style="{ minHeight: '150px' }"
+            :input-style="{ minHeight: '150px', maxHeight: '40vh', overflowY: 'auto' }"
             @focus="captureTranslationElement"
           />
           <SuggestionsPanel
@@ -908,6 +965,9 @@ onMounted(async () => {
             indicator-color="primary"
             class="context-tabs"
             ><q-tab name="terms" icon="mdi-book-alphabet" :label="t('editor.termsTab')" /><q-tab
+              name="ai"
+              icon="mdi-auto-fix"
+              :label="t('editor.ai.tab')" /><q-tab
               name="history"
               icon="mdi-history"
               :label="t('editor.history')" /><q-tab
@@ -922,6 +982,8 @@ onMounted(async () => {
         <q-tab-panels v-else v-model="contextTab" animated class="context-panels"
           ><q-tab-panel name="terms"
             ><EntryTermsTab :terms="matchedTerms" @apply="insertTranslation" /></q-tab-panel
+          ><q-tab-panel name="ai"
+            ><EntryAiTab :project-id="props.id" :entry-id="selected.id" /></q-tab-panel
           ><q-tab-panel name="history"
             ><EntryHistoryTab
               :history="history"
@@ -960,6 +1022,33 @@ onMounted(async () => {
             :loading="saving"
             @click="markQuestioned" /></q-card-actions></q-card
     ></q-dialog>
+    <q-dialog v-model="diffPreviewOpen" persistent>
+      <q-card class="question-card">
+        <q-card-section>
+          <div class="prts-h2">{{ t('editor.saveDiffPreview') }}</div>
+          <div class="prts-dim">{{ t('editor.saveDiffPreviewHint') }}</div>
+        </q-card-section>
+        <q-card-section class="save-diff-preview">
+          <span
+            v-for="(part, index) in savePreviewDiff"
+            :key="index"
+            :class="`diff-${part.kind}`"
+            >{{ part.text }}</span
+          >
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn v-close-popup flat no-caps :label="t('common.cancel')" />
+          <q-btn
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            :label="t('editor.confirmSave')"
+            @click="confirmDiffPreview"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
@@ -1122,7 +1211,9 @@ onMounted(async () => {
   font-size: 13px;
 }
 .orig-block {
-  overflow: hidden;
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid var(--prts-border);
   border-radius: 3px;
   background: var(--prts-bg-elev);
@@ -1167,6 +1258,22 @@ onMounted(async () => {
 .question-card {
   width: min(560px, 94vw);
 }
+.save-diff-preview {
+  max-height: 55vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.diff-insert {
+  color: var(--q-positive);
+  background: rgba(63, 185, 80, 0.13);
+  text-decoration: underline;
+}
+.diff-delete {
+  color: var(--q-negative);
+  background: rgba(248, 81, 73, 0.12);
+  text-decoration: line-through;
+}
 @media (max-width: 1023px) {
   .editor-page {
     height: auto;
@@ -1180,6 +1287,48 @@ onMounted(async () => {
   }
   .panel {
     padding: 14px 12px 32px;
+  }
+}
+
+@media (max-width: 599px) {
+  .editor-bar {
+    padding: 7px 8px;
+  }
+
+  .editor-fileselect {
+    width: 100%;
+    max-width: none;
+  }
+
+  .editor-bar :deep(.q-btn-toggle) {
+    width: 100%;
+  }
+
+  .editor-bar :deep(.q-btn-toggle .q-btn) {
+    min-width: 0;
+    flex: 1;
+    padding-inline: 4px;
+    font-size: 10px;
+  }
+
+  .orig-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 5px;
+    padding: 10px;
+  }
+
+  .orig-lang {
+    flex-basis: auto;
+  }
+
+  .context-tabs :deep(.q-tab) {
+    min-width: 52px;
+    padding-inline: 4px;
+  }
+
+  .context-tabs :deep(.q-tab__label) {
+    font-size: 10px;
   }
 }
 </style>

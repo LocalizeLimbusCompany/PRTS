@@ -1,6 +1,9 @@
 import { http } from './http'
 import type {
   ApiKeyDto,
+  AiExplanationDto,
+  AiSettingsDto,
+  AiSourcePreference,
   AdminUserDto,
   AdminUserListParams,
   AdminUserListResponse,
@@ -82,6 +85,8 @@ export const usersApi = {
     avatar_url?: string | null
     translation_langs?: string[]
     entry_diff_mode?: string
+    preview_translation_diff?: boolean
+    ai_source_preference?: 'auto' | 'personal' | 'project'
   }) {
     return http.put<UserDto>('/me', body).then((r) => r.data)
   },
@@ -103,6 +108,47 @@ export const usersApi = {
   /** 公开用户资料（不含 email）：私信会话页展示对话方头名/头像。 */
   getUser(id: number) {
     return http.get<UserDto>(`/users/${id}`).then((r) => r.data)
+  },
+}
+
+/** 用户/项目 OpenAI-compatible 设置与按需原文解释。 */
+export const aiApi = {
+  getPersonalSettings() {
+    return http.get<AiSettingsDto>('/me/ai-settings').then((response) => response.data)
+  },
+  putPersonalSettings(body: {
+    base_url: string
+    model: string
+    api_key?: string
+    enabled: boolean
+  }) {
+    return http.put<AiSettingsDto>('/me/ai-settings', body).then((response) => response.data)
+  },
+  deletePersonalSettings() {
+    return http.delete('/me/ai-settings')
+  },
+  getProjectSettings(projectId: number) {
+    return http
+      .get<AiSettingsDto>(`/projects/${projectId}/ai-settings`)
+      .then((response) => response.data)
+  },
+  putProjectSettings(
+    projectId: number,
+    body: { base_url: string; model: string; api_key?: string; enabled: boolean },
+  ) {
+    return http
+      .put<AiSettingsDto>(`/projects/${projectId}/ai-settings`, body)
+      .then((response) => response.data)
+  },
+  deleteProjectSettings(projectId: number) {
+    return http.delete(`/projects/${projectId}/ai-settings`)
+  },
+  explainEntry(projectId: number, entryId: number, source?: AiSourcePreference) {
+    return http
+      .post<AiExplanationDto>(`/projects/${projectId}/entries/${entryId}/ai-explanation`, {
+        source,
+      })
+      .then((response) => response.data)
   },
 }
 
@@ -272,6 +318,7 @@ export const entriesApi = {
       file_id?: number
       task_id?: number
       state?: string
+      questioned?: boolean
       q?: string
       after?: number
       limit?: number
@@ -285,7 +332,13 @@ export const entriesApi = {
   },
   count(
     id: number,
-    params: { file_id?: number; task_id?: number; state?: string; include_hidden?: boolean } = {},
+    params: {
+      file_id?: number
+      task_id?: number
+      state?: string
+      questioned?: boolean
+      include_hidden?: boolean
+    } = {},
   ) {
     return http
       .get<{ total_items: number }>(`/projects/${id}/entries/count`, { params })
@@ -299,6 +352,7 @@ export const entriesApi = {
       state: string
       version: number
       force_presence?: boolean
+      questioned?: boolean
       question_reason?: string
     },
   ) {

@@ -19,12 +19,14 @@ PRTS is a **public, extensible, high-concurrency** online translation platform f
 - **Project workspace** with information, files, tasks, terminology, downloads, and management sections; the editor remains a separate full-screen route.
 - **Project / Folder / File / Entry** hierarchy designed for the 200k+ entries target through materialized statistics, keyset pagination, and bounded batches.
 - **Multiple source languages → one target language** (BCP-47, Hans/Hant aware), shown per user preference.
-- **Real-time collaborative editor** (WebSocket): presence, "someone is editing" hints, optimistic-lock conflict guard.
+- **Real-time collaborative editor** (WebSocket): presence, "someone is editing" hints, optimistic-lock conflict guard, a four-state workflow plus an independent questioned tag, optional pre-save translation diffs, clearer history, and mobile layouts.
+- **On-demand AI source explanation**: users or project owners can configure an OpenAI-compatible provider; an explicit click returns the overall meaning, deduplicated tokens, contextual meanings, parts of speech, and grammar.
+- **Enhanced terminology matching**: exact, `[]` placeholder, and regex source-only modes with validation/sample tools, built-in POS presets, and detailed editor term cards.
 - **Structured hybrid search**: POST tagged scopes, PostgreSQL full-text + trigram fuzzy + optional vector semantics (pgvector), RRF, and signed keyset cursors.
 - **Durable streaming uploads**: 500-file / 2GB batch contract, 100MB per-file limit, byte-zero retries, per-file atomic replacement, cancellation/expiry cleanup, and 30-day recoverable history.
 - **Permission-node RBAC**: platform roles (super admin / admin / maintainer) + project roles (owner / manager / reviewer / translator).
 - **Contribution points and leaderboards**: online translations/edits award Levenshtein distance × 1.0, reviews/approvals × 0.3, with project all-time and platform all-time/UTC month/week rankings.
-- **Pluggable auth providers**: password + OAuth2 (PKCE), with built-in ZOOT integration; supports OAuth-only mode.
+- **Pluggable auth providers**: the default installation contains password auth only; the optional `zoot-oauth` build adds OAuth2 (PKCE), ZOOT, and OAuth-only mode.
 - **History and audit**: business mutations and allowlisted redacted audit commit together and fail closed; file change sets support rollback/restore, while project deletion uses an owner-only challenge and a 24-hour delay.
 - **Internationalization**: bilingual (zh-CN / en) frontend; backend localizes messages via `Accept-Language`.
 - **Fully Dockerized**, with every API documented in Swagger.
@@ -44,9 +46,20 @@ PRTS is a **public, extensible, high-concurrency** online translation platform f
 ```bash
 git clone git@github.com:LocalizeLimbusCompany/PRTS.git
 cd PRTS
-cp .env.example .env        # fill in DB / Redis / JWT / OAuth / Qwen, etc.
+cp .env.example .env        # fill in DB / Redis / JWT / Qwen / AI master key, etc.
 docker compose -f deploy/docker-compose.yml up -d
 ```
+
+The default Compose stack explicitly uses a backend without OAuth. To enable ZOOT login, configure the OAuth environment variables and add the optional override:
+
+```bash
+docker compose \
+  -f deploy/docker-compose.yml \
+  -f deploy/docker-compose.oauth.yml \
+  up -d
+```
+
+This combination uses `prts-backend:oauth-latest`; the default stack uses `prts-backend:latest`.
 
 The migration account and application runtime account must be separate. On a fresh volume,
 Compose creates the runtime role from `POSTGRES_MIGRATION_*` / `POSTGRES_RUNTIME_*` and runs
