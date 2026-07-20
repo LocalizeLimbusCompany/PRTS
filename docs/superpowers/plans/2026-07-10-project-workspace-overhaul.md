@@ -1213,3 +1213,22 @@ Invoke-Checked { docker compose -f deploy/docker-compose.yml up -d --build }
 - [ ] **Step 4: 部署后冒烟**
 
   创建公开与私有项目，上传文件夹，重传并恢复，创建任务和术语，切换主源并观察降级恢复，以游客打开只读编辑器，安排并取消一次项目删除。所有步骤产生审计，任务进度可查询。
+
+## 2026-07-20 编辑器协作补充
+
+后续编辑器改造以右侧“术语 / 历史 / 评论”上下文区域替代旧术语建议组件，并补充可靠在线状态、键集分页、术语版本及评论能力。本节的文件动作覆盖前文对同一路径的旧动作。
+
+**Files:**
+
+- Delete: `frontend/src/components/editor/TermSuggestions.vue`
+- Create: `frontend/src/components/editor/EntryCommentsTab.vue`
+- Create: `frontend/src/components/editor/EntryHistoryTab.vue`
+- Create: `frontend/src/components/editor/EntryTermsTab.vue`
+- Create: `frontend/src/components/editor/SourceTermText.vue`
+- Create: `frontend/src/lib/editorDiff.ts`
+- Create: `frontend/src/lib/editorDiff.spec.ts`
+- Create: `backend/crates/prts-api/src/routes/entry_comments.rs`
+- Create: `backend/crates/prts-db/src/comments.rs`
+- Create: `backend/migrations/0016_editor_collaboration.sql`
+- Modify: `frontend/src/views/EditorView.vue`
+- Modify: `scripts/verify-project-workspace.ps1`
