@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 
 import type { FileDto, FolderDto } from '@/api/types'
 import {
-  projectFileItem,
+  buildProjectBrowserModel,
+  filterProjectBrowserItems,
   projectFileProgress,
-  projectFolderItem,
   sortProjectFileItems,
   type ProjectBrowserItem,
   type ProjectFileSort,
 } from '@/lib/projectFiles'
-import { descendantTaskFileIds, toggleTaskFileSelection } from '@/lib/projectTasks'
+import { toggleTaskFileSelection } from '@/lib/projectTasks'
 import { STATE_ORDER } from '@/lib/states'
 
 const props = defineProps<{
@@ -36,32 +36,40 @@ const emit = defineEmits<{
 const router = useRouter()
 const { t } = useI18n()
 const query = ref('')
+const deferredQuery = ref('')
 const currentFolderId = ref<number | null>(null)
 const sort = ref<ProjectFileSort>('name')
 const state = ref('all')
 const selected = computed(() => new Set(props.selectedFileIds ?? []))
 
 const folderById = computed(() => new Map(props.folders.map((folder) => [folder.id, folder])))
+const browserModel = computed(() => buildProjectBrowserModel(props.folders, props.files))
+let queryTimer: ReturnType<typeof setTimeout> | null = null
+
+// Large project searches wait for a short pause so filtering never competes with text input.
+watch(query, (value) => {
+  if (queryTimer) clearTimeout(queryTimer)
+  if (!value) {
+    deferredQuery.value = ''
+    queryTimer = null
+    return
+  }
+  queryTimer = setTimeout(() => {
+    deferredQuery.value = String(value)
+    queryTimer = null
+  }, 120)
+})
+onBeforeUnmount(() => {
+  if (queryTimer) clearTimeout(queryTimer)
+})
 
 const items = computed(() => {
-  const normalizedQuery = query.value.trim().toLocaleLowerCase()
-  const all = [
-    ...props.folders.map((folder) => projectFolderItem(folder, props.files)),
-    ...props.files.map(projectFileItem),
-  ].filter((item) => {
-    const inFolder = normalizedQuery ? true : item.folderId === currentFolderId.value
-    const matchesName = normalizedQuery
-      ? item.name.toLocaleLowerCase().includes(normalizedQuery) ||
-        item.path.toLocaleLowerCase().includes(normalizedQuery)
-      : true
-    const matchesState =
-      state.value === 'all' ||
-      (state.value === 'complete'
-        ? item.entryCount > 0 && (item.stateCounts.untranslated ?? 0) === 0
-        : (item.stateCounts[state.value] ?? 0) > 0)
-    return inFolder && matchesName && matchesState
-  })
-
+  const all = filterProjectBrowserItems(
+    browserModel.value.items,
+    deferredQuery.value,
+    currentFolderId.value,
+    state.value,
+  )
   return sortProjectFileItems(all, sort.value)
 })
 
@@ -106,7 +114,7 @@ function open(item: ProjectBrowserItem) {
 function affectedFileIds(item: ProjectBrowserItem): number[] {
   return item.kind === 'file'
     ? [item.id]
-    : descendantTaskFileIds(item.id, props.folders, props.files)
+    : (browserModel.value.descendantFileIds.get(item.id) ?? [])
 }
 
 function selectionState(item: ProjectBrowserItem): boolean | null {
@@ -185,83 +193,90 @@ function activate(item: ProjectBrowserItem) {
       <span v-if="canManage || canViewHistory">{{ $t('project.files.actions') }}</span>
     </div>
     <div v-if="items.length === 0" class="prts-empty">{{ $t('project.files.empty') }}</div>
-    <template v-else>
-      <div
-        v-for="item in items"
-        :key="`${item.kind}-${item.id}`"
-        class="file-browser__row"
-        role="button"
-        tabindex="0"
-        @click="activate(item)"
-        @keyup.enter.self="activate(item)"
-      >
-        <span
-          class="file-browser__name"
-          :class="{ 'file-browser__name--selectable': selectable }"
+    <q-virtual-scroll
+      v-else
+      class="file-browser__rows"
+      :items="items"
+      :virtual-scroll-item-size="60"
+      :virtual-scroll-slice-size="30"
+      :virtual-scroll-item-key="(item: ProjectBrowserItem) => `${item.kind}-${item.id}`"
+    >
+      <template #default="{ item }: { item: ProjectBrowserItem }">
+        <div
+          class="file-browser__row"
+          role="button"
+          tabindex="0"
+          @click="activate(item)"
+          @keyup.enter.self="activate(item)"
         >
-          <q-checkbox
-            v-if="selectable"
-            :model-value="selectionState(item)"
-            :indeterminate-value="null"
-            keep-color
-            color="primary"
-            @click.stop
-            @update:model-value="toggleSelection(item, $event)"
-          />
-          <q-icon
-            :name="item.kind === 'folder' ? 'mdi-folder-outline' : 'mdi-file-document-outline'"
-            :color="item.kind === 'folder' ? 'grey' : 'primary'"
-            size="19px"
-          />
-          <span>
-            <strong>{{ item.name }}</strong>
-            <small class="prts-mono">{{ item.path }}</small>
+          <span
+            class="file-browser__name"
+            :class="{ 'file-browser__name--selectable': selectable }"
+          >
+            <q-checkbox
+              v-if="selectable"
+              :model-value="selectionState(item)"
+              :indeterminate-value="null"
+              keep-color
+              color="primary"
+              @click.stop
+              @update:model-value="toggleSelection(item, $event)"
+            />
+            <q-icon
+              :name="item.kind === 'folder' ? 'mdi-folder-outline' : 'mdi-file-document-outline'"
+              :color="item.kind === 'folder' ? 'grey' : 'primary'"
+              size="19px"
+            />
+            <span>
+              <strong>{{ item.name }}</strong>
+              <small class="prts-mono">{{ item.path }}</small>
+            </span>
           </span>
-        </span>
-        <span class="file-browser__progress">
-          <span class="prts-mono">{{ progressPercent(item) }}</span>
-          <q-linear-progress :value="projectFileProgress(item) ?? 0" size="4px" color="primary" />
-        </span>
-        <span class="prts-mono">{{ item.entryCount }}</span>
-        <span class="prts-dim">{{ new Date(item.updatedAt).toLocaleDateString() }}</span>
-        <span v-if="canManage || canViewHistory" class="file-browser__actions">
-          <q-btn
-            v-if="canViewHistory"
-            flat
-            round
-            dense
-            icon="mdi-history"
-            :aria-label="$t('project.files.history')"
-            @click.stop="emit('history', item)"
-          >
-            <q-tooltip>{{ $t('project.files.history') }}</q-tooltip>
-          </q-btn>
-          <q-btn
-            v-if="canManage"
-            flat
-            round
-            dense
-            icon="mdi-file-move-outline"
-            :aria-label="$t('project.files.move')"
-            @click.stop="emit('move', item)"
-          >
-            <q-tooltip>{{ $t('project.files.move') }}</q-tooltip>
-          </q-btn>
-          <q-btn
-            v-if="canManage"
-            flat
-            round
-            dense
-            color="negative"
-            icon="mdi-delete-clock-outline"
-            :aria-label="$t('project.files.delete')"
-            @click.stop="emit('delete', item)"
-          >
-            <q-tooltip>{{ $t('project.files.delete') }}</q-tooltip>
-          </q-btn>
-        </span>
-      </div>
-    </template>
+          <span class="file-browser__progress">
+            <span class="prts-mono">{{ progressPercent(item) }}</span>
+            <q-linear-progress :value="projectFileProgress(item) ?? 0" size="4px" color="primary" />
+          </span>
+          <span class="prts-mono">{{ item.entryCount }}</span>
+          <span class="prts-dim">{{ new Date(item.updatedAt).toLocaleDateString() }}</span>
+          <span v-if="canManage || canViewHistory" class="file-browser__actions">
+            <q-btn
+              v-if="canViewHistory"
+              flat
+              round
+              dense
+              icon="mdi-history"
+              :aria-label="$t('project.files.history')"
+              @click.stop="emit('history', item)"
+            >
+              <q-tooltip>{{ $t('project.files.history') }}</q-tooltip>
+            </q-btn>
+            <q-btn
+              v-if="canManage"
+              flat
+              round
+              dense
+              icon="mdi-file-move-outline"
+              :aria-label="$t('project.files.move')"
+              @click.stop="emit('move', item)"
+            >
+              <q-tooltip>{{ $t('project.files.move') }}</q-tooltip>
+            </q-btn>
+            <q-btn
+              v-if="canManage"
+              flat
+              round
+              dense
+              color="negative"
+              icon="mdi-delete-clock-outline"
+              :aria-label="$t('project.files.delete')"
+              @click.stop="emit('delete', item)"
+            >
+              <q-tooltip>{{ $t('project.files.delete') }}</q-tooltip>
+            </q-btn>
+          </span>
+        </div>
+      </template>
+    </q-virtual-scroll>
   </section>
 </template>
 
@@ -324,6 +339,12 @@ function activate(item: ProjectBrowserItem) {
 
 .file-browser__row:hover {
   background: var(--prts-panel-2);
+}
+
+.file-browser__rows {
+  max-height: min(64vh, 720px);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .file-browser__name,

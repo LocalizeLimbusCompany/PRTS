@@ -70,13 +70,16 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.ensureReady()
 
-  if (to.meta.requiresAuth && !auth.isAuthed) {
+  // A retained token pair may still be restoring after a transient service failure. Let the
+  // backend remain authoritative while the auth store retries rather than falsely sending users
+  // to sign-in.
+  if (to.meta.requiresAuth && !auth.isAuthed && !auth.hasSession) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
   if (to.meta.adminOnly && !auth.isAdmin) {
     return { name: 'projects' }
   }
-  if (to.meta.guestOnly && auth.isAuthed) {
+  if (to.meta.guestOnly && (auth.isAuthed || auth.hasSession)) {
     return { name: 'projects' }
   }
   return true

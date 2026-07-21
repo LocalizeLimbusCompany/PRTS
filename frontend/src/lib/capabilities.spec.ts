@@ -35,6 +35,7 @@ describe('hasProjectCapability', () => {
           edit_locked_entry: false,
           force_save_presence: false,
           collaborate: false,
+          use_ai: false,
           resolve_languages: false,
           change_primary_source: false,
           delete_project: false,

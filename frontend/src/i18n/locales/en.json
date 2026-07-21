@@ -338,6 +338,8 @@
       "introduction": "Task introduction",
       "descriptionPlaceholder": "Describe the goal, translation requirements, and collaboration notes…",
       "files": "Task files",
+      "fileCount": "{count} files",
+      "searchFiles": "Search task file paths",
       "chooseFiles": "Choose the desired file set",
       "folderSelectionHint": "Selecting a folder expands it to all current descendant files. The server accepts file IDs only; the client cannot provide baseline entries.",
       "selectedFiles": "{count} files selected",

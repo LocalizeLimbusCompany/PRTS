@@ -243,6 +243,7 @@ export interface ProjectCapabilities {
   edit_locked_entry: boolean
   force_save_presence: boolean
   collaborate: boolean
+  use_ai: boolean
   resolve_languages: boolean
   change_primary_source: boolean
   delete_project: boolean

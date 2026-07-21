@@ -57,13 +57,14 @@ impl ProjectAccess {
     ) -> prts_core::capabilities::ProjectCapabilities {
         if self.project.deletion_scheduled_at.is_some() {
             return prts_core::capabilities::ProjectCapabilities::for_subject(
-                false, None, false, false,
+                false, None, false, false, false,
             );
         }
         prts_core::capabilities::ProjectCapabilities::for_subject(
             self.can_view(),
             self.effective_role(),
             self.user_id == Some(self.project.owner_id),
+            self.is_project_member(),
             primary_source_release_ready,
         )
     }

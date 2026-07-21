@@ -49,6 +49,8 @@ pub struct ProjectCapabilitiesDto {
     pub edit_locked_entry: bool,
     pub force_save_presence: bool,
     pub collaborate: bool,
+    /// 仅实际项目成员可执行 AI 解释；平台跨项目管理权不计入。
+    pub use_ai: bool,
     pub resolve_languages: bool,
     pub change_primary_source: bool,
     pub delete_project: bool,
@@ -78,6 +80,7 @@ impl From<prts_core::capabilities::ProjectCapabilities> for ProjectCapabilitiesD
             edit_locked_entry: value.edit_locked_entry,
             force_save_presence: value.force_save_presence,
             collaborate: value.collaborate,
+            use_ai: value.use_ai,
             resolve_languages: value.resolve_languages,
             change_primary_source: value.change_primary_source,
             delete_project: value.delete_project,

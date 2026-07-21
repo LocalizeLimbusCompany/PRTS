@@ -64,6 +64,7 @@ const canLock = computed(() => capabilities.value?.lock_entry === true)
 const canHide = computed(() => capabilities.value?.hide_entry === true)
 const canEdit = computed(() => capabilities.value?.edit_entry === true)
 const canForcePresence = computed(() => capabilities.value?.force_save_presence === true)
+const canUseAi = computed(() => capabilities.value?.use_ai === true)
 const stateOptions = computed(() =>
   STATE_ORDER.map((state) => ({
     label: stateLabel(state, t),
@@ -216,6 +217,9 @@ const suggestions = ref<SuggestionDto[]>([])
 const matchedTerms = ref<TermDto[]>([])
 const history = ref<EntryVersionDto[]>([])
 const contextTab = ref<'terms' | 'ai' | 'history' | 'comments'>('terms')
+watch(canUseAi, (allowed) => {
+  if (!allowed && contextTab.value === 'ai') contextTab.value = 'terms'
+})
 const commentsRefreshToken = ref(0)
 const questionDialog = ref(false)
 const questionReason = ref('')
@@ -981,7 +985,7 @@ onMounted(async () => {
             class="context-tabs"
             ><q-tab name="terms" icon="mdi-book-alphabet" :label="t('editor.termsTab')"
               ><q-tooltip>{{ t('editor.termsTab') }}</q-tooltip></q-tab
-            ><q-tab name="ai" icon="mdi-auto-fix" :label="t('editor.ai.tab')"
+            ><q-tab v-if="canUseAi" name="ai" icon="mdi-auto-fix" :label="t('editor.ai.tab')"
               ><q-tooltip>{{ t('editor.ai.tab') }}</q-tooltip></q-tab
             ><q-tab name="history" icon="mdi-history" :label="t('editor.history')"
               ><q-tooltip>{{ t('editor.history') }}</q-tooltip></q-tab
@@ -996,7 +1000,7 @@ onMounted(async () => {
         <q-tab-panels v-else v-model="contextTab" animated class="context-panels"
           ><q-tab-panel name="terms"
             ><EntryTermsTab :terms="matchedTerms" @apply="insertTranslation" /></q-tab-panel
-          ><q-tab-panel name="ai"
+          ><q-tab-panel v-if="canUseAi" name="ai"
             ><EntryAiTab :project-id="props.id" :entry-id="selected.id" /></q-tab-panel
           ><q-tab-panel name="history"
             ><EntryHistoryTab

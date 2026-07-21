@@ -12,6 +12,12 @@ export interface ProjectBrowserItem {
   entryCount: number
   stateCounts: Record<string, number>
   updatedAt: string
+  searchText: string
+}
+
+export interface ProjectBrowserModel {
+  items: ProjectBrowserItem[]
+  descendantFileIds: Map<number, number[]>
 }
 
 /** Translation progress is undefined for files and folders with no visible entries. */
@@ -46,21 +52,87 @@ export function projectFolderItem(folder: FolderDto, files: FileDto[]): ProjectB
     entryCount,
     stateCounts,
     updatedAt,
+    searchText: `${folder.name}\u0000${folder.path}`.toLocaleLowerCase(),
   }
 }
 
 /** Convert a materialized file DTO into a browser row. */
 export function projectFileItem(file: FileDto): ProjectBrowserItem {
+  const path = file.path
   return {
     id: file.id,
     kind: 'file',
     folderId: file.folder_id,
     name: file.name,
-    path: file.path,
+    path,
     entryCount: file.entry_count,
     stateCounts: file.state_counts,
     updatedAt: file.updated_at,
+    searchText: `${file.name}\u0000${path}`.toLocaleLowerCase(),
   }
+}
+
+/** Build folder aggregates and task-selection descendants in one bounded tree walk. */
+export function buildProjectBrowserModel(
+  folders: FolderDto[],
+  files: FileDto[],
+): ProjectBrowserModel {
+  const folderById = new Map(folders.map((folder) => [folder.id, folder]))
+  const folderItems = new Map(
+    folders.map((folder) => [folder.id, projectFolderItem(folder, [])] as const),
+  )
+  const descendantFileIds = new Map(folders.map((folder) => [folder.id, [] as number[]] as const))
+
+  for (const file of files) {
+    let folderId = file.folder_id
+    const visited = new Set<number>()
+    while (folderId !== null && !visited.has(folderId)) {
+      visited.add(folderId)
+      const aggregate = folderItems.get(folderId)
+      const folder = folderById.get(folderId)
+      if (!aggregate || !folder) break
+
+      aggregate.entryCount += file.entry_count
+      for (const workflowState of STATE_ORDER) {
+        aggregate.stateCounts[workflowState] =
+          (aggregate.stateCounts[workflowState] ?? 0) + (file.state_counts[workflowState] ?? 0)
+      }
+      if (file.updated_at > aggregate.updatedAt) aggregate.updatedAt = file.updated_at
+      descendantFileIds.get(folderId)?.push(file.id)
+      folderId = folder.parent_id
+    }
+  }
+
+  return {
+    items: [
+      ...folders.flatMap((folder) => {
+        const item = folderItems.get(folder.id)
+        return item ? [item] : []
+      }),
+      ...files.map(projectFileItem),
+    ],
+    descendantFileIds,
+  }
+}
+
+/** Filter a pre-indexed browser model without repeating locale normalization per query. */
+export function filterProjectBrowserItems(
+  items: ProjectBrowserItem[],
+  query: string,
+  folderId: number | null,
+  state: string,
+): ProjectBrowserItem[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  return items.filter((item) => {
+    const inFolder = normalizedQuery ? true : item.folderId === folderId
+    const matchesName = normalizedQuery ? item.searchText.includes(normalizedQuery) : true
+    const matchesState =
+      state === 'all' ||
+      (state === 'complete'
+        ? item.entryCount > 0 && (item.stateCounts.untranslated ?? 0) === 0
+        : (item.stateCounts[state] ?? 0) > 0)
+    return inFolder && matchesName && matchesState
+  })
 }
 
 /** Sort folders before files and apply the selected stable secondary ordering. */

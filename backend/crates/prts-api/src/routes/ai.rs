@@ -584,7 +584,7 @@ pub async fn delete_project_ai_settings(
 }
 
 #[utoipa::path(post, path = "/projects/{id}/entries/{entry_id}/ai-explanation", tag = "entry", request_body = AiExplainRequest,
-    description = "Explain the entry's primary source on demand in the explicitly supplied UI locale. Optional tenant-scoped web search runs only for this explicit action; failures degrade to a non-web explanation with a status and safe citations. Only authenticated project members may use project AI, and explicit personal/project selection never falls back silently.",
+    description = "Explain the entry's primary source on demand in the explicitly supplied UI locale. Optional tenant-scoped web search runs only for this explicit action; failures degrade to a non-web explanation with a status and safe citations. Only actual project members may use AI with either a personal or project provider, and explicit personal/project selection never falls back silently.",
     responses((status = 200, body = AiExplanationDto), (status = 400, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
 pub async fn explain_entry(
     State(state): State<AppState>,
@@ -641,7 +641,7 @@ pub async fn explain_entry(
     path = "/projects/{id}/entries/{entry_id}/ai-explanation/stream",
     tag = "entry",
     request_body = AiExplainRequest,
-    description = "Stream on-demand primary-source analysis and optional tenant-scoped web search as server-sent events. Search failures degrade without blocking the explanation; the stream emits status, progress, result, or localized error events and never exposes raw model reasoning.",
+    description = "Stream on-demand primary-source analysis for actual project members and optional tenant-scoped web search as server-sent events. Membership is required for both personal and project providers. Search failures degrade without blocking the explanation; the stream emits status, progress, result, or localized error events and never exposes raw model reasoning.",
     responses(
         (status = 200, description = "SSE analysis stream", body = String, content_type = "text/event-stream"),
         (status = 400, body = ErrorResponse),
@@ -695,6 +695,9 @@ async fn prepare_explanation(
 ) -> Result<PreparedExplanation, ApiError> {
     let access = paccess::load(state, Some(user), id).await?;
     access.require_view()?;
+    if !access.is_project_member() {
+        return Err(Error::Forbidden.into());
+    }
     let entry = prts_db::entries::get(&state.db, id, entry_id)
         .await
         .map_err(db_err)?
@@ -2154,6 +2157,25 @@ fn deduplicate_tokens(tokens: &mut Vec<AiTokenExplanation>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explanation_membership_gate_precedes_entry_and_provider_reads() {
+        let source = include_str!("ai.rs");
+        let prepare = source
+            .split_once("async fn prepare_explanation(")
+            .expect("preparation function exists")
+            .1
+            .split_once("async fn finalize_explanation(")
+            .expect("preparation function has a stable end")
+            .0;
+        let membership_gate = prepare
+            .find("!access.is_project_member()")
+            .expect("AI requires actual project membership");
+        let entry_read = prepare.find("entries::get").expect("entry is loaded");
+        let provider_read = prepare.find("resolve_ai").expect("AI provider is resolved");
+        assert!(membership_gate < entry_read);
+        assert!(membership_gate < provider_read);
+    }
 
     fn resolved(preset: AiProviderPreset, thinking_mode: AiThinkingMode) -> ResolvedAi {
         ResolvedAi {

@@ -2,15 +2,27 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { authApi, usersApi, type UserDto } from '@/api'
-import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '@/api/session'
+import {
+  clearTokens,
+  getAccessToken,
+  getRefreshToken,
+  onSessionChange,
+  setTokens,
+} from '@/api/session'
 import { hasPlatformCapability } from '@/lib/capabilities'
 import { useAiExplanationSessionStore } from '@/stores/aiExplanationSession'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserDto | null>(null)
   const ready = ref(false)
+  const sessionVersion = ref(0)
 
   const isAuthed = computed(() => user.value !== null)
+  // A transient profile request failure must not make the router discard an intact token pair.
+  const hasSession = computed(() => {
+    void sessionVersion.value
+    return getAccessToken() !== null || getRefreshToken() !== null
+  })
   const passwordChangeRequired = computed(() => user.value?.password_change_required === true)
   const role = computed(() => user.value?.platform_role ?? null)
   const isSuperAdmin = computed(() =>
@@ -65,28 +77,60 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = await usersApi.me()
   }
 
-  async function restore() {
-    if (getAccessToken()) {
+  async function restore(): Promise<boolean> {
+    let stable = true
+    if (getAccessToken() || getRefreshToken()) {
       try {
         user.value = await usersApi.me()
       } catch {
         user.value = null
+        // Invalid credentials are cleared by the HTTP layer. Preserved credentials indicate a
+        // temporary transport/server failure, so restore it again without requiring navigation.
+        stable = !getAccessToken() && !getRefreshToken()
+        if (!stable) scheduleRestoreRetry()
       }
     }
     ready.value = true
+    return stable
   }
 
   // 会话恢复只执行一次；路由守卫与启动均可 await。
   let restorePromise: Promise<void> | null = null
+  let restoreRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** Retry a preserved session after a transient transport or server failure. */
+  function scheduleRestoreRetry() {
+    if (restoreRetryTimer) return
+    restoreRetryTimer = setTimeout(() => {
+      restoreRetryTimer = null
+      if (getAccessToken() || getRefreshToken()) void ensureReady()
+    }, 1_000)
+  }
+
   function ensureReady(): Promise<void> {
-    if (!restorePromise) restorePromise = restore()
+    if (!restorePromise) {
+      restorePromise = restore().then((stable) => {
+        if (!stable) restorePromise = null
+      })
+    }
     return restorePromise
   }
+
+  // Keep Pinia state consistent when an interceptor or another tab invalidates the token pair.
+  onSessionChange(() => {
+    sessionVersion.value += 1
+    if (getAccessToken() || getRefreshToken()) return
+    if (restoreRetryTimer) clearTimeout(restoreRetryTimer)
+    restoreRetryTimer = null
+    useAiExplanationSessionStore().clearAll()
+    user.value = null
+  })
 
   return {
     user,
     ready,
     isAuthed,
+    hasSession,
     passwordChangeRequired,
     role,
     isSuperAdmin,

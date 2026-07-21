@@ -25,6 +25,8 @@ pub struct ProjectCapabilities {
     pub edit_locked_entry: bool,
     pub force_save_presence: bool,
     pub collaborate: bool,
+    /// 是否为可见项目的实际成员，可使用个人或项目 AI provider。
+    pub use_ai: bool,
     pub resolve_languages: bool,
     pub change_primary_source: bool,
     pub delete_project: bool,
@@ -36,6 +38,7 @@ impl ProjectCapabilities {
         can_view: bool,
         role: Option<ProjectRole>,
         is_owner: bool,
+        is_project_member: bool,
         primary_source_release_ready: bool,
     ) -> Self {
         let has = |node| role.is_some_and(|project_role| project_role.has(node));
@@ -59,6 +62,7 @@ impl ProjectCapabilities {
             edit_locked_entry: elevated_editor,
             force_save_presence: elevated_editor,
             collaborate: role.is_some(),
+            use_ai: can_view && is_project_member,
             resolve_languages: is_owner,
             change_primary_source: is_owner && primary_source_release_ready,
             delete_project: is_owner,
@@ -73,12 +77,13 @@ mod tests {
     #[test]
     fn owner_only_capabilities_ignore_platform_admin_override() {
         let manager =
-            ProjectCapabilities::for_subject(true, Some(ProjectRole::Manager), false, true);
+            ProjectCapabilities::for_subject(true, Some(ProjectRole::Manager), false, true, true);
         assert!(manager.edit_locked_entry);
         assert!(manager.force_save_presence);
         assert!(manager.lock_entry);
         assert!(manager.hide_entry);
         assert!(manager.collaborate);
+        assert!(manager.use_ai);
         assert!(manager.view_file_history);
         assert!(manager.rollback_file_history);
         assert!(manager.manage_tasks);
@@ -87,27 +92,40 @@ mod tests {
         assert!(!manager.change_primary_source);
         assert!(!manager.delete_project);
 
-        let owner = ProjectCapabilities::for_subject(true, Some(ProjectRole::Owner), true, false);
+        let owner =
+            ProjectCapabilities::for_subject(true, Some(ProjectRole::Owner), true, true, false);
         assert!(owner.force_save_presence);
         assert!(owner.collaborate);
+        assert!(owner.use_ai);
         assert!(owner.resolve_languages);
         assert!(owner.delete_project);
         assert!(!owner.change_primary_source);
 
         let reviewer =
-            ProjectCapabilities::for_subject(true, Some(ProjectRole::Reviewer), false, true);
+            ProjectCapabilities::for_subject(true, Some(ProjectRole::Reviewer), false, true, true);
         assert!(reviewer.manage_terms);
         assert!(!reviewer.manage_tasks);
 
-        let translator =
-            ProjectCapabilities::for_subject(true, Some(ProjectRole::Translator), false, true);
+        let translator = ProjectCapabilities::for_subject(
+            true,
+            Some(ProjectRole::Translator),
+            false,
+            true,
+            true,
+        );
         assert!(!translator.manage_terms);
         assert!(translator.collaborate);
         assert!(!translator.lock_entry);
 
-        let guest = ProjectCapabilities::for_subject(true, None, false, true);
+        let guest = ProjectCapabilities::for_subject(true, None, false, false, true);
         assert!(guest.view_project);
         assert!(!guest.edit_entry);
         assert!(!guest.collaborate);
+        assert!(!guest.use_ai);
+
+        let platform_override =
+            ProjectCapabilities::for_subject(true, Some(ProjectRole::Owner), false, false, true);
+        assert!(platform_override.manage_project);
+        assert!(!platform_override.use_ai);
     }
 }

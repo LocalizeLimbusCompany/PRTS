@@ -338,6 +338,8 @@
       "introduction": "任务介绍",
       "descriptionPlaceholder": "说明任务目标、翻译要求和协作注意事项……",
       "files": "任务文件",
+      "fileCount": "共 {count} 个文件",
+      "searchFiles": "搜索任务文件路径",
       "chooseFiles": "选择期望文件集合",
       "folderSelectionHint": "勾选文件夹会按当前目录树展开为所有后代文件；服务器只接受文件 ID，不接受前端提供基线词条。",
       "selectedFiles": "已选择 {count} 个文件",
