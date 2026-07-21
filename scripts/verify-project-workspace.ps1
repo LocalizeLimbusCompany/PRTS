@@ -162,7 +162,7 @@ function Test-Contracts {
     Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'thinking_mode TEXT NOT NULL DEFAULT ''auto''' 'AI provider thinking mode is persisted'
     Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'schema_revision = GREATEST\(schema_revision, 18\)' 'AI settings migration advances the workspace schema revision'
     Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'ai-explanation/stream' 'Editor AI exposes the documented SSE route'
-    Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'source-explain-v4-web-search' 'Editor AI invalidates pre-search cache entries'
+    Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'source-explain-v5-terms-versions' 'Editor AI invalidates cache entries when term or version context changes'
     Assert-Contains 'frontend/src/api/aiStream.ts' 'ui_locale: uiLocale' 'Editor AI sends the current UI locale in the JSON body'
     Assert-Contains 'frontend/src/api/index.ts' 'streamExplainEntry' 'Editor uses the streaming AI client'
     Assert-Contains 'backend/migrations/0019_ai_web_search.sql' "web_search_mode TEXT NOT NULL DEFAULT 'disabled'" 'AI web search is opt-in for existing settings'
@@ -170,7 +170,10 @@ function Test-Contracts {
     Assert-Contains 'backend/migrations/0019_ai_web_search.sql' 'schema_revision = GREATEST\(schema_revision, 19\)' 'Web search migration advances the workspace schema revision'
     Assert-Contains 'backend/crates/prts-search/src/web.rs' 'trait WebSearchProvider' 'Web search adapters implement a stable provider contract'
     Assert-Contains 'frontend/src/stores/aiExplanationSession.ts' 'aiExplanationSessionKey' 'AI tasks are retained by editor session key'
-    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0019_ai_web_search.sql') '0019 AI web search migration is the newest migration'
+    Assert-Contains 'backend/migrations/0020_api_key_scopes.sql' 'scopes TEXT\[\] NOT NULL DEFAULT ARRAY\[''all''\]' 'API key scopes migrate existing keys to all'
+    Assert-Contains 'backend/migrations/0021_project_join_history_search.sql' 'join_policy' 'Project join policy migration is present'
+    Assert-Contains 'backend/migrations/0022_ai_transport_mode.sql' 'transport_mode TEXT NOT NULL DEFAULT ''auto''' 'AI transport mode migration is present'
+    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0022_ai_transport_mode.sql') '0022 AI transport migration is the newest migration'
 }
 
 function Test-ScaleRecoverySecurityContracts {
