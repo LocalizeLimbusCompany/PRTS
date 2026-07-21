@@ -282,9 +282,64 @@ a:hover {
 
 /* —— 移动端 —— */
 @media (max-width: 600px) {
+  html,
+  body,
+  #app {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
   .prts-container {
     padding: 16px 14px 44px;
   }
+
+  .q-page,
+  .q-card,
+  .q-card__section,
+  .q-item,
+  .q-item__section,
+  .q-tab-panels,
+  .q-tab-panel,
+  .q-banner,
+  .row > * {
+    min-width: 0;
+  }
+
+  .q-markup-table {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+  }
+
+  .q-markup-table table {
+    min-width: max-content;
+  }
+
+  .q-item__label,
+  .q-banner__content,
+  .prts-mono,
+  code,
+  pre,
+  a {
+    overflow-wrap: anywhere;
+  }
+
+  .q-btn {
+    max-width: 100%;
+  }
+
+  .q-btn__content,
+  .q-btn__content > .block {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .q-btn__content > .block {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .prts-h1 {
     font-size: 21px;
   }

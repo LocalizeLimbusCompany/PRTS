@@ -1794,6 +1794,8 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+ "url",
+ "utoipa",
 ]
 
 [[package]]

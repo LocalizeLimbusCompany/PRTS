@@ -27,6 +27,7 @@ import {
 import SearchFilters from '@/components/SearchFilters.vue'
 import SuggestionsPanel from '@/components/SuggestionsPanel.vue'
 import EntryAiTab from '@/components/editor/EntryAiTab.vue'
+import { useAiExplanationSessionStore } from '@/stores/aiExplanationSession'
 import EntryCommentsTab from '@/components/editor/EntryCommentsTab.vue'
 import EntryHistoryTab from '@/components/editor/EntryHistoryTab.vue'
 import EntryTermsTab from '@/components/editor/EntryTermsTab.vue'
@@ -46,6 +47,7 @@ const props = defineProps<{ id: number }>()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const aiSessions = useAiExplanationSessionStore()
 const $q = useQuasar()
 const { t } = useI18n()
 
@@ -564,9 +566,17 @@ watch(rightCollapsed, (value) =>
   localStorage.setItem('prts_editor_right_collapsed', value ? '1' : '0'),
 )
 onBeforeUnmount(() => {
+  aiSessions.clearProject(props.id)
   stopResize?.()
   sendIdle()
 })
+
+watch(
+  () => props.id,
+  (nextProjectId, previousProjectId) => {
+    if (nextProjectId !== previousProjectId) aiSessions.clearProject(previousProjectId)
+  },
+)
 
 onMounted(async () => {
   try {
@@ -665,7 +675,7 @@ onMounted(async () => {
           ></q-menu
         >
       </q-chip>
-      <div v-if="isNarrow" class="row q-gutter-xs">
+      <div v-if="isNarrow" class="editor-mobile-nav row q-gutter-xs">
         <q-btn-toggle
           v-model="mobileSection"
           dense
@@ -903,7 +913,10 @@ onMounted(async () => {
             :suggestions="suggestions"
             @apply="draft = $event"
           />
-          <div v-if="canEdit" class="row items-center justify-end q-mt-md q-gutter-sm">
+          <div
+            v-if="canEdit"
+            class="entry-save-actions row items-center justify-end q-mt-md q-gutter-sm"
+          >
             <q-select
               v-model="draftState"
               :options="stateOptions"
@@ -919,11 +932,13 @@ onMounted(async () => {
               :color="saveBtn.color"
               :text-color="saveBtn.color ? 'dark' : undefined"
               icon="mdi-content-save-outline"
-              :label="t(`editor.btn_${saveBtn.labelKey}`)"
+              :label="isNarrow ? undefined : t(`editor.btn_${saveBtn.labelKey}`)"
+              :aria-label="t(`editor.btn_${saveBtn.labelKey}`)"
               :loading="saving"
               :disable="saveBtn.disabled"
               @click="save"
-            />
+              ><q-tooltip>{{ t(`editor.btn_${saveBtn.labelKey}`) }}</q-tooltip></q-btn
+            >
           </div>
           <div v-else class="prts-dim q-mt-md text-right">{{ t('editor.readOnlyGuest') }}</div>
         </div>
@@ -964,17 +979,16 @@ onMounted(async () => {
             active-color="primary"
             indicator-color="primary"
             class="context-tabs"
-            ><q-tab name="terms" icon="mdi-book-alphabet" :label="t('editor.termsTab')" /><q-tab
-              name="ai"
-              icon="mdi-auto-fix"
-              :label="t('editor.ai.tab')" /><q-tab
-              name="history"
-              icon="mdi-history"
-              :label="t('editor.history')" /><q-tab
-              name="comments"
-              icon="mdi-comment-text-outline"
-              :label="t('editor.commentsTab')"
-          /></q-tabs>
+            ><q-tab name="terms" icon="mdi-book-alphabet" :label="t('editor.termsTab')"
+              ><q-tooltip>{{ t('editor.termsTab') }}</q-tooltip></q-tab
+            ><q-tab name="ai" icon="mdi-auto-fix" :label="t('editor.ai.tab')"
+              ><q-tooltip>{{ t('editor.ai.tab') }}</q-tooltip></q-tab
+            ><q-tab name="history" icon="mdi-history" :label="t('editor.history')"
+              ><q-tooltip>{{ t('editor.history') }}</q-tooltip></q-tab
+            ><q-tab name="comments" icon="mdi-comment-text-outline" :label="t('editor.commentsTab')"
+              ><q-tooltip>{{ t('editor.commentsTab') }}</q-tooltip></q-tab
+            ></q-tabs
+          >
         </div>
         <div v-if="!selected" class="prts-empty editor-empty">
           {{ t('editor.selectForContext') }}
@@ -1206,6 +1220,9 @@ onMounted(async () => {
   gap: 8px;
   margin-bottom: 9px;
 }
+.entry-toolbar > * {
+  min-width: 0;
+}
 .entry-key {
   max-width: 55%;
   font-size: 13px;
@@ -1231,9 +1248,11 @@ onMounted(async () => {
   flex: 0 0 54px;
 }
 .orig-text {
+  min-width: 0;
   color: var(--prts-text-strong);
   line-height: 1.65;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 :deep(.prts-translation) {
   font-size: 14px;
@@ -1311,6 +1330,21 @@ onMounted(async () => {
     font-size: 10px;
   }
 
+  .editor-mobile-nav {
+    width: 100%;
+  }
+
+  .entry-save-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 40px;
+    gap: 8px;
+  }
+
+  .entry-save-actions :deep(.q-field) {
+    min-width: 0 !important;
+    width: 100%;
+  }
+
   .orig-row {
     align-items: stretch;
     flex-direction: column;
@@ -1329,6 +1363,16 @@ onMounted(async () => {
 
   .context-tabs :deep(.q-tab__label) {
     font-size: 10px;
+  }
+}
+
+@media (max-width: 420px) {
+  .context-tabs :deep(.q-tab) {
+    min-width: 44px;
+  }
+
+  .context-tabs :deep(.q-tab__label) {
+    display: none;
   }
 }
 </style>

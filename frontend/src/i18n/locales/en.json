@@ -139,6 +139,25 @@
       "seconds": "seconds",
       "customOptions": "Advanced request options (JSON)",
       "customOptionsHint": "Add non-core parameters supported by the endpoint. Credentials and authentication fields are rejected.",
+      "webSearch": {
+        "heading": "Web search",
+        "description": "Search runs only when you explicitly analyze a source. A search failure falls back to an explanation without web context.",
+        "mode": "Search mode",
+        "modes": {
+          "disabled": "Disabled",
+          "adapter": "Server search adapter",
+          "native": "Model-native search",
+          "auto": "Automatic"
+        },
+        "provider": "Search provider",
+        "endpoint": "Search endpoint",
+        "endpointHint": "Tavily uses its official HTTPS endpoint when left blank. Other providers require a public HTTPS URL.",
+        "apiKey": "Search API key",
+        "keyConfigured": "Saved search key ending in {hint}",
+        "timeout": "Search timeout",
+        "maxResults": "Maximum results",
+        "citations": "Show citation links in explanations"
+      },
       "keyConfigured": "Saved key ending in {hint}",
       "save": "Save AI settings",
       "saved": "Personal AI settings saved",
@@ -158,7 +177,11 @@
         "jsonTooLarge": "Advanced request options cannot exceed 16 KiB.",
         "jsonDepth": "Advanced request options cannot exceed eight nested levels.",
         "jsonConflict": "Advanced request options include a core field managed by the system.",
-        "jsonSensitive": "Advanced request options cannot include keys, tokens, or other authentication fields."
+        "jsonSensitive": "Advanced request options cannot include keys, tokens, or other authentication fields.",
+        "searchUrl": "The search endpoint must be HTTPS without credentials, query parameters, or a fragment.",
+        "searchKey": "A search API key is required when enabling an adapter for the first time.",
+        "searchTimeout": "Search timeout must be an integer from 3 to 60.",
+        "searchResults": "Maximum results must be an integer from 1 to 10."
       }
     },
     "diffModes": {
@@ -757,8 +780,18 @@
       "noTokens": "The AI did not return usable tokens.",
       "provider": "Source: {source}",
       "cached": "Cached result",
+      "cancelled": "This analysis was stopped. The previous result is still available.",
+      "citations": "Web citations ({count})",
+      "searchStatuses": {
+        "disabled": "Web search was not enabled",
+        "succeeded": "Web sources were used",
+        "failed": "Web search failed; this explanation did not use web sources",
+        "empty": "Web search returned no usable sources",
+        "unsupported": "The selected search mode is not supported by this model or provider"
+      },
       "phases": {
         "connecting": "Connecting to AI",
+        "searching": "Searching the web",
         "thinking": "Thinking",
         "generating": "Generating explanation",
         "formatting": "Formatting result"

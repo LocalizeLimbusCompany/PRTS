@@ -61,4 +61,38 @@ describe('AI settings validation', () => {
     )
     expect(buildAiSettingsRequest(form, true).api_key).toBeUndefined()
   })
+
+  it('validates and retains tenant-scoped web search credentials', () => {
+    const form = validForm()
+    form.web_search_mode = 'adapter'
+    form.web_search_endpoint = 'https://api.tavily.com/search'
+    form.web_search_api_key = 'search-key'
+    form.web_search_timeout_seconds = '12'
+    form.web_search_max_results = '7'
+    const request = buildAiSettingsRequest(form, false, false)
+    expect(request.web_search_mode).toBe('adapter')
+    expect(request.web_search_api_key).toBe('search-key')
+    expect(request.web_search_max_results).toBe(7)
+
+    form.web_search_api_key = ''
+    expect(() => buildAiSettingsRequest(form, true, false)).toThrowError(
+      expect.objectContaining({ code: 'searchKey' }),
+    )
+    expect(buildAiSettingsRequest(form, true, true).web_search_api_key).toBeUndefined()
+  })
+
+  it('rejects unsafe web search endpoints and bounds', () => {
+    const form = validForm()
+    form.web_search_mode = 'adapter'
+    form.web_search_api_key = 'search-key'
+    form.web_search_endpoint = 'http://localhost/search'
+    expect(() => buildAiSettingsRequest(form, false, false)).toThrowError(
+      expect.objectContaining({ code: 'searchUrl' }),
+    )
+    form.web_search_endpoint = 'https://api.tavily.com/search'
+    form.web_search_max_results = '11'
+    expect(() => buildAiSettingsRequest(form, false, false)).toThrowError(
+      expect.objectContaining({ code: 'searchResults' }),
+    )
+  })
 })

@@ -1,122 +1,61 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useQuasar } from 'quasar'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import {
-  aiApi,
-  apiErrorMessage,
-  type AiExplanationDto,
-  type AiStreamPhase,
-  type AiUiLocale,
-} from '@/api'
+import type { AiUiLocale } from '@/api'
+import { useAiExplanationSessionStore } from '@/stores/aiExplanationSession'
 
 const props = defineProps<{ projectId: number; entryId: number }>()
-const $q = useQuasar()
 const { locale, t } = useI18n()
-const loading = ref(false)
-const explanation = ref<AiExplanationDto | null>(null)
-const phase = ref<AiStreamPhase>('connecting')
-const outputTokens = ref(0)
-const outputTokensExact = ref(false)
-const elapsedSeconds = ref(0)
-const controller = ref<AbortController | null>(null)
-let elapsedTimer: ReturnType<typeof setInterval> | undefined
+const sessions = useAiExplanationSessionStore()
 
 const activeUiLocale = computed<AiUiLocale>(() => (locale.value === 'en' ? 'en' : 'zh-CN'))
+const session = computed(() =>
+  sessions.getOrCreate(props.projectId, props.entryId, activeUiLocale.value),
+)
+const explanation = computed(() => session.value.result)
 
 const tokenLabel = computed(() =>
-  t(outputTokensExact.value ? 'editor.ai.tokensExact' : 'editor.ai.tokensEstimated', {
-    count: outputTokens.value,
+  t(session.value.outputTokensExact ? 'editor.ai.tokensExact' : 'editor.ai.tokensEstimated', {
+    count: session.value.outputTokens,
   }),
 )
+const resultTokenLabel = computed(() => {
+  const result = explanation.value
+  if (!result || result.output_tokens === null) return ''
+  return t(result.output_tokens_exact ? 'editor.ai.tokensExact' : 'editor.ai.tokensEstimated', {
+    count: result.output_tokens,
+  })
+})
 
-function stopElapsedTimer() {
-  if (elapsedTimer) clearInterval(elapsedTimer)
-  elapsedTimer = undefined
+function citationDomain(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
 }
 
 /** Cancelling the browser request also closes the backend channel and upstream provider stream. */
 function cancelAnalysis() {
-  controller.value?.abort()
+  sessions.cancel(props.projectId, props.entryId, activeUiLocale.value)
 }
 
-watch(
-  () => [props.projectId, props.entryId, locale.value],
-  () => {
-    cancelAnalysis()
-    explanation.value = null
-    outputTokens.value = 0
-    outputTokensExact.value = false
-  },
-)
-
-onBeforeUnmount(() => {
-  cancelAnalysis()
-  stopElapsedTimer()
-})
-
 /** AI 只在用户明确点击后分析当前词条的主源文本。 */
-async function explain() {
-  cancelAnalysis()
-  const requestController = new AbortController()
-  controller.value = requestController
-  loading.value = true
-  explanation.value = null
-  phase.value = 'connecting'
-  outputTokens.value = 0
-  outputTokensExact.value = false
-  elapsedSeconds.value = 0
-  stopElapsedTimer()
-  const startedAt = Date.now()
-  elapsedTimer = setInterval(() => {
-    elapsedSeconds.value = Math.floor((Date.now() - startedAt) / 1_000)
-  }, 1_000)
-  try {
-    const result = await aiApi.streamExplainEntry(
-      props.projectId,
-      props.entryId,
-      activeUiLocale.value,
-      undefined,
-      {
-        onStatus(status) {
-          if (controller.value === requestController) phase.value = status.phase
-        },
-        onProgress(progress) {
-          if (controller.value !== requestController) return
-          phase.value = progress.phase
-          outputTokens.value = progress.estimated_output_tokens
-          outputTokensExact.value = false
-        },
-      },
-      requestController.signal,
-    )
-    if (controller.value !== requestController) return
-    explanation.value = result
-    outputTokens.value = result.output_tokens ?? outputTokens.value
-    outputTokensExact.value = result.output_tokens_exact
-  } catch (error) {
-    if (requestController.signal.aborted) return
-    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('editor.ai.loadFailed')) })
-  } finally {
-    if (controller.value === requestController) {
-      controller.value = null
-      loading.value = false
-      stopElapsedTimer()
-    }
-  }
+function explain() {
+  void sessions.analyze(props.projectId, props.entryId, activeUiLocale.value)
 }
 </script>
 
 <template>
   <div class="ai-panel">
-    <div v-if="loading" class="ai-panel__progress" role="status" aria-live="polite">
+    <div v-if="session.loading" class="ai-panel__progress" role="status" aria-live="polite">
       <div class="ai-panel__progress-head">
         <q-icon name="mdi-brain" size="30px" color="primary" />
         <div>
-          <div class="prts-h2">{{ t(`editor.ai.phases.${phase}`) }}</div>
+          <div class="prts-h2">{{ t(`editor.ai.phases.${session.phase}`) }}</div>
           <div class="prts-dim q-mt-xs">
-            {{ t('editor.ai.elapsed', { seconds: elapsedSeconds }) }} · {{ tokenLabel }}
+            {{ t('editor.ai.elapsed', { seconds: session.elapsedSeconds }) }} · {{ tokenLabel }}
           </div>
         </div>
       </div>
@@ -127,10 +66,17 @@ async function explain() {
         color="negative"
         icon="mdi-stop-circle-outline"
         :label="t('editor.ai.cancel')"
+        :aria-label="t('editor.ai.cancel')"
         @click="cancelAnalysis"
       />
     </div>
-    <div v-else-if="!explanation" class="ai-panel__empty">
+    <q-banner v-if="session.errorCode" dense class="bg-negative text-white">
+      {{ session.errorMessage || t('editor.ai.loadFailed') }}
+    </q-banner>
+    <q-banner v-else-if="session.cancelled" dense class="ai-panel__notice">
+      {{ t('editor.ai.cancelled') }}
+    </q-banner>
+    <div v-if="!session.loading && !explanation" class="ai-panel__empty">
       <q-icon name="mdi-auto-fix" size="34px" color="primary" />
       <div class="prts-h2">{{ t('editor.ai.heading') }}</div>
       <div class="prts-dim">{{ t('editor.ai.description') }}</div>
@@ -144,7 +90,7 @@ async function explain() {
         @click="explain"
       />
     </div>
-    <template v-else>
+    <template v-if="explanation">
       <div class="ai-panel__head">
         <div>
           <div class="prts-label">{{ t('editor.ai.overallMeaning') }}</div>
@@ -155,7 +101,7 @@ async function explain() {
           round
           dense
           icon="mdi-refresh"
-          :loading="loading"
+          :loading="session.loading"
           :aria-label="t('editor.ai.analyzeAgain')"
           @click="explain"
         />
@@ -195,14 +141,45 @@ async function explain() {
           })
         }}
         <span v-if="explanation.cached"> · {{ t('editor.ai.cached') }}</span>
-        <span v-if="explanation.output_tokens !== null"> · {{ tokenLabel }}</span>
+        <span v-if="resultTokenLabel"> · {{ resultTokenLabel }}</span>
       </div>
+
+      <q-banner
+        dense
+        class="ai-panel__search-status"
+        :class="{ 'ai-panel__search-status--warning': explanation.search_status === 'failed' }"
+      >
+        <q-icon :name="explanation.search_used ? 'mdi-web-check' : 'mdi-web-off'" size="18px" />
+        <span>{{ t(`editor.ai.searchStatuses.${explanation.search_status}`) }}</span>
+        <span v-if="explanation.search_provider" class="prts-dim">
+          · {{ explanation.search_provider }}
+        </span>
+      </q-banner>
+
+      <q-expansion-item
+        v-if="explanation.citations.length"
+        dense
+        dense-toggle
+        icon="mdi-link-variant"
+        :label="t('editor.ai.citations', { count: explanation.citations.length })"
+      >
+        <ol class="ai-citations">
+          <li v-for="citation in explanation.citations" :key="citation.url">
+            <a :href="citation.url" target="_blank" rel="noopener noreferrer">
+              {{ citation.title }}
+            </a>
+            <span class="ai-citations__domain">{{ citationDomain(citation.url) }}</span>
+            <p v-if="citation.snippet">{{ citation.snippet }}</p>
+          </li>
+        </ol>
+      </q-expansion-item>
     </template>
   </div>
 </template>
 
 <style scoped>
 .ai-panel {
+  min-width: 0;
   display: grid;
   gap: 14px;
   padding: 12px;
@@ -245,6 +222,7 @@ async function explain() {
   color: var(--prts-text-strong);
   line-height: 1.65;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .ai-panel__grammar,
@@ -255,6 +233,45 @@ async function explain() {
   border: 1px solid var(--prts-border-soft);
   background: var(--prts-panel-2);
   line-height: 1.55;
+}
+
+.ai-panel__notice,
+.ai-panel__search-status {
+  border: 1px solid var(--prts-border-soft);
+  background: var(--prts-panel-2);
+}
+
+.ai-panel__search-status--warning {
+  border-color: color-mix(in srgb, var(--q-warning) 55%, var(--prts-border));
+}
+
+.ai-citations {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 0;
+  padding-left: 28px;
+}
+
+.ai-citations li,
+.ai-citations p,
+.ai-citations a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-citations a {
+  color: var(--prts-accent);
+}
+
+.ai-citations__domain {
+  margin-left: 6px;
+  color: var(--prts-text-dim);
+  font-size: 11px;
+}
+
+.ai-citations p {
+  margin: 4px 0 0;
+  color: var(--prts-text-dim);
 }
 
 .ai-token-list {
@@ -275,5 +292,22 @@ async function explain() {
 
 .ai-panel__meta {
   font-size: 11px;
+}
+
+@media (max-width: 390px) {
+  .ai-panel__progress > .q-btn {
+    width: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+
+  .ai-panel__progress > .q-btn :deep(.q-btn__content > .block) {
+    display: none;
+  }
+
+  .ai-citations__domain {
+    display: block;
+    margin-left: 0;
+  }
 }
 </style>

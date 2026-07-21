@@ -85,6 +85,20 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
         ("AI_CUSTOM_OPTIONS_SENSITIVE", Locale::En) => {
             "Custom request fields cannot contain keys or credentials"
         }
+        ("WEB_SEARCH_OPTIONS_INVALID", Locale::ZhCn) => {
+            "联网搜索超时必须为 3 到 60 秒，结果数必须为 1 到 10"
+        }
+        ("WEB_SEARCH_OPTIONS_INVALID", Locale::En) => {
+            "Web search timeout must be 3 to 60 seconds and result count must be 1 to 10"
+        }
+        ("WEB_SEARCH_PROVIDER_INVALID", Locale::ZhCn) => "联网搜索提供方无效",
+        ("WEB_SEARCH_PROVIDER_INVALID", Locale::En) => "Invalid web search provider",
+        ("WEB_SEARCH_ENDPOINT_INVALID", Locale::ZhCn) => {
+            "联网搜索地址必须是可公开访问的 HTTPS 地址"
+        }
+        ("WEB_SEARCH_ENDPOINT_INVALID", Locale::En) => {
+            "The web search endpoint must be a publicly reachable HTTPS URL"
+        }
         ("AUTH_PASSWORD_DISABLED", Locale::ZhCn) => "当前仅允许使用 OAuth 登录",
         ("AUTH_PASSWORD_DISABLED", Locale::En) => {
             "Password authentication is disabled; use an OAuth provider"

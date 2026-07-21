@@ -459,6 +459,14 @@ mod tests {
             document["components"]["schemas"]["AiExplainRequest"]["properties"]["ui_locale"]
                 .is_object()
         );
+        let settings = &document["components"]["schemas"]["AiSettingsDto"]["properties"];
+        assert!(settings["web_search_mode"].is_object());
+        assert!(settings["web_search_configured"].is_object());
+        assert!(settings.get("web_search_api_key").is_none());
+        let explanation = &document["components"]["schemas"]["AiExplanationDto"]["properties"];
+        assert!(explanation["search_status"].is_object());
+        assert!(explanation["citations"].is_object());
+        assert!(document["components"]["schemas"]["WebSearchCitation"].is_object());
     }
 
     /// SearchScope 的 discriminator、封闭对象与 BIGINT ID 必须体现在生成文档中，

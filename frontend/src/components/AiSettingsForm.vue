@@ -7,6 +7,7 @@ import type {
   AiReasoningEffort,
   AiSettingsDto,
   AiSettingsWriteRequest,
+  WebSearchMode,
 } from '@/api'
 import {
   AiSettingsValidationError,
@@ -73,6 +74,18 @@ const effortOptions = computed(() =>
     label: t(`profile.ai.reasoningEfforts.${value}`),
   })),
 )
+const searchModeOptions = computed(() =>
+  (['disabled', 'adapter', 'native', 'auto'] as WebSearchMode[]).map((value) => ({
+    value,
+    label: t(`profile.ai.webSearch.modes.${value}`),
+  })),
+)
+const searchProviderOptions = computed(() =>
+  ['tavily', 'brave', 'serper', 'searxng'].map((value) => ({
+    value,
+    label: value === 'searxng' ? 'SearXNG' : value[0]?.toUpperCase() + value.slice(1),
+  })),
+)
 const supportsEffort = computed(
   () =>
     form.value.provider_preset === 'openai' ||
@@ -88,7 +101,11 @@ const obviousFieldsReady = computed(
 
 function submit() {
   try {
-    const request = buildAiSettingsRequest(form.value, Boolean(props.settings?.configured))
+    const request = buildAiSettingsRequest(
+      form.value,
+      Boolean(props.settings?.configured),
+      Boolean(props.settings?.web_search_configured),
+    )
     validationCode.value = null
     emit('save', request)
   } catch (error) {
@@ -247,6 +264,97 @@ function submit() {
       />
     </q-expansion-item>
 
+    <q-separator />
+    <div class="ai-settings-form__section">
+      <div>
+        <div class="prts-label">{{ t('profile.ai.webSearch.heading') }}</div>
+        <div class="prts-dim q-mt-xs">{{ t('profile.ai.webSearch.description') }}</div>
+      </div>
+      <q-select
+        v-model="form.web_search_mode"
+        outlined
+        dense
+        emit-value
+        map-options
+        :options="searchModeOptions"
+        :label="t('profile.ai.webSearch.mode')"
+        :disable="loading"
+      />
+      <template v-if="form.web_search_mode === 'adapter' || form.web_search_mode === 'auto'">
+        <q-select
+          v-model="form.web_search_provider"
+          outlined
+          dense
+          emit-value
+          map-options
+          :options="searchProviderOptions"
+          :label="t('profile.ai.webSearch.provider')"
+          :disable="loading"
+        />
+        <q-input
+          v-model="form.web_search_endpoint"
+          outlined
+          dense
+          type="url"
+          autocomplete="url"
+          :label="t('profile.ai.webSearch.endpoint')"
+          :hint="t('profile.ai.webSearch.endpointHint')"
+          :disable="loading"
+        />
+        <q-banner v-if="settings?.web_search_configured" dense class="ai-settings-form__key">
+          {{
+            t('profile.ai.webSearch.keyConfigured', {
+              hint: settings.web_search_api_key_hint,
+            })
+          }}
+        </q-banner>
+        <q-input
+          v-if="form.web_search_provider !== 'searxng'"
+          v-model="form.web_search_api_key"
+          outlined
+          dense
+          type="password"
+          autocomplete="new-password"
+          :label="t('profile.ai.webSearch.apiKey')"
+          :hint="
+            settings?.web_search_configured
+              ? t('profile.ai.apiKeyRetainHint')
+              : t('profile.ai.apiKeyRequiredHint')
+          "
+          :disable="loading"
+        />
+      </template>
+      <div v-if="form.web_search_mode !== 'disabled'" class="ai-settings-form__grid">
+        <q-input
+          v-model="form.web_search_timeout_seconds"
+          outlined
+          dense
+          type="number"
+          min="3"
+          max="60"
+          :label="t('profile.ai.webSearch.timeout')"
+          :suffix="t('profile.ai.seconds')"
+          :disable="loading"
+        />
+        <q-input
+          v-model="form.web_search_max_results"
+          outlined
+          dense
+          type="number"
+          min="1"
+          max="10"
+          :label="t('profile.ai.webSearch.maxResults')"
+          :disable="loading"
+        />
+      </div>
+      <q-toggle
+        v-if="form.web_search_mode !== 'disabled'"
+        v-model="form.web_search_citations_enabled"
+        :label="t('profile.ai.webSearch.citations')"
+        :disable="loading"
+      />
+    </div>
+
     <q-toggle v-model="form.enabled" :label="t('profile.ai.enabled')" :disable="loading" />
     <div class="row q-gutter-sm">
       <q-btn
@@ -297,6 +405,11 @@ function submit() {
   background: var(--prts-panel-2);
 }
 
+.ai-settings-form__section,
+.ai-settings-form__section > * {
+  min-width: 0;
+}
+
 :deep(.ai-settings-form__json) {
   max-height: 220px;
   overflow: auto;
@@ -310,6 +423,15 @@ function submit() {
 
   .ai-settings-form__wide {
     grid-column: auto;
+  }
+
+  :deep(.q-btn-toggle) {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  :deep(.q-btn-toggle .q-btn) {
+    min-width: max-content;
   }
 }
 </style>

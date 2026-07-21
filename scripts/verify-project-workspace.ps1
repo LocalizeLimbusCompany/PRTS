@@ -162,10 +162,15 @@ function Test-Contracts {
     Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'thinking_mode TEXT NOT NULL DEFAULT ''auto''' 'AI provider thinking mode is persisted'
     Assert-Contains 'backend/migrations/0018_ai_stream_settings.sql' 'schema_revision = GREATEST\(schema_revision, 18\)' 'AI settings migration advances the workspace schema revision'
     Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'ai-explanation/stream' 'Editor AI exposes the documented SSE route'
-    Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'source-explain-v3-ui-locale' 'Editor AI invalidates legacy language-agnostic cache entries'
+    Assert-Contains 'backend/crates/prts-api/src/routes/ai.rs' 'source-explain-v4-web-search' 'Editor AI invalidates pre-search cache entries'
     Assert-Contains 'frontend/src/api/aiStream.ts' 'ui_locale: uiLocale' 'Editor AI sends the current UI locale in the JSON body'
     Assert-Contains 'frontend/src/api/index.ts' 'streamExplainEntry' 'Editor uses the streaming AI client'
-    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0018_ai_stream_settings.sql') '0018 AI streaming settings migration is the newest migration'
+    Assert-Contains 'backend/migrations/0019_ai_web_search.sql' "web_search_mode TEXT NOT NULL DEFAULT 'disabled'" 'AI web search is opt-in for existing settings'
+    Assert-Contains 'backend/migrations/0019_ai_web_search.sql' 'web_search_api_key_ciphertext BYTEA' 'Search credentials are stored as encrypted ciphertext'
+    Assert-Contains 'backend/migrations/0019_ai_web_search.sql' 'schema_revision = GREATEST\(schema_revision, 19\)' 'Web search migration advances the workspace schema revision'
+    Assert-Contains 'backend/crates/prts-search/src/web.rs' 'trait WebSearchProvider' 'Web search adapters implement a stable provider contract'
+    Assert-Contains 'frontend/src/stores/aiExplanationSession.ts' 'aiExplanationSessionKey' 'AI tasks are retained by editor session key'
+    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0019_ai_web_search.sql') '0019 AI web search migration is the newest migration'
 }
 
 function Test-ScaleRecoverySecurityContracts {

@@ -178,15 +178,19 @@ locked 修改和“强制保存”由 capability 控制；强制保存只越过 
 用户显式点击解释当前 primary source
  → 校验登录、项目可见性/实际 membership 与 entry 绑定
  → 按 auto/personal/project 解析 provider（显式来源不回退）
- → 解密 scoped API key，校验 HTTPS endpoint 并固定公网解析地址
+ → 解密同一 scope 的 AI/可选搜索 API key，校验 HTTPS endpoint 并固定公网解析地址
+ → disabled | adapter(Tavily) | native(OpenAI Responses/Gemini grounding) | auto
+ → 搜索失败/空结果/不支持时标记状态并降级，不阻断解释
  → OpenAI-compatible streaming chat completion（单请求 30–600 秒，默认 180 秒）
- → SSE 仅发送 connecting/thinking/generating/formatting 阶段与累计 token 估算
- → 校验结构化响应，使用 provider usage 替换估算并返回整体含义/语境义/POS/语法
+ → SSE 仅发送 connecting/searching/thinking/generating/formatting 阶段与累计 token 估算
+ → 校验结构化响应，返回整体含义/语境义/POS/语法及清洗后的搜索状态/引用
 ```
 
-个人 AI 设置归当前用户，项目 AI 设置只由项目唯一 owner 管理；平台管理员不能冒充 owner。两类设置共用 provider preset（OpenAI/Qwen/DeepSeek/Gemini/custom）、`auto/enabled/disabled` 思考模式、provider-specific 强度或预算、超时与受限 JSON 扩展项。核心字段冲突、超过 16 KiB/8 层或疑似凭据字段的扩展项会被拒绝。AI 解释请求在 JSON 中显式携带当前界面语言（`zh-CN`/`en`）；模型所有解释字段按该语言生成，token 保留源文表面形式，输出语言与缓存均不依赖 `Accept-Language`。
+个人 AI 设置归当前用户，项目 AI 设置只由项目唯一 owner 管理；平台管理员不能冒充 owner。两类设置共用 provider preset（OpenAI/Qwen/DeepSeek/Gemini/custom）、`auto/enabled/disabled` 思考模式、provider-specific 强度或预算、超时与受限 JSON 扩展项。联网设置与实际 AI 来源保持同一 personal/project scope，不跨 scope 共享凭据；服务端适配器首版实现 Tavily，Brave/Serper/SearXNG 保留 provider 接口。`auto` 优先原生能力再回退适配器，`native` 不支持时明确返回 unsupported。核心字段冲突、超过 16 KiB/8 层或疑似凭据字段的扩展项会被拒绝。AI 解释请求在 JSON 中显式携带当前界面语言（`zh-CN`/`en`）；模型所有解释字段按该语言生成，token 保留源文表面形式，输出语言与缓存均不依赖 `Accept-Language`。
 
-项目 AI 只供实际项目成员使用。API Key 以 XChaCha20-Poly1305 和环境变量 `PRTS__AI__MASTER_KEY` 加密，明文不回传。出站请求拒绝私网/保留地址、HTTP、重定向和 DNS rebinding；缓存键包含 personal user/project owner scope、endpoint、model、界面语言、思考/扩展参数与 prompt 版本，避免跨租户、跨语言或配置复用。流式转发只观察 provider reasoning 以估算 token，原始 reasoning 内容永不进入前端事件或缓存结果。浏览器取消会关闭后端 channel 并释放上游响应流；nginx 禁用响应缓冲并提供 650 秒 read timeout。读取词条或切换词条不会自动调用第三方。
+项目 AI 只供实际项目成员使用。AI 与搜索 API Key 均以 XChaCha20-Poly1305 和环境变量 `PRTS__AI__MASTER_KEY` 分别加密，明文不回传、不进审计或缓存正文。出站请求拒绝私网/保留地址、HTTP、重定向和 DNS rebinding；搜索结果先清洗 URL、限制摘要长度、去重编号。解释与一小时搜索缓存键均包含 personal user/project owner scope、搜索模式/provider/endpoint、界面语言、查询摘要与 prompt 版本，避免跨租户、跨语言或配置复用。流式转发只观察 provider reasoning 以估算 token，原始 reasoning 内容永不进入前端事件或缓存结果。
+
+前端 AI 任务由编辑器级 Pinia 状态层按 `projectId + entryId + uiLocale` 保存；切换右栏 Tab、词条或移动端 list/editor/context 不取消请求，重新挂载恢复阶段/计时/结果。重新分析保留旧结果直到新结果完成，失败或主动取消仍可查看旧结果。只有用户定向取消、退出编辑器/切换项目或注销会中止对应请求并释放计时器；浏览器刷新不恢复任务。浏览器取消会关闭后端 channel，并在搜索或模型流阶段释放上游请求；nginx 禁用响应缓冲并提供 650 秒 read timeout。读取词条或切换词条不会自动调用第三方。
 
 ### 3.9 任务与术语
 

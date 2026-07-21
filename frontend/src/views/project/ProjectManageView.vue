@@ -394,7 +394,9 @@ async function cancelDeletion() {
         :name="tab.key"
         :icon="tab.icon"
         :label="$t(`project.manage.tabs.${tab.key}`)"
-      />
+      >
+        <q-tooltip>{{ $t(`project.manage.tabs.${tab.key}`) }}</q-tooltip>
+      </q-tab>
     </q-tabs>
 
     <q-card
@@ -931,6 +933,17 @@ async function cancelDeletion() {
   .manage-view__language-action {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 420px) {
+  .manage-view__tabs :deep(.q-tab) {
+    min-width: 48px;
+    padding-inline: 8px;
+  }
+
+  .manage-view__tabs :deep(.q-tab__label) {
+    display: none;
   }
 }
 </style>

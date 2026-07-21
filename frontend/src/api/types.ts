@@ -23,7 +23,9 @@ export type AiUiLocale = 'zh-CN' | 'en'
 export type AiProviderPreset = 'openai' | 'qwen' | 'deepseek' | 'gemini' | 'custom'
 export type AiThinkingMode = 'auto' | 'enabled' | 'disabled'
 export type AiReasoningEffort = 'low' | 'medium' | 'high' | 'max'
-export type AiStreamPhase = 'connecting' | 'thinking' | 'generating' | 'formatting'
+export type AiStreamPhase = 'connecting' | 'searching' | 'thinking' | 'generating' | 'formatting'
+export type WebSearchMode = 'disabled' | 'adapter' | 'native' | 'auto'
+export type WebSearchStatus = 'disabled' | 'succeeded' | 'failed' | 'empty' | 'unsupported'
 
 export type AiCustomRequestOptions = Record<string, unknown>
 
@@ -40,6 +42,14 @@ export interface AiSettingsDto {
   thinking_budget: number | null
   request_timeout_seconds: number
   custom_request_options: AiCustomRequestOptions
+  web_search_mode: WebSearchMode
+  web_search_provider: string
+  web_search_endpoint: string | null
+  web_search_configured: boolean
+  web_search_api_key_hint: string | null
+  web_search_timeout_seconds: number
+  web_search_max_results: number
+  web_search_citations_enabled: boolean
 }
 
 /** Complete settings payload shared by personal and project AI providers. */
@@ -54,6 +64,22 @@ export interface AiSettingsWriteRequest {
   thinking_budget: number | null
   request_timeout_seconds: number
   custom_request_options: AiCustomRequestOptions
+  web_search_mode: WebSearchMode
+  web_search_provider: string
+  web_search_endpoint: string | null
+  web_search_api_key?: string
+  web_search_timeout_seconds: number
+  web_search_max_results: number
+  web_search_citations_enabled: boolean
+}
+
+export interface WebSearchCitation {
+  number: number
+  title: string
+  url: string
+  snippet: string
+  published_at: string | null
+  source: string
 }
 
 export interface AiTokenExplanation {
@@ -72,6 +98,10 @@ export interface AiExplanationDto {
   cached: boolean
   output_tokens: number | null
   output_tokens_exact: boolean
+  search_status: WebSearchStatus
+  search_used: boolean
+  search_provider: string | null
+  citations: WebSearchCitation[]
 }
 
 export interface AiStreamStatusDto {

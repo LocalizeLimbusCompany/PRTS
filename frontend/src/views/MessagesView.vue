@@ -87,10 +87,29 @@ function preview(th: ThreadDto): string {
   background: var(--prts-panel);
 }
 .msg-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
+}
+.msg-list :deep(.q-item__section--main) {
+  min-width: 0;
 }
 .msg-empty {
   padding: 60px 0;
   text-align: center;
+}
+@media (max-width: 390px) {
+  .msg-page {
+    padding: 16px 10px;
+  }
+
+  .msg-list :deep(.q-item) {
+    padding-inline: 10px;
+  }
+
+  .msg-list :deep(.q-item__section--avatar) {
+    min-width: 50px;
+  }
 }
 </style>

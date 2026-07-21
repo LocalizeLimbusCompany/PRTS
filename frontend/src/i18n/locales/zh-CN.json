@@ -139,6 +139,25 @@
       "seconds": "秒",
       "customOptions": "高级请求选项（JSON）",
       "customOptionsHint": "可添加兼容接口支持的非核心参数，不得包含密钥或认证信息。",
+      "webSearch": {
+        "heading": "联网搜索",
+        "description": "仅在你主动分析原文时联网。搜索失败会自动继续生成不含联网资料的解释。",
+        "mode": "联网方式",
+        "modes": {
+          "disabled": "关闭",
+          "adapter": "服务端搜索适配器",
+          "native": "模型原生联网",
+          "auto": "自动选择"
+        },
+        "provider": "搜索提供方",
+        "endpoint": "搜索 Endpoint",
+        "endpointHint": "Tavily 留空时使用官方 HTTPS 地址；其他提供方需填写公网 HTTPS 地址。",
+        "apiKey": "搜索 API Key",
+        "keyConfigured": "已保存搜索密钥（尾号 {hint}）",
+        "timeout": "搜索超时",
+        "maxResults": "最多结果数",
+        "citations": "在解释中显示引用链接"
+      },
       "keyConfigured": "已保存密钥（尾号 {hint}）",
       "save": "保存 AI 配置",
       "saved": "个人 AI 配置已保存",
@@ -158,7 +177,11 @@
         "jsonTooLarge": "高级请求选项不能超过 16 KiB。",
         "jsonDepth": "高级请求选项的嵌套层级不能超过 8 层。",
         "jsonConflict": "高级请求选项包含由系统管理的核心字段。",
-        "jsonSensitive": "高级请求选项不能包含密钥、令牌或其他认证字段。"
+        "jsonSensitive": "高级请求选项不能包含密钥、令牌或其他认证字段。",
+        "searchUrl": "搜索 Endpoint 必须是不含账号、查询参数或片段的 HTTPS 地址。",
+        "searchKey": "首次启用搜索适配器必须填写搜索 API Key。",
+        "searchTimeout": "搜索超时必须是 3–60 之间的整数。",
+        "searchResults": "最多结果数必须是 1–10 之间的整数。"
       }
     },
     "diffModes": {
@@ -757,8 +780,18 @@
       "noTokens": "AI 未返回可用的分词。",
       "provider": "来源：{source}",
       "cached": "缓存结果",
+      "cancelled": "本次分析已停止，之前的结果仍保留。",
+      "citations": "联网引用（{count}）",
+      "searchStatuses": {
+        "disabled": "未启用联网搜索",
+        "succeeded": "已使用联网资料",
+        "failed": "联网搜索失败，本次解释未使用联网资料",
+        "empty": "联网搜索没有返回可用资料",
+        "unsupported": "当前模型或搜索提供方不支持所选联网方式"
+      },
       "phases": {
         "connecting": "正在连接 AI",
+        "searching": "正在检索联网资料",
         "thinking": "思考中",
         "generating": "正在生成解释",
         "formatting": "正在整理结果"

@@ -164,6 +164,14 @@ watch(() => props.id, load)
   gap: 4px;
 }
 
+.project-shell__title h1,
+.project-shell__title .prts-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .project-shell__layout {
   align-items: flex-start;
   gap: 28px;

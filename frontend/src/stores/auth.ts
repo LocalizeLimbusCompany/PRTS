@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { authApi, usersApi, type UserDto } from '@/api'
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '@/api/session'
 import { hasPlatformCapability } from '@/lib/capabilities'
+import { useAiExplanationSessionStore } from '@/stores/aiExplanationSession'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<UserDto | null>(null)
@@ -47,6 +48,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
+    useAiExplanationSessionStore().clearAll()
     const rt = getRefreshToken()
     if (rt) {
       try {

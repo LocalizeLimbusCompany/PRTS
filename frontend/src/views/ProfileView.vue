@@ -192,7 +192,7 @@ async function revokeKey(id: number) {
     <h1 class="prts-h1 q-mb-lg">{{ t('profile.title') }}</h1>
 
     <q-card flat bordered class="q-pa-lg q-mb-lg">
-      <div class="row items-center q-gutter-md">
+      <div class="profile-summary row items-center q-gutter-md">
         <q-avatar size="64px" color="primary" text-color="dark">
           <img v-if="auth.user?.avatar_url" :src="auth.user.avatar_url" alt="" />
           <span v-else>{{ auth.user?.username?.slice(0, 2).toUpperCase() }}</span>
@@ -470,3 +470,33 @@ async function revokeKey(id: number) {
     </q-dialog>
   </q-page>
 </template>
+
+<style scoped>
+.profile-summary > div {
+  min-width: 0;
+}
+
+.profile-summary .prts-h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 390px) {
+  .profile-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .profile-summary > .q-space {
+    display: none;
+  }
+
+  .profile-summary > .text-center {
+    grid-column: 1 / -1;
+    justify-self: start;
+    text-align: left;
+  }
+}
+</style>
