@@ -60,31 +60,49 @@ async function logout() {
           <span class="prts-brand__sub">L10N&nbsp;TERMINAL</span>
         </router-link>
 
-        <q-btn
-          flat
-          no-caps
-          dense
-          class="prts-navbtn q-ml-md"
-          :to="{ name: 'projects' }"
-          :label="t('app.projects')"
-        />
-        <q-btn
-          flat
-          no-caps
-          dense
-          class="prts-navbtn"
-          :to="{ name: 'platform-leaderboard' }"
-          :label="t('app.leaderboard')"
-        />
-        <q-btn
-          v-if="auth.isAdmin"
-          flat
-          no-caps
-          dense
-          class="prts-navbtn"
-          :to="{ name: 'admin' }"
-          :label="t('app.admin')"
-        />
+        <div class="app-desktop-nav">
+          <q-btn
+            flat
+            no-caps
+            dense
+            class="prts-navbtn q-ml-md"
+            :to="{ name: 'projects' }"
+            :label="t('app.projects')"
+          />
+          <q-btn
+            flat
+            no-caps
+            dense
+            class="prts-navbtn"
+            :to="{ name: 'platform-leaderboard' }"
+            :label="t('app.leaderboard')"
+          />
+          <q-btn
+            v-if="auth.isAdmin"
+            flat
+            no-caps
+            dense
+            class="prts-navbtn"
+            :to="{ name: 'admin' }"
+            :label="t('app.admin')"
+          />
+        </div>
+        <q-btn-dropdown flat round dense icon="mdi-menu" class="app-mobile-menu">
+          <q-list style="min-width: 180px">
+            <q-item v-close-popup clickable :to="{ name: 'projects' }">
+              <q-item-section avatar><q-icon name="mdi-folder-multiple-outline" /></q-item-section>
+              <q-item-section>{{ t('app.projects') }}</q-item-section>
+            </q-item>
+            <q-item v-close-popup clickable :to="{ name: 'platform-leaderboard' }">
+              <q-item-section avatar><q-icon name="mdi-podium" /></q-item-section>
+              <q-item-section>{{ t('app.leaderboard') }}</q-item-section>
+            </q-item>
+            <q-item v-if="auth.isAdmin" v-close-popup clickable :to="{ name: 'admin' }">
+              <q-item-section avatar><q-icon name="mdi-shield-outline" /></q-item-section>
+              <q-item-section>{{ t('app.admin') }}</q-item-section>
+            </q-item>
+          </q-list>
+        </q-btn-dropdown>
 
         <q-space />
 
@@ -234,6 +252,9 @@ async function logout() {
 .prts-navbtn.router-link-active {
   color: var(--prts-accent);
 }
+.app-mobile-menu {
+  display: none;
+}
 .prts-userbtn__avatar {
   background: var(--prts-accent-dim);
   color: var(--prts-accent-strong);
@@ -247,6 +268,12 @@ async function logout() {
   }
   .prts-brand__sub {
     display: none;
+  }
+  .app-desktop-nav {
+    display: none;
+  }
+  .app-mobile-menu {
+    display: inline-flex;
   }
   .prts-username {
     display: none;

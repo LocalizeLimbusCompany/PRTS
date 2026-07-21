@@ -93,8 +93,9 @@ function explain() {
     <template v-if="explanation">
       <div class="ai-panel__head">
         <div>
-          <div class="prts-label">{{ t('editor.ai.overallMeaning') }}</div>
-          <div class="ai-panel__overall">{{ explanation.overall_meaning }}</div>
+          <div class="prts-label">{{ t('editor.ai.referenceTranslation') }}</div>
+          <div class="ai-panel__overall">{{ explanation.reference_translation }}</div>
+          <div class="prts-dim q-mt-xs">{{ t('editor.ai.referenceOnly') }}</div>
         </div>
         <q-btn
           flat

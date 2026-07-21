@@ -23,7 +23,7 @@ function chunkedBody(source: string, chunkSize = 1): ReadableStream<Uint8Array> 
 }
 
 const result = {
-  overall_meaning: 'meaning',
+  reference_translation: 'meaning',
   tokens: [],
   grammar_notes: '',
   provider_source: 'personal' as const,

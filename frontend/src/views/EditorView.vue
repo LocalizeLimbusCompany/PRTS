@@ -75,13 +75,15 @@ const stateOptions = computed(() =>
 
 const currentFileId = ref<number | null>(route.query.file ? Number(route.query.file) : null)
 const currentTaskId = ref<number | null>(route.query.task ? Number(route.query.task) : null)
+const routeEntryId = computed(() => {
+  const raw = route.query.entry
+  const value = typeof raw === 'string' ? Number(raw) : NaN
+  return Number.isInteger(value) && value > 0 ? value : null
+})
+const originalFileBeforeSearch = ref<number | null>(currentFileId.value)
+const semanticSearchAvailable = ref(false)
 const isTaskScope = computed(() => currentTaskId.value !== null)
 const includeHidden = ref(false)
-const fileOptions = computed(() => [
-  { label: t('editor.scopeAll'), value: null as number | null },
-  ...files.value.map((file) => ({ label: file.path, value: file.id })),
-])
-
 const activeSearchRequest = ref<StructuredSearchRequest | null>(null)
 const isSearchMode = computed(() => activeSearchRequest.value !== null)
 const entries = ref<(EntryDto | SearchHitDto)[]>([])
@@ -184,14 +186,85 @@ async function goPreviousPage() {
 }
 
 async function runSearch(request: StructuredSearchRequest) {
+  if (!isSearchMode.value) originalFileBeforeSearch.value = currentFileId.value
   activeSearchRequest.value = { ...request, after: undefined }
+  await router.replace({
+    query: {
+      ...route.query,
+      q: request.query || undefined,
+      entry: undefined,
+    },
+  })
   await resetAndLoad()
 }
 
 function onSearchClear() {
   activeSearchRequest.value = null
+  currentFileId.value = originalFileBeforeSearch.value
+  originalFileBeforeSearch.value = null
+  void router.replace({
+    query: {
+      ...route.query,
+      q: undefined,
+      entry: undefined,
+      file: currentFileId.value ?? undefined,
+    },
+  })
   void resetAndLoad()
 }
+
+/** Deep links may identify an entry that is not on the first keyset page. */
+async function selectRouteEntry() {
+  const entryId = routeEntryId.value
+  if (!entryId) return
+  const listed = entries.value.find((entry) => entry.id === entryId)
+  if (listed) {
+    select(listed)
+    return
+  }
+  try {
+    const fetched = await entriesApi.get(props.id, entryId)
+    const scopeAllowsEntry = currentFileId.value == null || fetched.file_id === currentFileId.value
+    if (scopeAllowsEntry && (!fetched.hidden || includeHidden.value || canHide.value))
+      select(fetched)
+  } catch {
+    // Invalid or inaccessible deep links leave the editor unselected.
+  }
+}
+
+watch(
+  () => route.query.q,
+  (raw) => {
+    const query = typeof raw === 'string' ? raw.trim() : ''
+    if (!query) {
+      if (isSearchMode.value) onSearchClear()
+      return
+    }
+    if (activeSearchRequest.value?.query === query) return
+    void runSearch({
+      query,
+      conditions: [],
+      case_sensitive: false,
+      scope: currentTaskId.value
+        ? { type: 'current_task', task_id: currentTaskId.value }
+        : { type: 'all' },
+      states: [],
+      include_hidden: includeHidden.value,
+      vector: false,
+      limit: 50,
+    })
+  },
+)
+
+watch(
+  () => [route.query.file, route.query.task] as const,
+  ([file, task]) => {
+    const nextFile = typeof file === 'string' && Number(file) > 0 ? Number(file) : null
+    const nextTask = typeof task === 'string' && Number(task) > 0 ? Number(task) : null
+    if (nextFile !== currentFileId.value) currentFileId.value = nextFile
+    if (nextTask !== currentTaskId.value) currentTaskId.value = nextTask
+  },
+)
 
 watch(currentFileId, () => {
   clearSelection()
@@ -591,13 +664,31 @@ onMounted(async () => {
     ])
     project.value = detail.project
     capabilities.value = detail.capabilities
+    semanticSearchAvailable.value = detail.semantic_search_available
     files.value = tree.files
     members.value = projectMembers
     if (currentFileId.value != null) sendViewing(currentFileId.value)
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error) })
   }
-  await resetAndLoad()
+  const initialQuery = typeof route.query.q === 'string' ? route.query.q.trim() : ''
+  if (initialQuery) {
+    await runSearch({
+      query: initialQuery,
+      conditions: [],
+      case_sensitive: false,
+      scope: currentTaskId.value
+        ? { type: 'current_task', task_id: currentTaskId.value }
+        : { type: 'all' },
+      states: [],
+      include_hidden: includeHidden.value,
+      vector: false,
+      limit: 50,
+    })
+  } else {
+    await resetAndLoad()
+  }
+  await selectRouteEntry()
 })
 </script>
 
@@ -613,17 +704,15 @@ onMounted(async () => {
         ><q-tooltip>{{ t('editor.backToProject') }}</q-tooltip></q-btn
       >
       <div class="prts-display ellipsis editor-title">{{ project?.name ?? '…' }}</div>
-      <q-select
-        v-if="!isTaskScope"
-        v-model="currentFileId"
-        :options="fileOptions"
+      <q-chip
+        v-if="!isTaskScope && currentFileId"
         dense
-        outlined
-        options-dense
-        emit-value
-        map-options
-        class="editor-fileselect"
-      />
+        square
+        icon="mdi-file-document-outline"
+        class="editor-file-chip"
+      >
+        {{ files.find((file) => file.id === currentFileId)?.path ?? `#${currentFileId}` }}
+      </q-chip>
       <q-chip
         v-else
         dense
@@ -648,6 +737,18 @@ onMounted(async () => {
         icon="mdi-file-search-outline"
         >{{ t('editor.searchMode') }}</q-chip
       >
+      <q-btn
+        v-if="isSearchMode"
+        flat
+        round
+        dense
+        icon="mdi-close"
+        :disable="originalFileBeforeSearch === null && currentFileId === null"
+        :aria-label="t('editor.clearSearch')"
+        @click="onSearchClear"
+      >
+        <q-tooltip>{{ t('editor.clearSearch') }}</q-tooltip>
+      </q-btn>
       <q-space />
       <q-chip
         v-if="activeFileId"
@@ -718,6 +819,7 @@ onMounted(async () => {
           :current-file-id="currentFileId"
           :current-task-id="currentTaskId"
           :can-include-hidden="canHide"
+          :semantic-available="semanticSearchAvailable"
           @search="runSearch"
           @clear="onSearchClear"
         />
@@ -1091,9 +1193,8 @@ onMounted(async () => {
   max-width: 190px;
   font-size: 14px;
 }
-.editor-fileselect {
-  min-width: 170px;
-  max-width: 280px;
+.editor-file-chip {
+  max-width: min(340px, 42vw);
 }
 .editor-body {
   display: flex;

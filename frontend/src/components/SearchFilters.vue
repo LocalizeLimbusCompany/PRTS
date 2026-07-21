@@ -12,6 +12,7 @@ defineProps<{
   currentFileId: number | null
   currentTaskId: number | null
   canIncludeHidden: boolean
+  semanticAvailable: boolean
 }>()
 const emit = defineEmits<{
   (event: 'search', request: StructuredSearchRequest): void
@@ -19,6 +20,7 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const advancedOpen = ref(false)
+const quickQuery = ref('')
 </script>
 
 <template>
@@ -28,6 +30,7 @@ const advancedOpen = ref(false)
       :current-file-id="currentFileId"
       @search="emit('search', $event)"
       @clear="emit('clear')"
+      @query-change="quickQuery = $event"
     />
     <q-btn
       flat
@@ -46,6 +49,8 @@ const advancedOpen = ref(false)
       :current-file-id="currentFileId"
       :current-task-id="currentTaskId"
       :can-include-hidden="canIncludeHidden"
+      :semantic-available="semanticAvailable"
+      :initial-query="quickQuery"
       @search="emit('search', $event)"
     />
   </div>

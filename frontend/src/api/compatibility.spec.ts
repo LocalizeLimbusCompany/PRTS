@@ -14,6 +14,7 @@ describe('project workspace compatibility handoff', () => {
     const request: StructuredSearchRequest = {
       query: 'needle',
       conditions: [],
+      case_sensitive: false,
       scope: { type: 'all' },
       states: [],
       include_hidden: false,

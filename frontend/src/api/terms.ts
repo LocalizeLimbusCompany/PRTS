@@ -144,7 +144,7 @@ export const termsApi = {
   },
   list(
     projectId: number,
-    params: { scope: TermScope; after?: number; limit?: number },
+    params: { scope: TermScope; q?: string; after?: number; limit?: number },
   ): Promise<TermPageDto> {
     return http
       .get<TermPageDto>(`/projects/${projectId}/terms`, { params })

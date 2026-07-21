@@ -11,6 +11,12 @@ import {
   type AiSettingsDto,
   type AiSettingsWriteRequest,
   type MemberDto,
+  type MemberCandidateDto,
+  type ProjectHistoryVisibility,
+  type ProjectJoinDefaultRole,
+  type ProjectJoinPolicy,
+  type ProjectJoinSettingsDto,
+  type JoinApplicationDto,
 } from '@/api'
 import AiSettingsForm from '@/components/AiSettingsForm.vue'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
@@ -48,6 +54,22 @@ const loadingMembers = ref(false)
 const showAddMember = ref(false)
 const savingMember = ref<number | 'new' | null>(null)
 const newMember = ref({ username: '', role: '' })
+const memberCandidateOptions = ref<MemberCandidateDto[]>([])
+let memberCandidateTimer: ReturnType<typeof setTimeout> | undefined
+const joinSettings = ref<ProjectJoinSettingsDto | null>(null)
+const joinSaving = ref(false)
+const joinForm = ref({
+  join_policy: 'admin_only' as ProjectJoinPolicy,
+  join_default_role: 'translator' as ProjectJoinDefaultRole,
+  history_visibility: 'viewers' as ProjectHistoryVisibility,
+  password: '',
+  quiz_question: '',
+  quiz_answer: '',
+})
+const applications = ref<JoinApplicationDto[]>([])
+const applicationsLoading = ref(false)
+const applicationSaving = ref<number | null>(null)
+const applicationRoleDrafts = ref<Record<number, string>>({})
 const showDeleteDialog = ref(false)
 const cancellingDeletion = ref(false)
 const projectAiSettings = ref<AiSettingsDto | null>(null)
@@ -72,6 +94,7 @@ const tabDefinitions: Array<{ key: ProjectManageTab; icon: string }> = [
   { key: 'basic', icon: 'mdi-tune-variant' },
   { key: 'ai', icon: 'mdi-auto-fix' },
   { key: 'language', icon: 'mdi-translate' },
+  { key: 'join', icon: 'mdi-account-key-outline' },
   { key: 'members', icon: 'mdi-account-multiple-outline' },
   { key: 'danger', icon: 'mdi-alert-outline' },
 ]
@@ -119,6 +142,7 @@ watch(
       primary_source_lang: project.primary_source_lang ?? project.source_langs[0] ?? '',
     }
     if (project.owner_id === userId) void loadProjectAi()
+    if (hasProjectCapability(detail.value?.capabilities, 'manage_project')) void loadJoinSettings()
   },
   { immediate: true },
 )
@@ -148,6 +172,44 @@ async function loadProjectAi() {
     projectAiSettings.value = await aiApi.getProjectSettings(projectId.value)
   } catch (error) {
     $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  }
+}
+
+async function loadJoinSettings() {
+  try {
+    const loaded = await projectsApi.joinSettings(projectId.value)
+    joinSettings.value = loaded
+    joinForm.value = {
+      join_policy: loaded.join_policy,
+      join_default_role: loaded.join_default_role,
+      history_visibility: loaded.history_visibility,
+      password: '',
+      quiz_question: loaded.quiz_question ?? '',
+      quiz_answer: '',
+    }
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  }
+}
+
+async function saveJoinSettings() {
+  joinSaving.value = true
+  try {
+    joinSettings.value = await projectsApi.updateJoinSettings(projectId.value, {
+      join_policy: joinForm.value.join_policy,
+      join_default_role: joinForm.value.join_default_role,
+      history_visibility: joinForm.value.history_visibility,
+      password: joinForm.value.password || undefined,
+      quiz_question: joinForm.value.quiz_question || undefined,
+      quiz_answer: joinForm.value.quiz_answer || undefined,
+    })
+    joinForm.value.password = ''
+    joinForm.value.quiz_answer = ''
+    $q.notify({ type: 'positive', message: t('project.join.saved') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    joinSaving.value = false
   }
 }
 
@@ -271,6 +333,7 @@ async function loadMembers() {
   try {
     const loaded = await projectsApi.members(requestedProjectId)
     if (projectId.value === requestedProjectId) members.value = loaded
+    if (projectId.value === requestedProjectId) await loadApplications()
   } catch (error) {
     if (projectId.value === requestedProjectId) {
       $q.notify({ type: 'negative', message: apiErrorMessage(error) })
@@ -278,6 +341,68 @@ async function loadMembers() {
   } finally {
     if (projectId.value === requestedProjectId) loadingMembers.value = false
   }
+}
+
+async function loadApplications() {
+  applicationsLoading.value = true
+  try {
+    applications.value = (await projectsApi.joinApplications(projectId.value, { limit: 100 })).items
+    const assignableRoles = detail.value?.capabilities.member_assignable_roles ?? []
+    const preferredRole = detail.value?.project.join_default_role
+    for (const application of applications.value) {
+      if (assignableRoles.includes(applicationRoleDrafts.value[application.id] ?? '')) continue
+      applicationRoleDrafts.value[application.id] =
+        preferredRole && assignableRoles.includes(preferredRole)
+          ? preferredRole
+          : (assignableRoles[0] ?? '')
+    }
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    applicationsLoading.value = false
+  }
+}
+
+async function decideApplication(application: JoinApplicationDto, approved: boolean) {
+  applicationSaving.value = application.id
+  try {
+    await projectsApi.decideJoinApplication(projectId.value, application.id, {
+      approved,
+      role: approved ? applicationRoleDrafts.value[application.id] : undefined,
+    })
+    await loadMembers()
+    $q.notify({
+      type: 'positive',
+      message: t(approved ? 'project.join.approved' : 'project.join.rejected'),
+    })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    applicationSaving.value = null
+  }
+}
+
+function filterMemberCandidates(value: string, update: (callback: () => void) => void) {
+  if (memberCandidateTimer) clearTimeout(memberCandidateTimer)
+  const query = value.trim()
+  if (!/^\d+$/.test(query) && query.length < 2) {
+    update(() => {
+      memberCandidateOptions.value = []
+    })
+    return
+  }
+  memberCandidateTimer = setTimeout(async () => {
+    try {
+      const candidates = await projectsApi.memberCandidates(projectId.value, query)
+      update(() => {
+        memberCandidateOptions.value = candidates
+      })
+    } catch {
+      update(() => {
+        memberCandidateOptions.value = []
+      })
+    }
+  }, 250)
 }
 
 watch(
@@ -292,6 +417,7 @@ function openAddMember() {
   const firstRole = detail.value?.capabilities.member_assignable_roles[0]
   if (!firstRole) return
   newMember.value = { username: '', role: firstRole }
+  memberCandidateOptions.value = []
   showAddMember.value = true
 }
 
@@ -655,6 +781,95 @@ async function cancelDeletion() {
         </q-card-section>
       </q-card>
 
+      <q-card v-if="activeTab === 'join'" flat bordered>
+        <q-card-section class="manage-view__form">
+          <div>
+            <div class="prts-label">{{ $t('project.join.settingsHeading') }}</div>
+            <div class="prts-dim q-mt-xs">{{ $t('project.join.settingsDescription') }}</div>
+          </div>
+          <q-select
+            v-model="joinForm.join_policy"
+            outlined
+            emit-value
+            map-options
+            :options="
+              (
+                ['application', 'free', 'admin_only', 'password', 'quiz'] as ProjectJoinPolicy[]
+              ).map((value) => ({ value, label: $t(`project.join.policies.${value}`) }))
+            "
+            :label="$t('project.join.policy')"
+            :disable="joinSaving"
+          />
+          <q-select
+            v-model="joinForm.join_default_role"
+            outlined
+            emit-value
+            map-options
+            :options="
+              (['translator', 'reviewer'] as ProjectJoinDefaultRole[]).map((value) => ({
+                value,
+                label: roleLabel(value, t),
+              }))
+            "
+            :label="$t('project.join.defaultRole')"
+            :disable="joinSaving || joinForm.join_policy === 'admin_only'"
+          />
+          <q-select
+            v-model="joinForm.history_visibility"
+            outlined
+            emit-value
+            map-options
+            :options="
+              (['viewers', 'members', 'managers'] as ProjectHistoryVisibility[]).map((value) => ({
+                value,
+                label: $t(`project.join.historyVisibility.${value}`),
+              }))
+            "
+            :label="$t('project.join.historyVisibility.label')"
+            :disable="joinSaving"
+          />
+          <q-input
+            v-if="joinForm.join_policy === 'password'"
+            v-model="joinForm.password"
+            outlined
+            type="password"
+            :label="$t('project.join.passwordUpdate')"
+            :hint="joinSettings?.password_configured ? $t('project.join.secretRetain') : undefined"
+            :disable="joinSaving"
+          />
+          <template v-if="joinForm.join_policy === 'quiz'">
+            <q-input
+              v-model="joinForm.quiz_question"
+              outlined
+              :label="$t('project.join.quizQuestion')"
+              :disable="joinSaving"
+            />
+            <q-input
+              v-model="joinForm.quiz_answer"
+              outlined
+              type="password"
+              :label="$t('project.join.quizAnswer')"
+              :hint="
+                joinSettings?.quiz_answer_configured ? $t('project.join.secretRetain') : undefined
+              "
+              :disable="joinSaving"
+            />
+          </template>
+          <div>
+            <q-btn
+              unelevated
+              no-caps
+              color="primary"
+              text-color="dark"
+              icon="mdi-content-save-outline"
+              :label="$t('project.save')"
+              :loading="joinSaving"
+              @click="saveJoinSettings"
+            />
+          </div>
+        </q-card-section>
+      </q-card>
+
       <q-card v-if="activeTab === 'members'" flat bordered>
         <q-card-section class="row items-center">
           <div>
@@ -723,6 +938,71 @@ async function cancelDeletion() {
             <q-item-section class="prts-dim">{{ $t('project.members.empty') }}</q-item-section>
           </q-item>
         </q-list>
+        <template v-if="applications.length || applicationsLoading">
+          <q-separator />
+          <q-card-section>
+            <div class="prts-label">{{ $t('project.join.applications') }}</div>
+            <q-inner-loading :showing="applicationsLoading" />
+            <q-list separator>
+              <q-item v-for="application in applications" :key="application.id">
+                <q-item-section avatar>
+                  <q-avatar square size="34px" color="primary" text-color="dark">
+                    <img v-if="application.avatar_url" :src="application.avatar_url" alt="" />
+                    <span v-else>{{ application.username.slice(0, 2).toUpperCase() }}</span>
+                  </q-avatar>
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label
+                    >{{ application.username }} · UID {{ application.user_id }}</q-item-label
+                  >
+                  <q-item-label caption>{{
+                    application.message || $t('project.join.noMessage')
+                  }}</q-item-label>
+                </q-item-section>
+                <q-item-section side>
+                  <div class="row no-wrap q-gutter-xs">
+                    <q-select
+                      v-model="applicationRoleDrafts[application.id]"
+                      dense
+                      outlined
+                      emit-value
+                      map-options
+                      :options="
+                        detail?.capabilities.member_assignable_roles.map((role) => ({
+                          value: role,
+                          label: roleLabel(role, t),
+                        })) ?? []
+                      "
+                      :disable="applicationSaving === application.id"
+                      :label="$t('project.members.role')"
+                    />
+                    <q-btn
+                      flat
+                      round
+                      dense
+                      color="positive"
+                      icon="mdi-check"
+                      :loading="applicationSaving === application.id"
+                      :disable="!applicationRoleDrafts[application.id]"
+                      :aria-label="$t('project.join.approve')"
+                      @click="decideApplication(application, true)"
+                    />
+                    <q-btn
+                      flat
+                      round
+                      dense
+                      color="negative"
+                      icon="mdi-close"
+                      :loading="applicationSaving === application.id"
+                      :aria-label="$t('project.join.reject')"
+                      @click="decideApplication(application, false)"
+                    />
+                  </div>
+                </q-item-section>
+              </q-item>
+            </q-list>
+          </q-card-section>
+        </template>
       </q-card>
 
       <q-card
@@ -762,12 +1042,37 @@ async function cancelDeletion() {
           ><div class="prts-h2">{{ $t('project.members.add') }}</div></q-card-section
         >
         <q-card-section class="column q-gutter-md">
-          <q-input
+          <q-select
             v-model="newMember.username"
             dense
             outlined
             :label="$t('project.members.username')"
-          />
+            use-input
+            fill-input
+            hide-selected
+            hide-dropdown-icon
+            emit-value
+            map-options
+            :options="memberCandidateOptions"
+            option-label="username"
+            option-value="username"
+            @filter="filterMemberCandidates"
+          >
+            <template #option="scope">
+              <q-item v-bind="scope.itemProps">
+                <q-item-section avatar>
+                  <q-avatar size="30px" color="primary" text-color="dark">
+                    <img v-if="scope.opt.avatar_url" :src="scope.opt.avatar_url" alt="" />
+                    <span v-else>{{ scope.opt.username.slice(0, 2).toUpperCase() }}</span>
+                  </q-avatar>
+                </q-item-section>
+                <q-item-section>
+                  <q-item-label>{{ scope.opt.username }}</q-item-label>
+                  <q-item-label caption>UID {{ scope.opt.user_id }}</q-item-label>
+                </q-item-section>
+              </q-item>
+            </template>
+          </q-select>
           <q-select
             v-model="newMember.role"
             dense

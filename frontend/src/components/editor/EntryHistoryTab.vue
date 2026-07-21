@@ -22,6 +22,8 @@ const comparisons = computed(() =>
     const sourceChanged = beforeSource !== afterSource
     const stateChanged = Boolean(previous && previous.state !== current.state)
     const questionedChanged = Boolean(previous && previous.questioned !== current.questioned)
+    const lockedChanged = Boolean(previous && previous.locked !== current.locked)
+    const hiddenChanged = Boolean(previous && previous.hidden !== current.hidden)
     return {
       current,
       previous,
@@ -48,9 +50,24 @@ const comparisons = computed(() =>
       sourceChanged,
       stateChanged,
       questionedChanged,
+      lockedChanged,
+      hiddenChanged,
     }
   }),
 )
+
+function stateBadgeColor(state: EntryVersionDto['state']): string {
+  switch (state) {
+    case 'translated':
+      return 'cyan-8'
+    case 'checked':
+      return 'deep-purple-6'
+    case 'reviewed':
+      return 'green-7'
+    default:
+      return 'grey-7'
+  }
+}
 </script>
 
 <template>
@@ -70,7 +87,11 @@ const comparisons = computed(() =>
           <div class="prts-dim">{{ new Date(item.current.created_at).toLocaleString() }}</div>
         </div>
         <q-space />
-        <q-badge outline :label="stateLabel(item.current.state, t)" />
+        <q-badge
+          :color="stateBadgeColor(item.current.state)"
+          text-color="white"
+          :label="stateLabel(item.current.state, t)"
+        />
       </header>
       <div v-if="item.stateChanged" class="history-card__change">
         {{ $t('editor.stateChanged') }}：{{ stateLabel(item.previous!.state, t) }} →
@@ -79,6 +100,14 @@ const comparisons = computed(() =>
       <div v-if="item.questionedChanged" class="history-card__change">
         {{ $t('editor.questionedChanged') }}：
         {{ $t(item.current.questioned ? 'editor.questionedAdded' : 'editor.questionedRemoved') }}
+      </div>
+      <div v-if="item.lockedChanged" class="history-card__change">
+        {{ $t('editor.lockedChanged') }}：
+        {{ $t(item.current.locked ? 'editor.flagEnabled' : 'editor.flagDisabled') }}
+      </div>
+      <div v-if="item.hiddenChanged" class="history-card__change">
+        {{ $t('editor.hiddenChanged') }}：
+        {{ $t(item.current.hidden ? 'editor.flagEnabled' : 'editor.flagDisabled') }}
       </div>
       <template v-if="item.translationChanged">
         <div class="prts-label">{{ $t('editor.translationDiff') }}</div>

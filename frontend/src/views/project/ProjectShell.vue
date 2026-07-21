@@ -22,6 +22,7 @@ const { t } = useI18n()
 const detail = ref<ProjectDetailDto | null>(null)
 const loading = ref(true)
 const projectId = computed(() => props.id)
+const searchQuery = ref('')
 
 const sections = computed(() => {
   if (detail.value?.project.deletion_scheduled_at) {
@@ -55,6 +56,13 @@ provide(projectWorkspaceKey, context)
 function openSection(routeName: string | null) {
   if (!routeName) return
   router.push({ name: routeName, params: { id: props.id } })
+}
+
+function submitSearch(event: KeyboardEvent) {
+  if (event.key !== 'Enter') return
+  const query = searchQuery.value.trim()
+  if (!query) return
+  void router.push({ name: 'editor', params: { id: props.id }, query: { q: query } })
 }
 
 function sectionIsActive(routeName: string | null): boolean {
@@ -106,6 +114,17 @@ watch(() => props.id, load)
 
       <div class="project-shell__layout">
         <aside class="project-shell__nav" :aria-label="$t('project.workspaceNav')">
+          <q-input
+            v-model="searchQuery"
+            dense
+            outlined
+            clearable
+            class="project-shell__search"
+            :placeholder="$t('project.search')"
+            @keydown="submitSearch"
+          >
+            <template #prepend><q-icon name="mdi-magnify" /></template>
+          </q-input>
           <button
             v-for="section in sections"
             :key="section.key"
@@ -186,6 +205,11 @@ watch(() => props.id, load)
   flex: 0 0 196px;
   border: 1px solid var(--prts-border);
   background: var(--prts-panel);
+}
+
+.project-shell__search {
+  margin: 8px;
+  min-width: 180px;
 }
 
 .project-shell__nav-item {

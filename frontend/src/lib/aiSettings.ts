@@ -5,6 +5,7 @@ import type {
   AiSettingsDto,
   AiSettingsWriteRequest,
   AiThinkingMode,
+  AiTransportMode,
   WebSearchMode,
 } from '@/api/types'
 
@@ -36,6 +37,7 @@ export interface AiSettingsFormState {
   api_key: string
   enabled: boolean
   provider_preset: AiProviderPreset
+  transport_mode: AiTransportMode
   thinking_mode: AiThinkingMode
   reasoning_effort: AiReasoningEffort
   thinking_budget: string
@@ -65,6 +67,7 @@ export function createAiSettingsForm(settings: AiSettingsDto | null): AiSettings
     api_key: '',
     enabled: settings?.configured ? settings.enabled : true,
     provider_preset: settings?.provider_preset ?? 'openai',
+    transport_mode: settings?.transport_mode ?? 'auto',
     thinking_mode: settings?.thinking_mode ?? 'auto',
     reasoning_effort: settings?.reasoning_effort ?? 'medium',
     thinking_budget: settings?.thinking_budget == null ? '' : String(settings.thinking_budget),
@@ -113,7 +116,14 @@ function containsSensitiveKey(value: unknown): boolean {
 
 function reservedKeys(preset: AiProviderPreset): Set<string> {
   const keys = new Set(['model', 'messages', 'stream', 'stream_options', 'response_format'])
-  if (preset === 'openai' || preset === 'gemini') keys.add('reasoning_effort')
+  if (preset === 'openai') keys.add('reasoning_effort')
+  if (preset === 'gemini' || preset === 'anthropic') {
+    keys.add('contents')
+    keys.add('systemInstruction')
+    keys.add('system')
+    keys.add('max_tokens')
+    keys.add('generationConfig')
+  }
   if (preset === 'qwen') {
     keys.add('enable_thinking')
     keys.add('thinking_budget')
@@ -252,6 +262,7 @@ export function buildAiSettingsRequest(
     api_key: apiKey || undefined,
     enabled: form.enabled,
     provider_preset: form.provider_preset,
+    transport_mode: form.transport_mode,
     thinking_mode: thinkingMode,
     reasoning_effort: reasoningEffort,
     thinking_budget: thinkingBudget,

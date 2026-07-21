@@ -6,10 +6,12 @@ export type AdvancedScopeType = SearchScope['type']
 export interface AdvancedFilterDraft {
   query: string
   conditions: SearchCondition[]
+  caseSensitive: boolean
   states: EntryState[]
   questioned: boolean
   includeHidden: boolean
   vector: boolean
+  mode: 'normal' | 'semantic'
   scopeType: AdvancedScopeType
   path?: string
   fileId?: number | null
@@ -48,7 +50,9 @@ export function buildAdvancedSearchRequest(draft: AdvancedFilterDraft): Structur
   const query = draft.query.trim()
   return {
     ...(query ? { query } : {}),
-    conditions: draft.conditions.map((condition) => ({ ...condition })),
+    conditions:
+      draft.mode === 'semantic' ? [] : draft.conditions.map((condition) => ({ ...condition })),
+    case_sensitive: draft.caseSensitive,
     scope: scopeFromDraft(draft),
     states: [...draft.states],
     ...(draft.questioned ? { questioned: true } : {}),
@@ -78,6 +82,8 @@ const props = defineProps<{
   currentFileId: number | null
   currentTaskId: number | null
   canIncludeHidden: boolean
+  semanticAvailable: boolean
+  initialQuery: string
 }>()
 const model = defineModel<boolean>({ default: false })
 const emit = defineEmits<{ (event: 'search', request: SearchRequest): void }>()
@@ -86,10 +92,12 @@ const { t } = useI18n()
 const draft = reactive<AdvancedFilterDraft>({
   query: '',
   conditions: [],
+  caseSensitive: false,
   states: [],
   questioned: false,
   includeHidden: false,
   vector: false,
+  mode: 'normal',
   scopeType: 'all',
   path: '',
   fileId: null,
@@ -112,6 +120,7 @@ const fieldOptions = computed(() => [
   { label: t('editor.fieldSourceAny'), value: 'source_any' },
   { label: t('editor.fieldTranslation'), value: 'translation' },
   { label: t('editor.fieldKey'), value: 'key' },
+  { label: t('editor.fieldAnyText'), value: 'any_text' },
 ])
 const operatorOptions: Array<{ label: string; value: SearchOperator }> = [
   { label: t('editor.opContains'), value: 'contains' },
@@ -119,6 +128,7 @@ const operatorOptions: Array<{ label: string; value: SearchOperator }> = [
   { label: t('editor.opStartsWith'), value: 'starts_with' },
   { label: t('editor.opEndsWith'), value: 'ends_with' },
   { label: t('editor.opEquals'), value: 'equals' },
+  { label: t('editor.opRegex'), value: 'regex' },
 ]
 const stateOptions = computed(() =>
   ENTRY_STATES.map((state) => ({ label: stateLabel(state, t), value: state })),
@@ -142,16 +152,32 @@ const scopeReady = computed(() => {
       return false
   }
 })
+const searchReady = computed(
+  () => scopeReady.value && (draft.mode === 'normal' || draft.query.trim()),
+)
 
 watch(model, (open) => {
   if (!open) return
   draft.currentFileId = props.currentFileId
   draft.taskId = props.currentTaskId
+  draft.mode = props.semanticAvailable && draft.vector ? 'semantic' : 'normal'
+  draft.query = props.initialQuery.trim()
+  if (draft.mode === 'normal' && draft.conditions.length === 0) addCondition()
 })
+
+watch(
+  () => props.semanticAvailable,
+  (available) => {
+    if (!available) {
+      draft.mode = 'normal'
+      draft.vector = false
+    }
+  },
+)
 
 function addCondition() {
   const condition: Condition = {
-    field: props.sourceLangs[0] ? `source:${props.sourceLangs[0]}` : 'source_any',
+    field: 'any_text',
     operator: 'contains',
     value: '',
   }
@@ -159,6 +185,7 @@ function addCondition() {
 }
 
 function submit() {
+  draft.vector = draft.mode === 'semantic'
   emit('search', buildAdvancedSearchRequest(draft))
   model.value = false
 }
@@ -170,8 +197,20 @@ function submit() {
       <q-card-section
         ><div class="prts-h2">{{ t('editor.advancedFilters') }}</div></q-card-section
       >
+      <q-card-section v-if="semanticAvailable" class="q-pt-none">
+        <q-tabs v-model="draft.mode" dense no-caps align="left" active-color="primary">
+          <q-tab name="normal" :label="t('editor.normalSearch')" />
+          <q-tab name="semantic" :label="t('editor.semanticSearch')" />
+        </q-tabs>
+      </q-card-section>
       <q-card-section class="q-gutter-md">
-        <q-input v-model="draft.query" outlined dense :label="t('editor.searchQuery')" />
+        <q-input
+          v-model="draft.query"
+          outlined
+          dense
+          :label="t(draft.mode === 'semantic' ? 'editor.semanticQuery' : 'editor.searchQuery')"
+        />
+        <q-separator />
         <q-select
           v-model="draft.scopeType"
           :options="scopeOptions"
@@ -217,33 +256,38 @@ function submit() {
           dense
           :label="t('editor.taskId')"
         />
-        <div v-for="(condition, index) in draft.conditions" :key="index" class="condition-row">
-          <q-select
-            v-model="condition.field"
-            :options="fieldOptions"
-            emit-value
-            map-options
-            dense
-            outlined
+        <q-separator />
+        <div v-if="draft.mode === 'normal'" class="column q-gutter-sm">
+          <div v-for="(condition, index) in draft.conditions" :key="index" class="condition-row">
+            <q-select
+              v-model="condition.field"
+              :options="fieldOptions"
+              emit-value
+              map-options
+              dense
+              outlined
+            />
+            <q-select
+              v-model="condition.operator"
+              :options="operatorOptions"
+              emit-value
+              map-options
+              dense
+              outlined
+            />
+            <q-input v-model="condition.value" dense outlined />
+            <q-btn flat round dense icon="mdi-close" @click="draft.conditions.splice(index, 1)" />
+          </div>
+          <q-btn
+            flat
+            no-caps
+            icon="mdi-plus"
+            :label="t('editor.addCondition')"
+            @click="addCondition"
           />
-          <q-select
-            v-model="condition.operator"
-            :options="operatorOptions"
-            emit-value
-            map-options
-            dense
-            outlined
-          />
-          <q-input v-model="condition.value" dense outlined />
-          <q-btn flat round dense icon="mdi-close" @click="draft.conditions.splice(index, 1)" />
+          <q-toggle v-model="draft.caseSensitive" :label="t('editor.caseSensitive')" />
         </div>
-        <q-btn
-          flat
-          no-caps
-          icon="mdi-plus"
-          :label="t('editor.addCondition')"
-          @click="addCondition"
-        />
+        <q-separator />
         <q-select
           v-model="draft.states"
           :options="stateOptions"
@@ -261,7 +305,13 @@ function submit() {
             :disable="!canIncludeHidden"
             :label="t('editor.includeHidden')"
           />
-          <q-toggle v-model="draft.vector" :label="t('editor.vectorSearch')" />
+          <q-toggle
+            v-if="semanticAvailable"
+            v-model="draft.mode"
+            true-value="semantic"
+            false-value="normal"
+            :label="t('editor.vectorSearch')"
+          />
         </div>
       </q-card-section>
       <q-card-actions align="right">
@@ -272,7 +322,7 @@ function submit() {
           color="primary"
           text-color="dark"
           :label="t('common.search')"
-          :disable="!scopeReady"
+          :disable="!searchReady"
           @click="submit"
         />
       </q-card-actions>

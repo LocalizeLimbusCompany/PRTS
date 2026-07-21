@@ -4,7 +4,13 @@ import { useRouter } from 'vue-router'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
 
-import { apiErrorMessage, projectsApi, type ProjectDto } from '@/api'
+import {
+  apiErrorMessage,
+  projectsApi,
+  type ProjectDto,
+  type ProjectJoinDefaultRole,
+  type ProjectJoinPolicy,
+} from '@/api'
 import { COMMON_LANGS, langLabel } from '@/lib/langs'
 import { useAuthStore } from '@/stores/auth'
 
@@ -40,6 +46,8 @@ const form = ref({
   source_langs: ['en'] as string[],
   primary_source_lang: 'en',
   target_lang: 'zh-Hans',
+  join_policy: 'admin_only' as ProjectJoinPolicy,
+  join_default_role: 'translator' as ProjectJoinDefaultRole,
 })
 const isPrivate = ref(false)
 const primaryOptions = computed(() => form.value.source_langs)
@@ -66,6 +74,8 @@ async function create() {
       source_langs: form.value.source_langs,
       primary_source_lang: form.value.primary_source_lang,
       target_lang: form.value.target_lang,
+      join_policy: form.value.join_policy,
+      join_default_role: form.value.join_default_role,
     })
     showCreate.value = false
     $q.notify({ type: 'positive', message: t('projects.created') })
@@ -220,6 +230,35 @@ async function create() {
             :option-label="localizedLangLabel"
             :label="t('projects.targetLanguage')"
             :disable="creating"
+          />
+          <q-select
+            v-model="form.join_policy"
+            outlined
+            dense
+            emit-value
+            map-options
+            :options="
+              (
+                ['application', 'free', 'admin_only', 'password', 'quiz'] as ProjectJoinPolicy[]
+              ).map((value) => ({ value, label: t(`project.join.policies.${value}`) }))
+            "
+            :label="t('project.join.policy')"
+            :disable="creating"
+          />
+          <q-select
+            v-model="form.join_default_role"
+            outlined
+            dense
+            emit-value
+            map-options
+            :options="
+              (['translator', 'reviewer'] as ProjectJoinDefaultRole[]).map((value) => ({
+                value,
+                label: t(`roles.${value}`),
+              }))
+            "
+            :label="t('project.join.defaultRole')"
+            :disable="creating || form.join_policy === 'admin_only'"
           />
           <q-toggle v-model="isPrivate" :label="t('projects.makePrivate')" :disable="creating" />
         </q-card-section>

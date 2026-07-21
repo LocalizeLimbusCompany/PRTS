@@ -25,6 +25,7 @@ pub async fn list(
     project_id: i64,
     primary_source_lang: &str,
     scope: TermListScope,
+    query: Option<&str>,
     after: Option<i64>,
     limit: i64,
 ) -> Result<Vec<TermWithPos>, sqlx::Error> {
@@ -42,18 +43,22 @@ pub async fn list(
                     ELSE term.deleted_at IS NULL
                END
            AND ($3::BIGINT IS NULL OR term.id < $3)
+           AND ($5::TEXT IS NULL OR term.source_text ILIKE '%' || $5 || '%'
+                OR term.translation ILIKE '%' || $5 || '%'
+                OR term.notes ILIKE '%' || $5 || '%')
            AND CASE $4::TEXT
                  WHEN 'current' THEN term.archived_at IS NULL AND term.source_lang = $2
                  WHEN 'archived' THEN term.archived_at IS NOT NULL
                  WHEN 'deleted' THEN TRUE
                  ELSE TRUE
                END
-         ORDER BY term.id DESC LIMIT $5"
+         ORDER BY term.id DESC LIMIT $6"
     ))
     .bind(project_id)
     .bind(primary_source_lang)
     .bind(after)
     .bind(scope)
+    .bind(query)
     .bind(limit)
     .fetch_all(pool)
     .await

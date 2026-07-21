@@ -50,6 +50,8 @@ pub struct ApiKeyRecord {
     pub name: String,
     pub key_hash: String,
     pub prefix: String,
+    /// Allowlisted business scopes. `all` is dynamic and exclusive.
+    pub scopes: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
 }
@@ -73,6 +75,16 @@ pub struct Project {
     pub visibility: String,
     /// 词条评论的项目级读取/写入策略。
     pub comment_policy: String,
+    /// Public-project self-service membership policy.
+    pub join_policy: String,
+    /// Role granted by free/password/quiz joins and proposed by applications.
+    pub join_default_role: String,
+    /// viewers|members|managers project-wide entry history visibility.
+    pub history_visibility: String,
+    /// Argon2 PHC hashes and quiz answer are never serialized outside the DB crate.
+    pub join_password_hash: Option<String>,
+    pub join_quiz_question: Option<String>,
+    pub join_quiz_answer_hash: Option<String>,
     pub source_langs: Vec<String>,
     pub primary_source_lang: Option<String>,
     pub target_lang: String,
@@ -191,16 +203,83 @@ pub struct Notification {
 pub struct EntryVersion {
     pub id: i64,
     pub entry_id: i64,
+    pub project_id: i64,
     pub version: i64,
     pub kind: String,
     pub translation: Option<String>,
     pub state: Option<String>,
     pub questioned: Option<bool>,
+    pub locked: bool,
+    pub hidden: bool,
     pub original: Option<serde_json::Value>,
     pub editor_id: Option<i64>,
     pub editor_name: Option<String>,
     pub editor_avatar_url: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// Project membership application row.
+#[derive(Debug, Clone, FromRow)]
+pub struct ProjectJoinApplication {
+    pub id: i64,
+    pub project_id: i64,
+    pub user_id: i64,
+    pub status: String,
+    pub message: String,
+    pub decided_by: Option<i64>,
+    pub decided_role: Option<String>,
+    pub decided_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Pending application plus the applicant's safe display profile.
+#[derive(Debug, Clone, FromRow)]
+pub struct ProjectJoinApplicationInfo {
+    pub id: i64,
+    pub project_id: i64,
+    pub user_id: i64,
+    pub username: String,
+    pub avatar_url: Option<String>,
+    pub status: String,
+    pub message: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Project-wide history scan row with stable resource and editor display data.
+#[derive(Debug, Clone, FromRow)]
+pub struct ProjectEntryVersion {
+    pub id: i64,
+    pub entry_id: i64,
+    pub file_id: i64,
+    pub file_path: String,
+    pub entry_key: String,
+    pub version: i64,
+    pub kind: String,
+    pub original: Option<serde_json::Value>,
+    pub translation: Option<String>,
+    pub state: Option<String>,
+    pub questioned: Option<bool>,
+    pub locked: bool,
+    pub hidden: bool,
+    pub previous_original: Option<serde_json::Value>,
+    pub previous_translation: Option<String>,
+    pub previous_state: Option<String>,
+    pub previous_questioned: Option<bool>,
+    pub previous_locked: Option<bool>,
+    pub previous_hidden: Option<bool>,
+    pub editor_id: Option<i64>,
+    pub editor_name: Option<String>,
+    pub editor_avatar_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Safe member autocomplete result.
+#[derive(Debug, Clone, FromRow)]
+pub struct UserCandidate {
+    pub user_id: i64,
+    pub username: String,
+    pub avatar_url: Option<String>,
 }
 
 /// 私信行（一条消息；会话 = 一对用户之间的全部消息，无独立会话表）。
@@ -464,6 +543,7 @@ pub struct UserAiSetting {
     pub api_key_hint: String,
     pub enabled: bool,
     pub provider_preset: String,
+    pub transport_mode: String,
     pub thinking_mode: String,
     pub reasoning_effort: String,
     pub thinking_budget: Option<i64>,
@@ -492,6 +572,7 @@ pub struct ProjectAiSetting {
     pub api_key_hint: String,
     pub enabled: bool,
     pub provider_preset: String,
+    pub transport_mode: String,
     pub thinking_mode: String,
     pub reasoning_effort: String,
     pub thinking_budget: Option<i64>,

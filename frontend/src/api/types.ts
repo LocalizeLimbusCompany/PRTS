@@ -20,7 +20,8 @@ export interface UserDto {
 export type AiSourcePreference = 'auto' | 'personal' | 'project'
 export type AiUiLocale = 'zh-CN' | 'en'
 
-export type AiProviderPreset = 'openai' | 'qwen' | 'deepseek' | 'gemini' | 'custom'
+export type AiProviderPreset = 'openai' | 'qwen' | 'deepseek' | 'gemini' | 'anthropic' | 'custom'
+export type AiTransportMode = 'auto' | 'streaming' | 'non_streaming'
 export type AiThinkingMode = 'auto' | 'enabled' | 'disabled'
 export type AiReasoningEffort = 'low' | 'medium' | 'high' | 'max'
 export type AiStreamPhase = 'connecting' | 'searching' | 'thinking' | 'generating' | 'formatting'
@@ -37,6 +38,7 @@ export interface AiSettingsDto {
   api_key_hint: string | null
   enabled: boolean
   provider_preset: AiProviderPreset
+  transport_mode: AiTransportMode
   thinking_mode: AiThinkingMode
   reasoning_effort: AiReasoningEffort
   thinking_budget: number | null
@@ -59,6 +61,7 @@ export interface AiSettingsWriteRequest {
   api_key?: string
   enabled: boolean
   provider_preset: AiProviderPreset
+  transport_mode: AiTransportMode
   thinking_mode: AiThinkingMode
   reasoning_effort: AiReasoningEffort
   thinking_budget: number | null
@@ -91,7 +94,7 @@ export interface AiTokenExplanation {
 }
 
 export interface AiExplanationDto {
-  overall_meaning: string
+  reference_translation: string
   tokens: AiTokenExplanation[]
   grammar_notes: string
   provider_source: 'personal' | 'project'
@@ -205,6 +208,9 @@ export interface ProjectDto {
   description: string
   visibility: string
   comment_policy: CommentPolicy
+  join_policy: ProjectJoinPolicy
+  join_default_role: ProjectJoinDefaultRole
+  history_visibility: ProjectHistoryVisibility
   source_langs: string[]
   primary_source_lang: string | null
   target_lang: string
@@ -255,6 +261,86 @@ export interface ProjectDetailDto {
   questioned_count: number
   entry_count: number
   capabilities: ProjectCapabilities
+  semantic_search_available: boolean
+}
+
+export type ProjectJoinPolicy = 'application' | 'free' | 'admin_only' | 'password' | 'quiz'
+export type ProjectJoinDefaultRole = 'translator' | 'reviewer'
+export type ProjectHistoryVisibility = 'viewers' | 'members' | 'managers'
+
+export interface ProjectJoinInfoDto {
+  join_policy: ProjectJoinPolicy
+  join_default_role: ProjectJoinDefaultRole
+  quiz_question: string | null
+  is_member: boolean
+  pending_application_id: number | null
+}
+
+export interface ProjectJoinSettingsDto {
+  join_policy: ProjectJoinPolicy
+  join_default_role: ProjectJoinDefaultRole
+  history_visibility: ProjectHistoryVisibility
+  password_configured: boolean
+  quiz_question: string | null
+  quiz_answer_configured: boolean
+  active: boolean
+}
+
+export interface ProjectJoinResultDto {
+  status: 'joined' | 'pending'
+  role: string | null
+  application_id: number | null
+}
+
+export interface JoinApplicationDto {
+  id: number
+  user_id: number
+  username: string
+  avatar_url: string | null
+  message: string
+  created_at: string
+}
+
+export interface JoinApplicationPageDto {
+  items: JoinApplicationDto[]
+  next_after: number | null
+}
+
+export interface MemberCandidateDto {
+  user_id: number
+  username: string
+  avatar_url: string | null
+}
+
+export interface EntryFieldChangeDto {
+  field: 'original' | 'translation' | 'state' | 'questioned' | 'locked' | 'hidden'
+  before: unknown
+  after: unknown
+}
+
+export interface ProjectHistoryItemDto {
+  id: number
+  entry_id: number
+  file_id: number
+  file_path: string
+  entry_key: string
+  kind: string
+  editor_id: number | null
+  editor_name: string | null
+  editor_avatar_url: string | null
+  created_at: string
+  original: Record<string, unknown> | null
+  translation: string | null
+  state: EntryState | null
+  questioned: boolean | null
+  locked: boolean
+  hidden: boolean
+  changes: EntryFieldChangeDto[]
+}
+
+export interface ProjectHistoryPageDto {
+  items: ProjectHistoryItemDto[]
+  next_after: string | null
 }
 
 export interface MemberDto {
@@ -363,6 +449,8 @@ export interface EntryVersionDto {
   translation: string
   state: EntryState
   questioned: boolean
+  locked: boolean
+  hidden: boolean
   original: Record<string, string>
   editor_id: number | null
   editor_name: string | null
@@ -442,12 +530,26 @@ export interface ProjectLanguageResolutionDto {
   issues: LanguageIssueDto[]
 }
 
+export type ApiKeyScope =
+  | 'all'
+  | 'profile:read'
+  | 'profile:write'
+  | 'project:read'
+  | 'entry:write'
+  | 'project:write'
+  | 'project:manage'
+  | 'ai:use'
+  | 'message:read'
+  | 'message:write'
+  | 'platform:manage'
+
 export interface ApiKeyDto {
   id: number
   name: string
   prefix: string
   created_at: string
   last_used_at: string | null
+  scopes: ApiKeyScope[]
 }
 
 export interface CreatedApiKey {
@@ -455,6 +557,7 @@ export interface CreatedApiKey {
   name: string
   prefix: string
   created_at: string
+  scopes: ApiKeyScope[]
   key: string
 }
 
@@ -468,7 +571,8 @@ export interface ExternalAccountDto {
 export const ENTRY_STATES = ['untranslated', 'translated', 'checked', 'reviewed'] as const
 export type EntryState = (typeof ENTRY_STATES)[number]
 
-export type SearchOperator = 'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'equals'
+export type SearchOperator =
+  'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'equals' | 'regex'
 
 export interface SearchCondition {
   field: string
@@ -486,6 +590,7 @@ export type SearchScope =
 export interface StructuredSearchRequest {
   query?: string
   conditions: SearchCondition[]
+  case_sensitive: boolean
   scope: SearchScope
   states: EntryState[]
   questioned?: boolean

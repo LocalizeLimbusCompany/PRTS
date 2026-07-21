@@ -1886,6 +1886,8 @@ async fn audit_contract_file_tree_routes_share_project_lock_and_count_deleted_su
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -2546,6 +2548,8 @@ async fn editor_comments_and_question_reason_are_permissioned_and_atomic() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -2808,6 +2812,8 @@ async fn term_versions_are_append_only_and_deleted_identity_can_be_restored() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -2858,6 +2864,7 @@ async fn term_versions_are_append_only_and_deleted_identity_can_be_restored() {
         Path(project.id),
         Query(terms_routes::TermListQuery {
             scope: Some(terms_routes::TermScope::Deleted),
+            q: None,
             after: None,
             limit: Some(100),
         }),
@@ -3023,6 +3030,8 @@ async fn online_entry_saves_award_atomic_exact_cp_and_feed_leaderboards() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -3272,6 +3281,8 @@ fn audit_contract_current_user(user: &prts_db::models::User) -> auth::CurrentUse
             .platform_role
             .as_deref()
             .and_then(prts_core::PlatformRole::parse),
+        credential_kind: auth::CredentialKind::Session,
+        scopes: vec![prts_core::api_scope::ALL.to_string()],
     }
 }
 
@@ -3650,6 +3661,8 @@ async fn audit_contract_project_creation_rolls_back_business_rows_when_audit_fai
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await;
@@ -5028,6 +5041,7 @@ async fn audit_contract_users_admin_settings_and_api_keys_are_audited_and_redact
         audit_contract_current_user(&actor),
         Json(users_routes::CreateApiKeyReq {
             name: "audit-contract-key".to_string(),
+            scopes: vec![prts_core::api_scope::ALL.to_string()],
         }),
     )
     .await
@@ -5253,6 +5267,7 @@ async fn audit_contract_optional_auth_propagates_api_key_audit_unavailable() {
         "optional-auth-audit-failure",
         &generated.hash,
         &generated.display_prefix,
+        &[prts_core::api_scope::ALL.to_string()],
     )
     .await
     .unwrap();
@@ -5811,6 +5826,8 @@ async fn audit_contract_projects_files_entries_memberships_and_export_are_audite
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -6107,6 +6124,8 @@ async fn project_avatar_lifecycle_enforces_visibility_and_audits_mutations() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -9237,9 +9256,16 @@ async fn users_api_keys_settings_oauth_roundtrip() {
 
     // —— API Key ——
     let key = prts_auth::token::generate_api_key();
-    let rec = api_keys::create(&pool, user.id, "k", &key.hash, &key.display_prefix)
-        .await
-        .unwrap();
+    let rec = api_keys::create(
+        &pool,
+        user.id,
+        "k",
+        &key.hash,
+        &key.display_prefix,
+        &[prts_core::api_scope::ALL.to_string()],
+    )
+    .await
+    .unwrap();
     let by_hash = api_keys::find_user_by_key_hash(&pool, &key.hash)
         .await
         .unwrap()
@@ -9620,6 +9646,8 @@ async fn search_trgm_and_fts_recall() {
         states: &[],
         questioned: None,
         conditions: &[],
+        case_sensitive: false,
+        query: None,
         include_hidden: false,
     };
     let trgm_ids = prts_db::search::trgm_search(&pool, proj.id, "weather", &filter, 10)
@@ -9740,6 +9768,7 @@ async fn search_orchestrator_returns_ranked_hits() {
             states: &[],
             questioned: None,
             conditions: &[],
+            case_sensitive: false,
             include_hidden: false,
             per_path: 100,
             top_k: 200,
@@ -9882,6 +9911,8 @@ async fn vector_search_returns_nearest_first() {
         states: &[],
         questioned: None,
         conditions: &[],
+        case_sensitive: false,
+        query: None,
         include_hidden: false,
     };
     let result_ids = prts_db::search::vector_search(&pool, proj.id, &vec_a, &filter, 10)
@@ -10661,6 +10692,8 @@ async fn file_history_soft_delete_restore_preserves_operation_boundaries_and_sta
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -10833,6 +10866,8 @@ async fn file_history_rollback_materializes_target_and_appends_versions() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -11007,6 +11042,8 @@ async fn file_history_folder_move_and_rollback_rewrite_current_tree_paths() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -11161,6 +11198,8 @@ async fn file_history_retention_purge_uses_explicit_cleanup_order() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -11475,6 +11514,8 @@ async fn tasks_api_enforces_visibility_manage_capability_binding_and_redacted_au
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -11568,6 +11609,8 @@ async fn tasks_api_enforces_visibility_manage_capability_binding_and_redacted_au
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -11669,6 +11712,8 @@ async fn tasks_api_fails_closed_without_persisting_body_or_baseline_when_audit_f
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -11724,6 +11769,8 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -12276,6 +12323,8 @@ async fn tasks_snapshot_progress_visibility_readd_scope_and_purge_semantics() {
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -12945,6 +12994,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
         Path(project.id),
         Query(terms_routes::TermListQuery {
             scope: Some(terms_routes::TermScope::Current),
+            q: None,
             after: None,
             limit: Some(100),
         }),
@@ -12965,6 +13015,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
         Path(project.id),
         Query(terms_routes::TermListQuery {
             scope: Some(terms_routes::TermScope::Archived),
+            q: None,
             after: None,
             limit: Some(100),
         }),
@@ -12992,6 +13043,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
         Path(project.id),
         Query(terms_routes::TermListQuery {
             scope: Some(terms_routes::TermScope::Mixed),
+            q: None,
             after: None,
             limit: Some(2),
         }),
@@ -13006,6 +13058,7 @@ async fn terminology_api_enforces_language_permissions_primary_switch_and_redact
         Path(project.id),
         Query(terms_routes::TermListQuery {
             scope: Some(terms_routes::TermScope::Mixed),
+            q: None,
             after: page_one.next_after,
             limit: Some(2),
         }),
@@ -14558,6 +14611,7 @@ fn structured_search_request(
     prts_core::search_query::StructuredSearchRequest {
         query: None,
         conditions: Vec::new(),
+        case_sensitive: false,
         scope,
         states: Vec::new(),
         questioned: None,
@@ -14568,7 +14622,7 @@ fn structured_search_request(
     }
 }
 
-/// 五 scope、五操作符、canonical source selector、segment boundary、hidden/deletion、
+/// 五 scope、六操作符、canonical source selector、segment boundary、hidden/deletion、
 /// signed keyset cursor 与 GET adapter 必须共用同一 typed service/SQL。
 #[tokio::test]
 #[allow(deprecated)]
@@ -14592,6 +14646,8 @@ async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_a
             source_langs: vec!["en".to_string(), "ja".to_string()],
             primary_source_lang: Some("en".to_string()),
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -14796,6 +14852,105 @@ async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_a
         assert_eq!(response.items[0].entry.id, alpha_id);
     }
 
+    for value in ["世界", "alpha-key", "prefix middle"] {
+        let mut request = structured_search_request(SearchScope::All);
+        request.conditions.push(SearchCondition {
+            field: "any_text".into(),
+            operator: SearchOperator::Contains,
+            value: value.into(),
+        });
+        let Json(response) = search_routes::structured_search(
+            State(state.clone()),
+            auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+            Path(project.id),
+            Ok(Json(request)),
+        )
+        .await
+        .expect_api("any_text 覆盖任一源文、key 与译文");
+        assert_eq!(response.items.len(), 1, "value={value}");
+        assert_eq!(response.items[0].entry.id, alpha_id);
+    }
+
+    let mut insensitive = structured_search_request(SearchScope::All);
+    insensitive.conditions.push(SearchCondition {
+        field: "source_any".into(),
+        operator: SearchOperator::Equals,
+        value: "HELLO WORLD".into(),
+    });
+    let Json(insensitive_response) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(insensitive.clone())),
+    )
+    .await
+    .expect_api("默认搜索不区分大小写");
+    assert_eq!(insensitive_response.items.len(), 1);
+    insensitive.case_sensitive = true;
+    let Json(sensitive_response) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(insensitive)),
+    )
+    .await
+    .expect_api("大小写敏感搜索不匹配错误大小写");
+    assert!(sensitive_response.items.is_empty());
+
+    let mut regex = structured_search_request(SearchScope::All);
+    regex.conditions.push(SearchCondition {
+        field: "any_text".into(),
+        operator: SearchOperator::Regex,
+        value: "^(alpha-key|never)$".into(),
+    });
+    let Json(regex_response) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(regex)),
+    )
+    .await
+    .expect_api("正则可匹配 any_text 物理列");
+    assert_eq!(regex_response.items.len(), 1);
+    assert_eq!(regex_response.items[0].entry.id, alpha_id);
+
+    let mut escaped_wildcard = structured_search_request(SearchScope::All);
+    escaped_wildcard.conditions.push(SearchCondition {
+        field: "any_text".into(),
+        operator: SearchOperator::Contains,
+        value: "_".into(),
+    });
+    let Json(escaped_response) = search_routes::structured_search(
+        State(state.clone()),
+        auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+        Path(project.id),
+        Ok(Json(escaped_wildcard)),
+    )
+    .await
+    .expect_api("LIKE 元字符按字面量搜索");
+    assert!(escaped_response.items.is_empty());
+
+    for (value, code) in [
+        ("[".to_string(), "SEARCH_REGEX_INVALID"),
+        ("x".repeat(513), "SEARCH_REGEX_TOO_LONG"),
+    ] {
+        let mut invalid_regex = structured_search_request(SearchScope::All);
+        invalid_regex.conditions.push(SearchCondition {
+            field: "any_text".into(),
+            operator: SearchOperator::Regex,
+            value,
+        });
+        let error = search_routes::structured_search(
+            State(state.clone()),
+            auth::MaybeUser(Some(audit_contract_current_user(&owner))),
+            Path(project.id),
+            Ok(Json(invalid_regex)),
+        )
+        .await
+        .expect_err_api("无效正则必须返回稳定错误码");
+        assert_eq!(audit_contract_error_code(error).await.1, code);
+    }
+
     let Json(path_boundary) = search_routes::structured_search(
         State(state.clone()),
         auth::MaybeUser(Some(audit_contract_current_user(&owner))),
@@ -14952,6 +15107,8 @@ async fn structured_search_scopes_conditions_visibility_cursor_and_get_adapter_a
             source_langs: vec!["en".into()],
             primary_source_lang: None,
             target_lang: "zh-Hans".into(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -15195,6 +15352,8 @@ async fn entry_force_presence_is_capability_gated_and_never_bypasses_version_con
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await
@@ -15389,6 +15548,8 @@ async fn public_editor_is_anonymous_read_only_and_private_editor_fails_closed() 
             source_langs: vec!["en".to_string()],
             primary_source_lang: None,
             target_lang: "zh-Hans".to_string(),
+            join_policy: "admin_only".to_string(),
+            join_default_role: Some("translator".to_string()),
         }),
     )
     .await

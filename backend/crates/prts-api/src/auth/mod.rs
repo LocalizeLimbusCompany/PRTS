@@ -4,4 +4,4 @@ pub mod extract;
 pub mod project;
 pub mod session;
 
-pub use extract::{CurrentUser, MaybeUser};
+pub use extract::{CredentialKind, CurrentUser, MaybeUser};

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use sqlx::{FromRow, PgConnection, PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
-use crate::models::{Entry, EntryVersion};
+use crate::models::{Entry, EntryVersion, ProjectEntryVersion};
 
 /// 上传词条（来自上传 JSON 的单项）。
 #[derive(Debug, Clone, Deserialize)]
@@ -1455,6 +1455,58 @@ pub async fn list_versions_with_editor(
          ORDER BY version DESC, id DESC LIMIT $2",
     )
     .bind(entry_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// Project-wide newest-first history using the `(created_at,id)` keyset.
+pub async fn list_project_versions(
+    pool: &PgPool,
+    project_id: i64,
+    after: Option<(chrono::DateTime<chrono::Utc>, i64)>,
+    limit: i64,
+) -> Result<Vec<ProjectEntryVersion>, sqlx::Error> {
+    let (after_created_at, after_id) = after
+        .map(|(created_at, id)| (Some(created_at), Some(id)))
+        .unwrap_or((None, None));
+    sqlx::query_as::<_, ProjectEntryVersion>(
+        "WITH history_page AS (
+             SELECT version.*
+             FROM entry_versions AS version
+             WHERE version.project_id = $1
+               AND ($2::TIMESTAMPTZ IS NULL
+                    OR version.created_at < $2
+                    OR (version.created_at = $2 AND version.id < $3))
+             ORDER BY version.created_at DESC, version.id DESC
+             LIMIT $4
+         )
+         SELECT history.id, history.entry_id, entry.file_id, file.path AS file_path,
+                entry.key AS entry_key, history.version, history.kind,
+                history.original, history.translation, history.state, history.questioned,
+                history.locked, history.hidden, previous.original AS previous_original,
+                previous.translation AS previous_translation, previous.state AS previous_state,
+                previous.questioned AS previous_questioned, previous.locked AS previous_locked,
+                previous.hidden AS previous_hidden, history.editor_id, history.editor_name,
+                history.editor_avatar_url, history.created_at
+         FROM history_page AS history
+         JOIN entries AS entry ON entry.id = history.entry_id
+         JOIN files AS file ON file.id = entry.file_id
+         LEFT JOIN LATERAL (
+             SELECT older.original, older.translation, older.state, older.questioned,
+                    older.locked, older.hidden
+             FROM entry_versions AS older
+             WHERE older.entry_id = history.entry_id
+               AND (older.version < history.version
+                    OR (older.version = history.version AND older.id < history.id))
+             ORDER BY older.version DESC, older.id DESC
+             LIMIT 1
+         ) AS previous ON TRUE
+         ORDER BY history.created_at DESC, history.id DESC",
+    )
+    .bind(project_id)
+    .bind(after_created_at)
+    .bind(after_id)
     .bind(limit)
     .fetch_all(pool)
     .await

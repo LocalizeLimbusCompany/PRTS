@@ -14,6 +14,7 @@ describe('project routes', () => {
       'project-task-detail',
       'project-task-manage',
       'project-terms',
+      'project-history',
       'project-leaderboard',
       'project-download',
       'project-manage',

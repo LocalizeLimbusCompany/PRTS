@@ -89,6 +89,43 @@ pub async fn create_with_primary_tx(
     .await
 }
 
+/// Update non-secret join/history policy fields and optional replacement hashes atomically.
+#[allow(clippy::too_many_arguments)]
+pub async fn update_join_settings_tx(
+    conn: &mut PgConnection,
+    id: i64,
+    join_policy: &str,
+    join_default_role: &str,
+    history_visibility: &str,
+    password_hash: Option<&str>,
+    keep_password_hash: bool,
+    quiz_question: Option<&str>,
+    quiz_answer_hash: Option<&str>,
+    keep_quiz_answer_hash: bool,
+) -> Result<Project, sqlx::Error> {
+    sqlx::query_as::<_, Project>(
+        "UPDATE projects
+         SET join_policy = $2,
+             join_default_role = $3,
+             history_visibility = $4,
+             join_password_hash = CASE WHEN $6 THEN join_password_hash ELSE $5 END,
+             join_quiz_question = $7,
+             join_quiz_answer_hash = CASE WHEN $9 THEN join_quiz_answer_hash ELSE $8 END
+         WHERE id = $1 RETURNING *",
+    )
+    .bind(id)
+    .bind(join_policy)
+    .bind(join_default_role)
+    .bind(history_visibility)
+    .bind(password_hash)
+    .bind(keep_password_hash)
+    .bind(quiz_question)
+    .bind(quiz_answer_hash)
+    .bind(keep_quiz_answer_hash)
+    .fetch_one(conn)
+    .await
+}
+
 /// 按 id 查找。
 pub async fn find_by_id(pool: &PgPool, id: i64) -> Result<Option<Project>, sqlx::Error> {
     sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = $1")

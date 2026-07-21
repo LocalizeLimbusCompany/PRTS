@@ -56,6 +56,8 @@ impl From<TermScope> for prts_db::terms::TermListScope {
 #[derive(Debug, Deserialize, IntoParams)]
 pub struct TermListQuery {
     pub scope: Option<TermScope>,
+    /// Search source text, translation and notes without changing the id keyset contract.
+    pub q: Option<String>,
     pub after: Option<i64>,
     pub limit: Option<i64>,
 }
@@ -187,6 +189,11 @@ pub async fn list_terms(
         id,
         primary,
         query.scope.unwrap_or(TermScope::Current).into(),
+        query
+            .q
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
         query.after,
         limit,
     )

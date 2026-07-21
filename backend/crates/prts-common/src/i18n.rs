@@ -47,6 +47,60 @@ fn message_for(code: &str, locale: Locale) -> Option<&'static str> {
     let msg = match (code, locale) {
         ("bad_request", Locale::ZhCn) => "请求参数有误",
         ("bad_request", Locale::En) => "Bad request",
+        ("API_KEY_SCOPES_REQUIRED", Locale::ZhCn) => "请至少选择一个 API Key 权限范围",
+        ("API_KEY_SCOPES_REQUIRED", Locale::En) => "Select at least one API key scope",
+        ("API_KEY_SCOPE_INVALID", Locale::ZhCn) => "API Key 权限范围无效",
+        ("API_KEY_SCOPE_INVALID", Locale::En) => "Invalid API key scope",
+        ("API_KEY_ALL_SCOPE_EXCLUSIVE", Locale::ZhCn) => "全部权限不能与具体权限同时选择",
+        ("API_KEY_ALL_SCOPE_EXCLUSIVE", Locale::En) => {
+            "The all scope cannot be combined with specific scopes"
+        }
+        ("API_KEY_SCOPE_NOT_AVAILABLE", Locale::ZhCn) => "账号当前不具备所选权限范围",
+        ("API_KEY_SCOPE_NOT_AVAILABLE", Locale::En) => {
+            "The account does not currently have the selected scope"
+        }
+        ("API_KEY_NAME_INVALID", Locale::ZhCn) => "API Key 名称需为 1 到 64 个字符",
+        ("API_KEY_NAME_INVALID", Locale::En) => "API key name must be 1 to 64 characters",
+        ("PROJECT_JOIN_POLICY_INVALID", Locale::ZhCn) => "项目加入机制无效",
+        ("PROJECT_JOIN_POLICY_INVALID", Locale::En) => "Invalid project join policy",
+        ("PROJECT_JOIN_ROLE_INVALID", Locale::ZhCn) => "项目自助加入角色无效",
+        ("PROJECT_JOIN_ROLE_INVALID", Locale::En) => "Invalid project join role",
+        ("PROJECT_HISTORY_VISIBILITY_INVALID", Locale::ZhCn) => "项目历史可见范围无效",
+        ("PROJECT_HISTORY_VISIBILITY_INVALID", Locale::En) => "Invalid project history visibility",
+        ("PROJECT_JOIN_QUIZ_INVALID", Locale::ZhCn) => "请填写有效的加入题目和严格答案",
+        ("PROJECT_JOIN_QUIZ_INVALID", Locale::En) => {
+            "Provide a valid join question and strict answer"
+        }
+        ("PROJECT_JOIN_PASSWORD_REQUIRED", Locale::ZhCn) => "口令加入需要先设置有效口令",
+        ("PROJECT_JOIN_PASSWORD_REQUIRED", Locale::En) => {
+            "Password joining requires a configured password"
+        }
+        ("PROJECT_JOIN_SECRET_INVALID", Locale::ZhCn) => "加入凭据长度无效",
+        ("PROJECT_JOIN_SECRET_INVALID", Locale::En) => "Invalid join credential length",
+        ("PROJECT_JOIN_MESSAGE_INVALID", Locale::ZhCn) => "加入申请说明不能超过 500 字",
+        ("PROJECT_JOIN_MESSAGE_INVALID", Locale::En) => {
+            "Join application message cannot exceed 500 characters"
+        }
+        ("PROJECT_JOIN_CREDENTIAL_INVALID", Locale::ZhCn) => "加入凭据不正确",
+        ("PROJECT_JOIN_CREDENTIAL_INVALID", Locale::En) => "The join credential is incorrect",
+        ("PROJECT_JOIN_RATE_LIMITED", Locale::ZhCn) => "尝试次数过多，请稍后再试",
+        ("PROJECT_JOIN_RATE_LIMITED", Locale::En) => "Too many attempts; try again later",
+        ("PROJECT_JOIN_APPLICATION_PENDING", Locale::ZhCn) => "已有待处理的加入申请",
+        ("PROJECT_JOIN_APPLICATION_PENDING", Locale::En) => "A join application is already pending",
+        ("PROJECT_ALREADY_MEMBER", Locale::ZhCn) => "你已经是项目成员",
+        ("PROJECT_ALREADY_MEMBER", Locale::En) => "You are already a project member",
+        ("PROJECT_MEMBER_QUERY_TOO_SHORT", Locale::ZhCn) => "用户名至少输入 2 个字符",
+        ("PROJECT_MEMBER_QUERY_TOO_SHORT", Locale::En) => "Enter at least two username characters",
+        ("PROJECT_HISTORY_CURSOR_INVALID", Locale::ZhCn) => "项目历史游标无效",
+        ("PROJECT_HISTORY_CURSOR_INVALID", Locale::En) => "Invalid project history cursor",
+        ("SEARCH_REGEX_TOO_LONG", Locale::ZhCn) => "正则表达式不能超过 512 个字符",
+        ("SEARCH_REGEX_TOO_LONG", Locale::En) => "Regular expression cannot exceed 512 characters",
+        ("SEARCH_REGEX_INVALID", Locale::ZhCn) => "正则表达式语法无效",
+        ("SEARCH_REGEX_INVALID", Locale::En) => "Invalid regular expression",
+        ("SEARCH_REGEX_TIMEOUT", Locale::ZhCn) => "正则搜索超时，请缩小范围或简化表达式",
+        ("SEARCH_REGEX_TIMEOUT", Locale::En) => {
+            "Regular-expression search timed out; narrow the scope or simplify it"
+        }
         ("AI_REQUEST_FAILED", Locale::ZhCn) => "AI 请求失败，请稍后重试",
         ("AI_REQUEST_FAILED", Locale::En) => "AI request failed; please try again",
         ("AI_REQUEST_TIMEOUT", Locale::ZhCn) => "AI 请求超时，请提高超时上限或降低思考强度",

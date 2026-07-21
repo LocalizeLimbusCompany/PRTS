@@ -16,6 +16,8 @@ pub mod messages;
 pub mod meta;
 pub mod notifications;
 pub mod pos;
+pub mod project_history;
+pub mod project_join;
 pub mod project_media;
 pub mod projects;
 pub mod search;
@@ -83,7 +85,8 @@ fn api_router() -> OpenApiRouter<AppState> {
         .routes(routes!(users::get_user))
         .routes(routes!(users::my_accounts))
         .routes(routes!(users::create_api_key, users::list_api_keys))
-        .routes(routes!(users::revoke_api_key))
+        .routes(routes!(users::list_api_key_scopes))
+        .routes(routes!(users::update_api_key, users::revoke_api_key))
         .routes(routes!(
             ai::get_personal_ai_settings,
             ai::put_personal_ai_settings,
@@ -110,6 +113,19 @@ fn api_router() -> OpenApiRouter<AppState> {
         ))
         // 项目
         .routes(routes!(projects::create_project, projects::list_projects))
+        .routes(routes!(
+            project_join::get_join_info,
+            project_join::join_project,
+            project_join::withdraw_or_leave_project
+        ))
+        .routes(routes!(
+            project_join::get_join_settings,
+            project_join::put_join_settings
+        ))
+        .routes(routes!(project_join::list_join_applications))
+        .routes(routes!(project_join::decide_join_application))
+        .routes(routes!(project_join::member_candidates))
+        .routes(routes!(project_history::project_history))
         .routes(routes!(
             projects::get_project,
             projects::update_project,

@@ -208,6 +208,12 @@ pub enum AuditEvent<'a> {
         key_id: i64,
         name: &'a str,
         prefix: &'a str,
+        scopes: &'a [String],
+    },
+    ApiKeyUpdated {
+        key_id: i64,
+        changed_fields: &'a [&'a str],
+        scopes: &'a [String],
     },
     ApiKeyUsed {
         key_id: i64,
@@ -300,6 +306,40 @@ pub enum AuditEvent<'a> {
     MembershipRemoved {
         project_id: i64,
         member_id: i64,
+        previous_role: &'a str,
+    },
+    ProjectJoinSettingsUpdated {
+        project_id: i64,
+        changed_fields: &'a [&'a str],
+        join_policy: &'a str,
+        history_visibility: &'a str,
+    },
+    ProjectJoinApplicationSubmitted {
+        project_id: i64,
+        application_id: i64,
+        applicant_id: i64,
+    },
+    ProjectJoinApplicationWithdrawn {
+        project_id: i64,
+        application_id: i64,
+        applicant_id: i64,
+    },
+    ProjectJoinApplicationDecided {
+        project_id: i64,
+        application_id: i64,
+        applicant_id: i64,
+        approved: bool,
+        role: Option<&'a str>,
+    },
+    ProjectSelfJoined {
+        project_id: i64,
+        user_id: i64,
+        policy: &'a str,
+        role: &'a str,
+    },
+    ProjectMemberLeft {
+        project_id: i64,
+        user_id: i64,
         previous_role: &'a str,
     },
     TaskCreated {
@@ -716,12 +756,24 @@ pub async fn append_event_tx(
             key_id,
             name,
             prefix,
+            scopes,
         } => (
             "api_key.created",
             "api_key",
             key_id.to_string(),
             None,
-            serde_json::json!({"name": name, "prefix": prefix}),
+            serde_json::json!({"name": name, "prefix": prefix, "scopes": scopes}),
+        ),
+        AuditEvent::ApiKeyUpdated {
+            key_id,
+            changed_fields,
+            scopes,
+        } => (
+            "api_key.updated",
+            "api_key",
+            key_id.to_string(),
+            None,
+            serde_json::json!({"changed_fields": changed_fields, "scopes": scopes}),
         ),
         AuditEvent::ApiKeyUsed { key_id, prefix } => (
             "api_key.used",
@@ -948,6 +1000,84 @@ pub async fn append_event_tx(
                 "member_id": member_id,
                 "previous_role": previous_role,
             }),
+        ),
+        AuditEvent::ProjectJoinSettingsUpdated {
+            project_id,
+            changed_fields,
+            join_policy,
+            history_visibility,
+        } => (
+            "project.join_settings_updated",
+            "project",
+            project_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "changed_fields": changed_fields,
+                "join_policy": join_policy,
+                "history_visibility": history_visibility,
+            }),
+        ),
+        AuditEvent::ProjectJoinApplicationSubmitted {
+            project_id,
+            application_id,
+            applicant_id,
+        } => (
+            "project.join_application_submitted",
+            "project_join_application",
+            application_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"applicant_id": applicant_id}),
+        ),
+        AuditEvent::ProjectJoinApplicationWithdrawn {
+            project_id,
+            application_id,
+            applicant_id,
+        } => (
+            "project.join_application_withdrawn",
+            "project_join_application",
+            application_id.to_string(),
+            Some(project_id),
+            serde_json::json!({"applicant_id": applicant_id}),
+        ),
+        AuditEvent::ProjectJoinApplicationDecided {
+            project_id,
+            application_id,
+            applicant_id,
+            approved,
+            role,
+        } => (
+            "project.join_application_decided",
+            "project_join_application",
+            application_id.to_string(),
+            Some(project_id),
+            serde_json::json!({
+                "applicant_id": applicant_id,
+                "approved": approved,
+                "role": role,
+            }),
+        ),
+        AuditEvent::ProjectSelfJoined {
+            project_id,
+            user_id,
+            policy,
+            role,
+        } => (
+            "project.self_joined",
+            "membership",
+            format!("{project_id}:{user_id}"),
+            Some(project_id),
+            serde_json::json!({"policy": policy, "role": role}),
+        ),
+        AuditEvent::ProjectMemberLeft {
+            project_id,
+            user_id,
+            previous_role,
+        } => (
+            "project.member_left",
+            "membership",
+            format!("{project_id}:{user_id}"),
+            Some(project_id),
+            serde_json::json!({"previous_role": previous_role}),
         ),
         AuditEvent::TaskCreated {
             project_id,

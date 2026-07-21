@@ -5,6 +5,7 @@ import type {
   AiExplanationDto,
   AiSettingsDto,
   AiSettingsWriteRequest,
+  ApiKeyScope,
   AiSourcePreference,
   AiUiLocale,
   AdminUserDto,
@@ -31,6 +32,15 @@ import type {
   ThreadDto,
   ProjectDetailDto,
   ProjectDto,
+  ProjectHistoryPageDto,
+  ProjectJoinInfoDto,
+  ProjectJoinResultDto,
+  ProjectJoinSettingsDto,
+  ProjectJoinPolicy,
+  ProjectJoinDefaultRole,
+  ProjectHistoryVisibility,
+  JoinApplicationPageDto,
+  MemberCandidateDto,
   ProjectTree,
   SearchConfigDto,
   StructuredSearchRequest,
@@ -103,8 +113,14 @@ export const usersApi = {
   listApiKeys() {
     return http.get<ApiKeyDto[]>('/me/api-keys').then((r) => r.data)
   },
-  createApiKey(name: string) {
-    return http.post<CreatedApiKey>('/me/api-keys', { name }).then((r) => r.data)
+  listApiKeyScopes() {
+    return http.get<ApiKeyScope[]>('/me/api-key-scopes').then((r) => r.data)
+  },
+  createApiKey(name: string, scopes: ApiKeyScope[]) {
+    return http.post<CreatedApiKey>('/me/api-keys', { name, scopes }).then((r) => r.data)
+  },
+  updateApiKey(id: number, name: string, scopes: ApiKeyScope[]) {
+    return http.put<ApiKeyDto>(`/me/api-keys/${id}`, { name, scopes }).then((r) => r.data)
   },
   revokeApiKey(id: number) {
     return http.delete(`/me/api-keys/${id}`)
@@ -191,6 +207,8 @@ export const projectsApi = {
     source_langs: string[]
     primary_source_lang?: string
     target_lang: string
+    join_policy: ProjectJoinPolicy
+    join_default_role?: ProjectJoinDefaultRole
   }) {
     return http.post<ProjectDto>('/projects', body).then((r) => r.data)
   },
@@ -243,6 +261,55 @@ export const projectsApi = {
   },
   removeMember(id: number, userId: number) {
     return http.delete(`/projects/${id}/members/${userId}`)
+  },
+  joinInfo(id: number) {
+    return http.get<ProjectJoinInfoDto>(`/projects/${id}/join`).then((r) => r.data)
+  },
+  join(id: number, body: { password?: string; answer?: string; message?: string }) {
+    return http.post<ProjectJoinResultDto>(`/projects/${id}/join`, body).then((r) => r.data)
+  },
+  withdrawOrLeave(id: number) {
+    return http.delete(`/projects/${id}/join`)
+  },
+  joinSettings(id: number) {
+    return http.get<ProjectJoinSettingsDto>(`/projects/${id}/join-settings`).then((r) => r.data)
+  },
+  updateJoinSettings(
+    id: number,
+    body: {
+      join_policy: ProjectJoinPolicy
+      join_default_role: ProjectJoinDefaultRole
+      history_visibility: ProjectHistoryVisibility
+      password?: string
+      quiz_question?: string
+      quiz_answer?: string
+    },
+  ) {
+    return http
+      .put<ProjectJoinSettingsDto>(`/projects/${id}/join-settings`, body)
+      .then((r) => r.data)
+  },
+  joinApplications(id: number, params: { after?: number; limit?: number } = {}) {
+    return http
+      .get<JoinApplicationPageDto>(`/projects/${id}/join-applications`, { params })
+      .then((r) => r.data)
+  },
+  decideJoinApplication(
+    id: number,
+    applicationId: number,
+    body: { approved: boolean; role?: string },
+  ) {
+    return http.post(`/projects/${id}/join-applications/${applicationId}/decision`, body)
+  },
+  memberCandidates(id: number, q: string) {
+    return http
+      .get<MemberCandidateDto[]>(`/projects/${id}/member-candidates`, { params: { q } })
+      .then((r) => r.data)
+  },
+  history(id: number, params: { after?: string; limit?: number } = {}) {
+    return http
+      .get<ProjectHistoryPageDto>(`/projects/${id}/history`, { params })
+      .then((r) => r.data)
   },
   tree(id: number) {
     return http.get<ProjectTree>(`/projects/${id}/tree`).then((r) => r.data)

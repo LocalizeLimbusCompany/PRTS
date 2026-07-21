@@ -59,13 +59,14 @@ enum SearchOperatorSchema {
     StartsWith,
     EndsWith,
     Equals,
+    Regex,
 }
 
 /// OpenAPI AND condition shadow。
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct SearchConditionSchema {
-    /// `source:<bcp47>`、`source_any`、`translation`、`key`。
+    /// `source:<bcp47>`、`source_any`、`translation`、`key`、`any_text`。
     field: String,
     operator: SearchOperatorSchema,
     value: String,
@@ -136,6 +137,8 @@ struct StructuredSearchRequestSchema {
     query: Option<String>,
     #[serde(default)]
     conditions: Vec<SearchConditionSchema>,
+    #[serde(default)]
+    case_sensitive: bool,
     scope: SearchScopeSchema,
     #[serde(default)]
     states: Vec<String>,
@@ -243,6 +246,7 @@ pub async fn search_entries(
     let request = StructuredSearchRequest {
         query: query.q,
         conditions: Vec::new(),
+        case_sensitive: false,
         scope: query
             .file_id
             .map_or(SearchScope::All, |file_id| SearchScope::File { file_id }),
@@ -326,6 +330,8 @@ async fn execute_search(
         states: &state_filters,
         questioned: plan.questioned,
         conditions: &plan.conditions,
+        case_sensitive: plan.case_sensitive,
+        query: plan.query.as_deref(),
         include_hidden: plan.include_hidden,
     };
 
@@ -365,8 +371,12 @@ async fn execute_search(
         .as_deref()
         .ok_or(Error::ProjectLanguageResolutionRequired)?;
     let limit = usize::from(plan.limit);
+    let has_regex = plan
+        .conditions
+        .iter()
+        .any(|condition| condition.operator == prts_core::search_query::SearchOperator::Regex);
     let (mut results, total_items) = if let Some(query) = plan.query.as_deref() {
-        let rows = prts_db::search::ranked_search_page(
+        let search = prts_db::search::ranked_search_page(
             &state.db,
             project_id,
             query,
@@ -379,9 +389,15 @@ async fn execute_search(
                 .as_ref()
                 .map(|cursor| (cursor.last_rrf_score, cursor.last_entry_id)),
             i64::from(plan.limit) + 1,
-        )
-        .await
-        .map_err(db_err)?;
+        );
+        let rows = if has_regex {
+            tokio::time::timeout(std::time::Duration::from_secs(3), search)
+                .await
+                .map_err(|_| Error::validation("SEARCH_REGEX_TIMEOUT"))?
+                .map_err(db_err)?
+        } else {
+            search.await.map_err(db_err)?
+        };
         let total = rows.first().map(|row| row.total_items).unwrap_or(0);
         (
             rows.into_iter()
@@ -393,7 +409,7 @@ async fn execute_search(
             total,
         )
     } else {
-        let results = run(
+        let search = run(
             &state.db,
             OrchestratorInput {
                 project_id,
@@ -405,18 +421,31 @@ async fn execute_search(
                 states: &state_filters,
                 questioned: plan.questioned,
                 conditions: &plan.conditions,
+                case_sensitive: plan.case_sensitive,
                 include_hidden: plan.include_hidden,
                 per_path: SEARCH_RECALL_LIMIT,
                 top_k: i64::from(plan.limit) + 1,
                 filter_after_entry_id: cursor.as_ref().map(|cursor| cursor.last_entry_id),
                 vector_ids: None,
             },
-        )
-        .await
-        .map_err(db_err)?;
-        let total = prts_db::search::count_filtered(&state.db, project_id, &filter)
-            .await
-            .map_err(db_err)?;
+        );
+        let results = if has_regex {
+            tokio::time::timeout(std::time::Duration::from_secs(3), search)
+                .await
+                .map_err(|_| Error::validation("SEARCH_REGEX_TIMEOUT"))?
+                .map_err(db_err)?
+        } else {
+            search.await.map_err(db_err)?
+        };
+        let count = prts_db::search::count_filtered(&state.db, project_id, &filter);
+        let total = if has_regex {
+            tokio::time::timeout(std::time::Duration::from_secs(3), count)
+                .await
+                .map_err(|_| Error::validation("SEARCH_REGEX_TIMEOUT"))?
+                .map_err(db_err)?
+        } else {
+            count.await.map_err(db_err)?
+        };
         (results, total)
     };
     let has_more = results.len() > limit;
@@ -566,6 +595,7 @@ mod tests {
                     operator: SearchOperator::Contains,
                     value: "x".into(),
                 }],
+                case_sensitive: false,
                 scope: SearchScope::All,
                 states: Vec::new(),
                 questioned: None,

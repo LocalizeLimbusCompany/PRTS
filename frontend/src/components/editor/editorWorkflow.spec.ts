@@ -60,11 +60,14 @@ describe('editor structured search workflow', () => {
         questioned: false,
         includeHidden: true,
         vector: false,
+        caseSensitive: false,
+        mode: 'normal',
         ...scopeDraft,
       }),
     ).toEqual({
       query: 'needle',
       conditions: [{ field: 'translation', operator: 'contains', value: 'x' }],
+      case_sensitive: false,
       scope,
       states: ['translated', 'checked'],
       include_hidden: true,
@@ -77,6 +80,7 @@ describe('editor structured search workflow', () => {
     const request: StructuredSearchRequest = {
       query: 'needle',
       conditions: [],
+      case_sensitive: false,
       scope: { type: 'all' },
       states: [],
       include_hidden: false,

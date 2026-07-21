@@ -46,6 +46,11 @@ export const projectRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/project/ProjectTermsView.vue'),
       },
       {
+        path: 'history',
+        name: 'project-history',
+        component: () => import('@/views/project/ProjectHistoryView.vue'),
+      },
+      {
         path: 'leaderboard',
         name: 'project-leaderboard',
         component: () => import('@/views/project/ProjectLeaderboardView.vue'),

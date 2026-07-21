@@ -16,6 +16,7 @@ export function quickSearchRequest(
   return {
     query,
     conditions: [],
+    case_sensitive: false,
     scope: currentFileOnly
       ? { type: 'current_file', file_id: currentFileId as number }
       : { type: 'all' },
@@ -29,7 +30,7 @@ export function quickSearchRequest(
 </script>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import type { StructuredSearchRequest as SearchRequest } from '@/api'
@@ -38,9 +39,11 @@ const props = defineProps<{ currentFileId: number | null }>()
 const emit = defineEmits<{
   (event: 'search', request: SearchRequest): void
   (event: 'clear'): void
+  (event: 'query-change', query: string): void
 }>()
 const { t } = useI18n()
 const query = ref('')
+watch(query, (value) => emit('query-change', value))
 
 function submit(event: KeyboardEvent) {
   if (event.key !== 'Enter') return

@@ -85,6 +85,12 @@
   },
   "profile": {
     "title": "Profile",
+    "tabs": {
+      "profile": "Profile",
+      "ai": "AI",
+      "security": "Security and accounts",
+      "api_keys": "API keys"
+    },
     "cp": "Contribution points",
     "description": "Profile description",
     "translationLanguages": "Preferred translation languages",
@@ -94,7 +100,7 @@
     "previewTranslationDiffHint": "Shown only when an existing non-empty translation actually changes, not for state- or tag-only saves.",
     "ai": {
       "heading": "Personal AI",
-      "description": "Configure an OpenAI-compatible endpoint. The API key is encrypted by the server and is never returned to the browser.",
+      "description": "Configure a native OpenAI, Anthropic, Gemini, or OpenAI-compatible endpoint. The API key is encrypted by the server and is never returned to the browser.",
       "sourcePreference": "Editor AI source",
       "sourcePreferenceHint": "Auto prefers personal AI. Explicit personal or project selection never switches silently when unavailable.",
       "sources": {
@@ -110,7 +116,15 @@
         "qwen": "Qwen",
         "deepseek": "DeepSeek",
         "gemini": "Gemini",
+        "anthropic": "Anthropic",
         "custom": "Custom compatible endpoint"
+      },
+      "transportMode": "Transport mode",
+      "transportModeHint": "Auto tries streaming first, falls back only when the provider explicitly rejects it, and caches the probe for 24 hours.",
+      "transportModes": {
+        "auto": "Auto",
+        "streaming": "Streaming",
+        "non_streaming": "Non-streaming"
       },
       "model": "Model",
       "apiKey": "API key",
@@ -196,11 +210,28 @@
     "noLinkedAccounts": "No linked accounts",
     "apiKeys": {
       "new": "New API key",
+      "edit": "Edit API key",
+      "updated": "API key updated",
       "createdAt": "Created",
       "empty": "No API keys",
       "name": "Name",
+      "permissions": "Permission scopes",
+      "permissionsHint": "All permissions dynamically follows the account's current and future business permissions. Specific scopes are always intersected with account permissions.",
       "copyNow": "Copy this key now. It will only be shown once:",
-      "createFailed": "Failed to create API key"
+      "createFailed": "Failed to create API key",
+      "scopes": {
+        "all": "All permissions",
+        "profile_read": "Read profile",
+        "profile_write": "Update profile",
+        "project_read": "Read projects",
+        "entry_write": "Edit entries",
+        "project_write": "Update project content",
+        "project_manage": "Manage projects",
+        "ai_use": "Use AI",
+        "message_read": "Read messages",
+        "message_write": "Send messages",
+        "platform_manage": "Manage platform"
+      }
     },
     "password": {
       "title": "Change password",
@@ -235,6 +266,7 @@
     "workspaceNav": "Project workspace navigation",
     "loadFailed": "Failed to load project",
     "openEditor": "Translation editor",
+    "search": "Search this project",
     "private": "Private",
     "public": "Public",
     "soon": "Coming soon",
@@ -277,11 +309,55 @@
       "public": "Public",
       "publicHint": "Everyone who can view the project can read; any signed-in non-guest user can comment."
     },
+    "join": {
+      "heading": "Join project",
+      "policy": "Join policy",
+      "defaultRole": "Default self-service role",
+      "password": "Project password",
+      "answer": "Answer",
+      "message": "Application message (optional)",
+      "action": "Join project",
+      "apply": "Submit application",
+      "withdraw": "Withdraw application",
+      "leave": "Leave project",
+      "member": "You are a project member",
+      "pending": "Application submitted and awaiting review",
+      "joined": "You joined the project",
+      "left": "You left the project",
+      "failed": "Failed to join project",
+      "saved": "Join settings saved",
+      "approved": "Application approved",
+      "rejected": "Application rejected",
+      "settingsHeading": "Join policy and history visibility",
+      "settingsDescription": "Self-service joining applies only to public projects. Private projects retain this configuration but pause it. Passwords and answers are stored only as hashes.",
+      "passwordUpdate": "Set a new password",
+      "quizQuestion": "Quiz question",
+      "quizAnswer": "Set exact answer",
+      "secretRetain": "Leave empty to retain the existing secret",
+      "applications": "Pending join applications",
+      "noMessage": "No message provided",
+      "approve": "Approve application",
+      "reject": "Reject application",
+      "historyVisibility": {
+        "label": "History visibility",
+        "viewers": "Everyone who can view",
+        "members": "Project members only",
+        "managers": "Project managers only"
+      },
+      "policies": {
+        "application": "Application",
+        "free": "Free join",
+        "admin_only": "Administrators only",
+        "password": "Password",
+        "quiz": "Quiz"
+      }
+    },
     "sections": {
       "info": "Information",
       "files": "Files",
       "tasks": "Tasks",
       "terms": "Terms",
+      "history": "History",
       "leaderboard": "Leaderboard",
       "download": "Download",
       "manage": "Manage"
@@ -446,6 +522,21 @@
         "deleted_at": "Deletion state"
       }
     },
+    "entryTimeline": {
+      "heading": "Entry history",
+      "empty": "No entry versions yet",
+      "loadMore": "Load more",
+      "loadFailed": "Failed to load entry history",
+      "emptyValue": "Empty",
+      "fields": {
+        "original": "Source text",
+        "translation": "Translation",
+        "state": "State",
+        "questioned": "Questioned",
+        "locked": "Locked",
+        "hidden": "Hidden"
+      }
+    },
     "download": {
       "heading": "Export project",
       "archive": "Project archive",
@@ -577,6 +668,7 @@
     "export": "Export",
     "exportFailed": "Export failed",
     "loadMore": "Load more terms",
+    "searchPlaceholder": "Search source, translation, or notes",
     "empty": "No terms in this scope",
     "emptyHint": "Choose another scope, or create or import terms if you have permission.",
     "active": "Active",
@@ -684,11 +776,17 @@
     "fieldSourceAny": "Any source text",
     "fieldTranslation": "Translation",
     "fieldKey": "Entry key",
+    "fieldAnyText": "Any source / key / translation",
     "opContains": "Contains",
     "opNotContains": "Does not contain",
     "opStartsWith": "Starts with",
     "opEndsWith": "Ends with",
     "opEquals": "Equals",
+    "opRegex": "Regular expression",
+    "caseSensitive": "Case sensitive",
+    "normalSearch": "Normal search",
+    "semanticSearch": "Semantic search",
+    "semanticQuery": "Semantic search text",
     "addCondition": "Add condition",
     "vectorSearch": "Vector search",
     "termSuggestions": "Term suggestions",
@@ -756,6 +854,10 @@
     "questionedChanged": "Questioned tag changed",
     "questionedAdded": "Added",
     "questionedRemoved": "Removed",
+    "lockedChanged": "Locked flag changed",
+    "hiddenChanged": "Hidden flag changed",
+    "flagEnabled": "Enabled",
+    "flagDisabled": "Disabled",
     "translationDiff": "Translation changes",
     "sourceDiff": "Source changes",
     "systemActor": "System",
@@ -772,11 +874,12 @@
     "ai": {
       "tab": "AI",
       "heading": "AI source explanation",
-      "description": "Analyzes only this entry's primary source and returns its overall meaning, deduplicated tokens, and contextual explanations.",
-      "analyze": "Analyze source",
-      "analyzeAgain": "Analyze again",
+      "description": "Analyzes only this entry's primary source and returns a reference translation, deduplicated tokens, and contextual explanations.",
+      "analyze": "Generate reference translation",
+      "analyzeAgain": "Generate again",
       "loadFailed": "AI analysis failed",
-      "overallMeaning": "Overall meaning",
+      "referenceTranslation": "Reference translation",
+      "referenceOnly": "For reference only",
       "grammar": "Grammar notes",
       "tokens": "Token explanations",
       "noTokens": "The AI did not return usable tokens.",
@@ -806,6 +909,12 @@
   },
   "admin": {
     "title": "Administration",
+    "tabs": {
+      "users": "Users",
+      "settings": "Platform settings",
+      "pos": "Part-of-speech presets",
+      "search": "Search"
+    },
     "platformSettings": "Platform settings",
     "registrationOpen": "Open registration",
     "registrationOpenHint": "When disabled, new users cannot register themselves.",

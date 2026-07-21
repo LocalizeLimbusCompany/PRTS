@@ -1,22 +1,34 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 
 import MarkdownView from '@/components/MarkdownView.vue'
 import ProjectAvatar from '@/components/project/ProjectAvatar.vue'
 import ProjectProgress from '@/components/project/ProjectProgress.vue'
 import { langLabel } from '@/lib/langs'
 import { useProjectWorkspace } from '@/lib/projectWorkspace'
-import { projectsApi, type MemberDto } from '@/api'
+import { apiErrorMessage, projectsApi, type MemberDto, type ProjectJoinInfoDto } from '@/api'
 import { shouldConnectProjectRealtime, useRealtime } from '@/composables/useRealtime'
 import { useAuthStore } from '@/stores/auth'
 
 const { detail, projectId } = useProjectWorkspace()
 const auth = useAuthStore()
-const { locale } = useI18n()
+const $q = useQuasar()
+const { locale, t } = useI18n()
+const router = useRouter()
 const project = computed(() => detail.value?.project)
 const localizedLangLabel = (code: string) => langLabel(code, locale.value)
 const members = ref<MemberDto[]>([])
+const joinInfo = ref<ProjectJoinInfoDto | null>(null)
+const joinLoading = ref(false)
+const joinPassword = ref('')
+const joinAnswer = ref('')
+const joinMessage = ref('')
+const isCurrentMember = computed(() =>
+  members.value.some((member) => member.user_id === auth.user?.id),
+)
 const { presences } = useRealtime(
   () => projectId.value,
   {},
@@ -33,7 +45,53 @@ const onlineMembers = computed(() => {
 })
 onMounted(async () => {
   if (auth.isAuthed) members.value = await projectsApi.members(projectId.value).catch(() => [])
+  if (auth.isAuthed && project.value?.visibility === 'public') {
+    joinInfo.value = await projectsApi.joinInfo(projectId.value).catch(() => null)
+  }
 })
+
+async function submitJoin() {
+  const info = joinInfo.value
+  if (!info) return
+  joinLoading.value = true
+  try {
+    const result = await projectsApi.join(projectId.value, {
+      password: info.join_policy === 'password' ? joinPassword.value : undefined,
+      answer: info.join_policy === 'quiz' ? joinAnswer.value : undefined,
+      message: info.join_policy === 'application' ? joinMessage.value : undefined,
+    })
+    joinInfo.value = await projectsApi.joinInfo(projectId.value)
+    members.value = await projectsApi.members(projectId.value).catch(() => members.value)
+    $q.notify({
+      type: 'positive',
+      message: t(result.status === 'pending' ? 'project.join.pending' : 'project.join.joined'),
+    })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error, t('project.join.failed')) })
+  } finally {
+    joinPassword.value = ''
+    joinAnswer.value = ''
+    joinLoading.value = false
+  }
+}
+
+async function withdrawOrLeave() {
+  joinLoading.value = true
+  try {
+    await projectsApi.withdrawOrLeave(projectId.value)
+    members.value = members.value.filter((member) => member.user_id !== auth.user?.id)
+    if (project.value?.visibility === 'public') {
+      joinInfo.value = await projectsApi.joinInfo(projectId.value)
+    } else {
+      await router.replace({ name: 'projects' })
+    }
+    $q.notify({ type: 'positive', message: t('project.join.left') })
+  } catch (error) {
+    $q.notify({ type: 'negative', message: apiErrorMessage(error) })
+  } finally {
+    joinLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -74,6 +132,101 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <q-card
+      v-if="joinInfo && !joinInfo.is_member && joinInfo.join_policy !== 'admin_only'"
+      flat
+      bordered
+      class="project-info__join"
+    >
+      <q-card-section class="column q-gutter-sm">
+        <div class="row items-center">
+          <div>
+            <div class="prts-label">{{ $t('project.join.heading') }}</div>
+            <div class="prts-dim">{{ $t(`project.join.policies.${joinInfo.join_policy}`) }}</div>
+          </div>
+          <q-space />
+          <q-btn
+            v-if="joinInfo.pending_application_id"
+            outline
+            no-caps
+            color="negative"
+            icon="mdi-close-circle-outline"
+            :label="$t('project.join.withdraw')"
+            :loading="joinLoading"
+            @click="withdrawOrLeave"
+          />
+        </div>
+        <q-input
+          v-if="!joinInfo.pending_application_id && joinInfo.join_policy === 'password'"
+          v-model="joinPassword"
+          outlined
+          dense
+          type="password"
+          :label="$t('project.join.password')"
+          :disable="joinLoading"
+        />
+        <q-input
+          v-if="!joinInfo.pending_application_id && joinInfo.join_policy === 'quiz'"
+          v-model="joinAnswer"
+          outlined
+          dense
+          :label="joinInfo.quiz_question ?? $t('project.join.answer')"
+          :disable="joinLoading"
+        />
+        <q-input
+          v-if="!joinInfo.pending_application_id && joinInfo.join_policy === 'application'"
+          v-model="joinMessage"
+          outlined
+          dense
+          type="textarea"
+          autogrow
+          :label="$t('project.join.message')"
+          :disable="joinLoading"
+        />
+        <div>
+          <q-btn
+            v-if="!joinInfo.pending_application_id"
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            icon="mdi-account-plus-outline"
+            :label="
+              $t(
+                joinInfo.join_policy === 'application'
+                  ? 'project.join.apply'
+                  : 'project.join.action',
+              )
+            "
+            :loading="joinLoading"
+            @click="submitJoin"
+          />
+        </div>
+      </q-card-section>
+    </q-card>
+
+    <q-card
+      v-if="(joinInfo?.is_member || isCurrentMember) && project.owner_id !== auth.user?.id"
+      flat
+      bordered
+      class="project-info__join"
+    >
+      <q-card-section class="row items-center q-gutter-sm">
+        <q-icon name="mdi-account-check-outline" color="positive" size="20px" />
+        <span>{{ $t('project.join.member') }}</span>
+        <q-space />
+        <q-btn
+          outline
+          no-caps
+          color="negative"
+          icon="mdi-logout"
+          :label="$t('project.join.leave')"
+          :loading="joinLoading"
+          @click="withdrawOrLeave"
+        />
+      </q-card-section>
+    </q-card>
 
     <q-card flat bordered class="project-info__progress">
       <q-card-section>

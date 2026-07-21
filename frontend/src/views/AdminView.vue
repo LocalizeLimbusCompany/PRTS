@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useQuasar } from 'quasar'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 
 import { adminApi, adminSearchApi, apiErrorMessage, posApi } from '@/api'
 import type {
@@ -19,6 +20,33 @@ import { useAuthStore } from '@/stores/auth'
 const auth = useAuthStore()
 const $q = useQuasar()
 const { t, locale } = useI18n()
+const route = useRoute()
+const router = useRouter()
+type AdminTab = 'users' | 'settings' | 'pos' | 'search'
+const activeTab = ref<AdminTab>('users')
+const availableTabs = computed<AdminTab[]>(() => {
+  const tabs: AdminTab[] = []
+  if (auth.canManageUsers) tabs.push('users')
+  if (auth.isAdmin) tabs.push('settings', 'search')
+  if (auth.canManagePos) tabs.push('pos')
+  return tabs
+})
+watch(
+  () => [route.query.tab, availableTabs.value.join(',')] as const,
+  ([requested]) => {
+    const resolved = availableTabs.value.includes(requested as AdminTab)
+      ? (requested as AdminTab)
+      : (availableTabs.value[0] ?? 'users')
+    activeTab.value = resolved
+    if (requested !== resolved) void router.replace({ query: { ...route.query, tab: resolved } })
+  },
+  { immediate: true },
+)
+function selectTab(tab: AdminTab) {
+  if (!availableTabs.value.includes(tab)) return
+  activeTab.value = tab
+  void router.replace({ query: { ...route.query, tab } })
+}
 
 const oauthOnly = ref(false)
 const registrationOpen = ref(true)
@@ -328,7 +356,45 @@ async function exportPos(format: TerminologyDocumentFormat) {
     <div class="prts-label">// ADMIN</div>
     <h1 class="prts-h1 q-mb-lg">{{ t('admin.title') }}</h1>
 
-    <template v-if="auth.canManageUsers">
+    <q-tabs
+      :model-value="activeTab"
+      dense
+      no-caps
+      outside-arrows
+      mobile-arrows
+      align="left"
+      active-color="primary"
+      indicator-color="primary"
+      class="admin-tabs q-mb-lg"
+      @update:model-value="selectTab($event as AdminTab)"
+    >
+      <q-tab
+        v-if="availableTabs.includes('users')"
+        name="users"
+        icon="mdi-account-group-outline"
+        :label="t('admin.tabs.users')"
+      />
+      <q-tab
+        v-if="availableTabs.includes('settings')"
+        name="settings"
+        icon="mdi-tune-variant"
+        :label="t('admin.tabs.settings')"
+      />
+      <q-tab
+        v-if="availableTabs.includes('pos')"
+        name="pos"
+        icon="mdi-format-list-bulleted"
+        :label="t('admin.tabs.pos')"
+      />
+      <q-tab
+        v-if="availableTabs.includes('search')"
+        name="search"
+        icon="mdi-magnify"
+        :label="t('admin.tabs.search')"
+      />
+    </q-tabs>
+
+    <template v-if="auth.canManageUsers && activeTab === 'users'">
       <div class="row items-center q-mb-sm">
         <div class="prts-label">{{ t('admin.users.title') }}</div>
         <q-space />
@@ -450,267 +516,277 @@ async function exportPos(format: TerminologyDocumentFormat) {
       </q-card>
     </template>
 
-    <div class="prts-label q-mb-sm">{{ t('admin.platformSettings') }}</div>
-    <q-card flat bordered class="q-pa-md q-mb-lg">
-      <q-toggle
-        v-model="registrationOpen"
-        :label="t('admin.registrationOpen')"
-        :disable="savingSettings"
-      />
-      <div class="prts-dim q-mb-md" style="font-size: 12px; margin-left: 52px">
-        {{ t('admin.registrationOpenHint') }}
-      </div>
-      <q-toggle v-model="oauthOnly" :label="t('admin.oauthOnly')" :disable="savingSettings" />
-      <div class="prts-dim q-mb-md" style="font-size: 12px; margin-left: 52px">
-        {{ t('admin.oauthOnlyHint') }}
-      </div>
-      <q-toggle v-model="requireEmail" :label="t('admin.requireEmail')" :disable="savingSettings" />
-      <div class="prts-dim" style="font-size: 12px; margin-left: 52px">
-        {{ t('admin.requireEmailHint') }}
-      </div>
-      <q-select
-        v-model="deleteChallengeMode"
-        class="q-mt-md"
-        outlined
-        emit-value
-        map-options
-        :options="[
-          { label: t('admin.deleteChallengeAdvanced'), value: 'advanced' },
-          { label: t('admin.deleteChallengeSimple'), value: 'simple' },
-        ]"
-        :label="t('admin.deleteChallengeMode')"
-        :disable="savingSettings"
-      />
-      <div class="prts-dim q-mt-xs" style="font-size: 12px">
-        {{ t('admin.deleteChallengeHint') }}
-      </div>
-      <div class="q-mt-md">
-        <q-btn
-          unelevated
-          no-caps
-          color="primary"
-          text-color="dark"
-          :label="t('admin.saveSettings')"
-          :loading="savingSettings"
-          @click="saveSettings"
+    <template v-if="auth.isAdmin && activeTab === 'settings'">
+      <div class="prts-label q-mb-sm">{{ t('admin.platformSettings') }}</div>
+      <q-card flat bordered class="q-pa-md q-mb-lg">
+        <q-toggle
+          v-model="registrationOpen"
+          :label="t('admin.registrationOpen')"
+          :disable="savingSettings"
         />
-      </div>
-    </q-card>
-
-    <div v-if="auth.canManagePos" class="prts-label q-mb-sm">
-      {{ t('terminology.pos.heading') }}
-    </div>
-    <q-card v-if="auth.canManagePos" flat bordered class="q-pa-md q-mb-lg">
-      <div class="row items-start justify-between q-gutter-md q-mb-md">
-        <div class="prts-dim" style="font-size: 13px">
-          {{ t('terminology.pos.description') }}
+        <div class="prts-dim q-mb-md" style="font-size: 12px; margin-left: 52px">
+          {{ t('admin.registrationOpenHint') }}
         </div>
-        <div class="row q-gutter-sm">
-          <q-btn-dropdown
-            outline
-            no-caps
-            icon="mdi-download-outline"
-            :label="t('terminology.export')"
-          >
-            <q-list>
-              <q-item v-close-popup clickable @click="exportPos('csv')">
-                <q-item-section>CSV</q-item-section>
-              </q-item>
-              <q-item v-close-popup clickable @click="exportPos('json')">
-                <q-item-section>JSON</q-item-section>
-              </q-item>
-            </q-list>
-          </q-btn-dropdown>
-          <q-btn
-            outline
-            no-caps
-            icon="mdi-file-import-outline"
-            :label="t('terminology.import.action')"
-            @click="posImportOpen = true"
-          />
+        <q-toggle v-model="oauthOnly" :label="t('admin.oauthOnly')" :disable="savingSettings" />
+        <div class="prts-dim q-mb-md" style="font-size: 12px; margin-left: 52px">
+          {{ t('admin.oauthOnlyHint') }}
+        </div>
+        <q-toggle
+          v-model="requireEmail"
+          :label="t('admin.requireEmail')"
+          :disable="savingSettings"
+        />
+        <div class="prts-dim" style="font-size: 12px; margin-left: 52px">
+          {{ t('admin.requireEmailHint') }}
+        </div>
+        <q-select
+          v-model="deleteChallengeMode"
+          class="q-mt-md"
+          outlined
+          emit-value
+          map-options
+          :options="[
+            { label: t('admin.deleteChallengeAdvanced'), value: 'advanced' },
+            { label: t('admin.deleteChallengeSimple'), value: 'simple' },
+          ]"
+          :label="t('admin.deleteChallengeMode')"
+          :disable="savingSettings"
+        />
+        <div class="prts-dim q-mt-xs" style="font-size: 12px">
+          {{ t('admin.deleteChallengeHint') }}
+        </div>
+        <div class="q-mt-md">
           <q-btn
             unelevated
             no-caps
             color="primary"
             text-color="dark"
-            icon="mdi-plus"
-            :label="t('terminology.pos.create')"
-            @click="openCreatePos"
+            :label="t('admin.saveSettings')"
+            :loading="savingSettings"
+            @click="saveSettings"
           />
         </div>
-      </div>
+      </q-card>
+    </template>
 
-      <q-inner-loading :showing="posLoading" />
-      <div v-if="!posLoading && posPresets.length === 0" class="prts-empty">
-        {{ t('terminology.pos.empty') }}
+    <template v-if="auth.canManagePos && activeTab === 'pos'">
+      <div class="prts-label q-mb-sm">
+        {{ t('terminology.pos.heading') }}
       </div>
-      <q-markup-table v-else flat bordered separator="horizontal">
-        <thead>
-          <tr>
-            <th>{{ t('terminology.pos.displayName') }}</th>
-            <th>{{ t('terminology.pos.nameZh') }}</th>
-            <th>{{ t('terminology.pos.nameEn') }}</th>
-            <th>{{ t('terminology.pos.sortOrder') }}</th>
-            <th class="text-right">{{ t('terminology.fields.actions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="pos in posPresets" :key="pos.id">
-            <td>{{ displayPosName(pos, locale) || `#${pos.id}` }}</td>
-            <td>{{ pos.name_zh_cn || '—' }}</td>
-            <td>{{ pos.name_en || '—' }}</td>
-            <td>{{ pos.sort_order }}</td>
-            <td class="text-right">
-              <q-btn flat round dense icon="mdi-pencil-outline" @click="openEditPos(pos)" />
-              <q-btn
-                flat
-                round
-                dense
-                color="negative"
-                icon="mdi-delete-outline"
-                @click="confirmDeletePos(pos)"
-              />
-            </td>
-          </tr>
-        </tbody>
-      </q-markup-table>
-    </q-card>
+      <q-card flat bordered class="q-pa-md q-mb-lg">
+        <div class="row items-start justify-between q-gutter-md q-mb-md">
+          <div class="prts-dim" style="font-size: 13px">
+            {{ t('terminology.pos.description') }}
+          </div>
+          <div class="row q-gutter-sm">
+            <q-btn-dropdown
+              outline
+              no-caps
+              icon="mdi-download-outline"
+              :label="t('terminology.export')"
+            >
+              <q-list>
+                <q-item v-close-popup clickable @click="exportPos('csv')">
+                  <q-item-section>CSV</q-item-section>
+                </q-item>
+                <q-item v-close-popup clickable @click="exportPos('json')">
+                  <q-item-section>JSON</q-item-section>
+                </q-item>
+              </q-list>
+            </q-btn-dropdown>
+            <q-btn
+              outline
+              no-caps
+              icon="mdi-file-import-outline"
+              :label="t('terminology.import.action')"
+              @click="posImportOpen = true"
+            />
+            <q-btn
+              unelevated
+              no-caps
+              color="primary"
+              text-color="dark"
+              icon="mdi-plus"
+              :label="t('terminology.pos.create')"
+              @click="openCreatePos"
+            />
+          </div>
+        </div>
+
+        <q-inner-loading :showing="posLoading" />
+        <div v-if="!posLoading && posPresets.length === 0" class="prts-empty">
+          {{ t('terminology.pos.empty') }}
+        </div>
+        <q-markup-table v-else flat bordered separator="horizontal">
+          <thead>
+            <tr>
+              <th>{{ t('terminology.pos.displayName') }}</th>
+              <th>{{ t('terminology.pos.nameZh') }}</th>
+              <th>{{ t('terminology.pos.nameEn') }}</th>
+              <th>{{ t('terminology.pos.sortOrder') }}</th>
+              <th class="text-right">{{ t('terminology.fields.actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="pos in posPresets" :key="pos.id">
+              <td>{{ displayPosName(pos, locale) || `#${pos.id}` }}</td>
+              <td>{{ pos.name_zh_cn || '—' }}</td>
+              <td>{{ pos.name_en || '—' }}</td>
+              <td>{{ pos.sort_order }}</td>
+              <td class="text-right">
+                <q-btn flat round dense icon="mdi-pencil-outline" @click="openEditPos(pos)" />
+                <q-btn
+                  flat
+                  round
+                  dense
+                  color="negative"
+                  icon="mdi-delete-outline"
+                  @click="confirmDeletePos(pos)"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </q-markup-table>
+      </q-card>
+    </template>
 
     <!-- 搜索 / 向量化设置 -->
-    <div class="prts-label q-mb-sm">{{ t('admin.search.title') }}</div>
-    <q-card flat bordered class="q-pa-md q-mb-lg">
-      <div class="prts-dim q-mb-md" style="font-size: 13px">{{ t('admin.search.subtitle') }}</div>
+    <template v-if="auth.isAdmin && activeTab === 'search'">
+      <div class="prts-label q-mb-sm">{{ t('admin.search.title') }}</div>
+      <q-card flat bordered class="q-pa-md q-mb-lg">
+        <div class="prts-dim q-mb-md" style="font-size: 13px">{{ t('admin.search.subtitle') }}</div>
 
-      <!-- 向量化开关 -->
-      <q-toggle
-        v-model="searchSettings.embedding_enabled"
-        :label="t('admin.search.embeddingEnabled')"
-        :disable="savingSearch"
-      />
-      <div class="prts-dim q-mb-sm" style="font-size: 12px; margin-left: 52px">
-        {{ t('admin.search.embeddingEnabledHint') }}
-      </div>
-
-      <!-- 密钥状态（只读徽标） -->
-      <div class="row items-center q-mb-md" style="margin-left: 52px; gap: 8px; flex-wrap: wrap">
-        <span style="font-size: 13px; color: var(--prts-text-dim)"
-          >{{ t('admin.search.keyPresent') }}：</span
-        >
-        <q-chip
-          dense
-          square
-          :color="searchSettings.embedding_key_present ? 'positive' : 'grey-6'"
-          text-color="white"
-          :icon="
-            searchSettings.embedding_key_present
-              ? 'mdi-check-circle-outline'
-              : 'mdi-close-circle-outline'
-          "
-        >
-          {{
-            searchSettings.embedding_key_present
-              ? t('admin.search.keyPresentYes')
-              : t('admin.search.keyPresentNo')
-          }}
-        </q-chip>
-        <span class="prts-dim" style="font-size: 11px">{{ t('admin.search.keyHint') }}</span>
-      </div>
-
-      <!-- 向量化启用但未配置密钥时的警告 -->
-      <q-banner
-        v-if="searchSettings.embedding_enabled && !searchSettings.embedding_key_present"
-        dense
-        rounded
-        class="q-mb-md text-warning"
-        style="background: var(--prts-bg-elev); border: 1px solid currentColor; font-size: 13px"
-        icon="mdi-alert-outline"
-      >
-        {{ t('admin.search.keyMissingWarning') }}
-      </q-banner>
-
-      <div class="row q-col-gutter-md q-mb-md">
-        <div class="col-12 col-sm-6">
-          <q-input
-            v-model="searchSettings.embedding_model"
-            outlined
-            dense
-            :label="t('admin.search.embeddingModel')"
-            :disable="savingSearch"
-          />
-        </div>
-        <div class="col-12 col-sm-6">
-          <q-input
-            v-model="searchSettings.embedding_base_url"
-            outlined
-            dense
-            :label="t('admin.search.embeddingBaseUrl')"
-            :disable="savingSearch"
-          />
-        </div>
-        <div class="col-12 col-sm-4">
-          <q-input
-            v-model.number="searchSettings.embedding_batch"
-            outlined
-            dense
-            type="number"
-            :min="1"
-            :max="10"
-            :label="t('admin.search.embeddingBatch')"
-            :disable="savingSearch"
-          />
-        </div>
-      </div>
-
-      <!-- TM 建议开关 -->
-      <q-toggle
-        v-model="searchSettings.tm_enabled"
-        :label="t('admin.search.tmEnabled')"
-        :disable="savingSearch"
-      />
-      <div class="prts-dim q-mb-sm" style="font-size: 12px; margin-left: 52px">
-        {{ t('admin.search.tmEnabledHint') }}
-      </div>
-
-      <div class="row q-col-gutter-md q-mb-md">
-        <div class="col-12 col-sm-4">
-          <q-input
-            v-model.number="searchSettings.tm_min_similarity"
-            outlined
-            dense
-            type="number"
-            :min="0"
-            :max="1"
-            :step="0.05"
-            :label="t('admin.search.tmMinSimilarity')"
-            :disable="savingSearch"
-          />
-        </div>
-        <div class="col-12 col-sm-4">
-          <q-input
-            v-model.number="searchSettings.tm_top_n"
-            outlined
-            dense
-            type="number"
-            :min="1"
-            :max="3"
-            :label="t('admin.search.tmTopN')"
-            :disable="savingSearch"
-          />
-        </div>
-      </div>
-
-      <div class="q-mt-sm">
-        <q-btn
-          unelevated
-          no-caps
-          color="primary"
-          text-color="dark"
-          :label="t('admin.search.save')"
-          :loading="savingSearch"
-          @click="saveSearchSettings"
+        <!-- 向量化开关 -->
+        <q-toggle
+          v-model="searchSettings.embedding_enabled"
+          :label="t('admin.search.embeddingEnabled')"
+          :disable="savingSearch"
         />
-      </div>
-    </q-card>
+        <div class="prts-dim q-mb-sm" style="font-size: 12px; margin-left: 52px">
+          {{ t('admin.search.embeddingEnabledHint') }}
+        </div>
+
+        <!-- 密钥状态（只读徽标） -->
+        <div class="row items-center q-mb-md" style="margin-left: 52px; gap: 8px; flex-wrap: wrap">
+          <span style="font-size: 13px; color: var(--prts-text-dim)"
+            >{{ t('admin.search.keyPresent') }}：</span
+          >
+          <q-chip
+            dense
+            square
+            :color="searchSettings.embedding_key_present ? 'positive' : 'grey-6'"
+            text-color="white"
+            :icon="
+              searchSettings.embedding_key_present
+                ? 'mdi-check-circle-outline'
+                : 'mdi-close-circle-outline'
+            "
+          >
+            {{
+              searchSettings.embedding_key_present
+                ? t('admin.search.keyPresentYes')
+                : t('admin.search.keyPresentNo')
+            }}
+          </q-chip>
+          <span class="prts-dim" style="font-size: 11px">{{ t('admin.search.keyHint') }}</span>
+        </div>
+
+        <!-- 向量化启用但未配置密钥时的警告 -->
+        <q-banner
+          v-if="searchSettings.embedding_enabled && !searchSettings.embedding_key_present"
+          dense
+          rounded
+          class="q-mb-md text-warning"
+          style="background: var(--prts-bg-elev); border: 1px solid currentColor; font-size: 13px"
+          icon="mdi-alert-outline"
+        >
+          {{ t('admin.search.keyMissingWarning') }}
+        </q-banner>
+
+        <div class="row q-col-gutter-md q-mb-md">
+          <div class="col-12 col-sm-6">
+            <q-input
+              v-model="searchSettings.embedding_model"
+              outlined
+              dense
+              :label="t('admin.search.embeddingModel')"
+              :disable="savingSearch"
+            />
+          </div>
+          <div class="col-12 col-sm-6">
+            <q-input
+              v-model="searchSettings.embedding_base_url"
+              outlined
+              dense
+              :label="t('admin.search.embeddingBaseUrl')"
+              :disable="savingSearch"
+            />
+          </div>
+          <div class="col-12 col-sm-4">
+            <q-input
+              v-model.number="searchSettings.embedding_batch"
+              outlined
+              dense
+              type="number"
+              :min="1"
+              :max="10"
+              :label="t('admin.search.embeddingBatch')"
+              :disable="savingSearch"
+            />
+          </div>
+        </div>
+
+        <!-- TM 建议开关 -->
+        <q-toggle
+          v-model="searchSettings.tm_enabled"
+          :label="t('admin.search.tmEnabled')"
+          :disable="savingSearch"
+        />
+        <div class="prts-dim q-mb-sm" style="font-size: 12px; margin-left: 52px">
+          {{ t('admin.search.tmEnabledHint') }}
+        </div>
+
+        <div class="row q-col-gutter-md q-mb-md">
+          <div class="col-12 col-sm-4">
+            <q-input
+              v-model.number="searchSettings.tm_min_similarity"
+              outlined
+              dense
+              type="number"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :label="t('admin.search.tmMinSimilarity')"
+              :disable="savingSearch"
+            />
+          </div>
+          <div class="col-12 col-sm-4">
+            <q-input
+              v-model.number="searchSettings.tm_top_n"
+              outlined
+              dense
+              type="number"
+              :min="1"
+              :max="3"
+              :label="t('admin.search.tmTopN')"
+              :disable="savingSearch"
+            />
+          </div>
+        </div>
+
+        <div class="q-mt-sm">
+          <q-btn
+            unelevated
+            no-caps
+            color="primary"
+            text-color="dark"
+            :label="t('admin.search.save')"
+            :loading="savingSearch"
+            @click="saveSearchSettings"
+          />
+        </div>
+      </q-card>
+    </template>
 
     <q-dialog v-model="createUserOpen" persistent>
       <q-card style="width: min(520px, 94vw)">

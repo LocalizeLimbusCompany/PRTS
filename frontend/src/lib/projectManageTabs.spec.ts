@@ -12,7 +12,7 @@ describe('project management tab access', () => {
         deleteProject: true,
         deletionPending: false,
       }),
-    ).toEqual(['basic', 'ai', 'language', 'members', 'danger'])
+    ).toEqual(['basic', 'ai', 'language', 'join', 'members', 'danger'])
   })
 
   it('hides owner-only sections and falls back from an inaccessible query', () => {
@@ -23,7 +23,7 @@ describe('project management tab access', () => {
       deleteProject: false,
       deletionPending: false,
     })
-    expect(available).toEqual(['basic', 'language', 'members'])
+    expect(available).toEqual(['basic', 'language', 'join', 'members'])
     expect(resolveProjectManageTab('ai', available)).toBe('basic')
   })
 

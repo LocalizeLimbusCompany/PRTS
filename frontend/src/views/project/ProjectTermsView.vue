@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuasar } from 'quasar'
 
@@ -25,6 +25,7 @@ const { t, locale } = useI18n()
 const terms = ref<TermDto[]>([])
 const presets = ref<PosDto[]>([])
 const scope = ref<TermScope>('current')
+const query = ref('')
 const nextAfter = ref<number | null>(null)
 const loading = ref(false)
 const loaded = ref(false)
@@ -44,6 +45,7 @@ const patternResult = ref<{ valid: boolean; matched: boolean; error_code: string
 )
 const form = ref<TermWriteRequest>(emptyForm())
 let loadRequest = 0
+let queryTimer: ReturnType<typeof setTimeout> | undefined
 
 const canManage = computed(() => hasProjectCapability(detail.value?.capabilities, 'manage_terms'))
 const canExport = computed(() => hasProjectCapability(detail.value?.capabilities, 'download'))
@@ -90,6 +92,7 @@ async function load(reset = false) {
   try {
     const page = await termsApi.list(projectId.value, {
       scope: scope.value,
+      q: query.value.trim() || undefined,
       after: reset ? undefined : (nextAfter.value ?? undefined),
       limit: 50,
     })
@@ -263,6 +266,13 @@ watch(projectId, () => {
   void Promise.all([load(true), loadPresets()])
 })
 watch(scope, () => load(true))
+watch(query, () => {
+  if (queryTimer) clearTimeout(queryTimer)
+  queryTimer = setTimeout(() => void load(true), 250)
+})
+onBeforeUnmount(() => {
+  if (queryTimer) clearTimeout(queryTimer)
+})
 </script>
 
 <template>
@@ -322,6 +332,16 @@ watch(scope, () => load(true))
       :options="scopeOptions"
       class="terms-view__scope"
     />
+    <q-input
+      v-model="query"
+      dense
+      outlined
+      clearable
+      class="terms-view__search"
+      :placeholder="$t('terminology.searchPlaceholder')"
+    >
+      <template #prepend><q-icon name="mdi-magnify" /></template>
+    </q-input>
 
     <q-skeleton v-if="!loaded && loading" height="240px" square />
     <div v-else-if="terms.length === 0" class="prts-empty terms-view__empty">
@@ -609,6 +629,10 @@ watch(scope, () => load(true))
   justify-self: start;
 }
 
+.terms-view__search {
+  width: min(460px, 100%);
+}
+
 .terms-view__empty {
   display: grid;
   justify-items: center;
@@ -637,6 +661,10 @@ watch(scope, () => load(true))
 .terms-view__row-actions {
   justify-content: flex-end;
   white-space: nowrap;
+}
+
+.terms-view__table-wrap :deep(tbody tr > td) {
+  border-bottom: 1px solid var(--prts-border-soft);
 }
 
 .terms-view__dialog {

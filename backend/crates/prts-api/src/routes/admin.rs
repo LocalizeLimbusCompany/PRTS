@@ -448,6 +448,8 @@ pub async fn create_user(
     let actor_identity = CurrentUser {
         id: user.id,
         platform_role: actor_role,
+        credential_kind: crate::auth::CredentialKind::Session,
+        scopes: vec![prts_core::api_scope::ALL.to_string()],
     };
     Ok((
         StatusCode::CREATED,

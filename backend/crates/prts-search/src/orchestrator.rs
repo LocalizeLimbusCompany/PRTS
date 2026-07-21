@@ -15,6 +15,7 @@ pub struct OrchestratorInput<'a> {
     pub states: &'a [String],
     pub questioned: Option<bool>,
     pub conditions: &'a [CanonicalSearchCondition],
+    pub case_sensitive: bool,
     pub include_hidden: bool,
     pub per_path: i64,
     pub top_k: i64,
@@ -35,6 +36,8 @@ pub async fn run(
         states: input.states,
         questioned: input.questioned,
         conditions: input.conditions,
+        case_sensitive: input.case_sensitive,
+        query: input.query,
         include_hidden: input.include_hidden,
     };
     let hits: Vec<SearchHit> = if let Some(query) = input.query {

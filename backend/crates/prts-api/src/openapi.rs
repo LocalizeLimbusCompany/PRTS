@@ -58,6 +58,7 @@ impl Modify for SecurityAddon {
         (name = "user", description = "用户资料 / 关联账号 / API Key"),
         (name = "admin", description = "平台设置与角色任免"),
         (name = "project", description = "项目与成员"),
+        (name = "project-history", description = "项目级词条变更时间线"),
         (name = "job", description = "持久化任务进度与受控重试"),
         (name = "file", description = "文件夹 / 文件树"),
         (name = "file-history", description = "文件变更集、恢复与回滚"),

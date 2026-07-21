@@ -20,6 +20,7 @@ pub mod messages;
 pub mod models;
 pub mod notifications;
 pub mod pos;
+pub mod project_join;
 pub mod projects;
 pub mod search;
 pub mod search_settings;

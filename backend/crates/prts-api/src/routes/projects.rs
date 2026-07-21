@@ -30,6 +30,9 @@ pub struct ProjectDto {
     pub description: String,
     pub visibility: String,
     pub comment_policy: String,
+    pub join_policy: String,
+    pub join_default_role: String,
+    pub history_visibility: String,
     pub source_langs: Vec<String>,
     pub primary_source_lang: Option<String>,
     pub target_lang: String,
@@ -59,6 +62,9 @@ impl From<&prts_db::models::Project> for ProjectDto {
             description: p.description.clone(),
             visibility: p.visibility.clone(),
             comment_policy: p.comment_policy.clone(),
+            join_policy: p.join_policy.clone(),
+            join_default_role: p.join_default_role.clone(),
+            history_visibility: p.history_visibility.clone(),
             source_langs: p.source_langs.clone(),
             primary_source_lang: p.primary_source_lang.clone(),
             target_lang: p.target_lang.clone(),
@@ -97,6 +103,8 @@ pub struct ProjectDetailDto {
     pub questioned_count: i64,
     pub entry_count: i64,
     pub capabilities: ProjectCapabilitiesDto,
+    /// Server-authoritative signal used to hide the semantic-search UI entirely.
+    pub semantic_search_available: bool,
 }
 
 fn slugify(s: &str) -> String {
@@ -152,6 +160,11 @@ pub struct CreateProjectReq {
     /// 多源项目必须显式提交；单源项目可省略。
     pub primary_source_lang: Option<String>,
     pub target_lang: String,
+    /// application|free|admin_only|password|quiz. New projects must choose explicitly.
+    pub join_policy: String,
+    /// translator|reviewer; defaults to translator.
+    #[serde(default)]
+    pub join_default_role: Option<String>,
 }
 
 /// 创建项目（创建者成为拥有者）。需平台「创建项目」权限。
@@ -197,6 +210,9 @@ pub async fn create_project(
         Some("private") => "private",
         _ => "public",
     };
+    let join_policy = validate_join_policy(&req.join_policy)?;
+    let join_default_role =
+        validate_join_default_role(req.join_default_role.as_deref().unwrap_or("translator"))?;
 
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let project = prts_db::projects::create_with_primary_tx(
@@ -209,6 +225,20 @@ pub async fn create_project(
         &primary_source_lang,
         &target_lang,
         user.id,
+    )
+    .await
+    .map_err(db_err)?;
+    let project = prts_db::projects::update_join_settings_tx(
+        &mut tx,
+        project.id,
+        join_policy,
+        join_default_role,
+        "viewers",
+        None,
+        false,
+        None,
+        None,
+        false,
     )
     .await
     .map_err(db_err)?;
@@ -303,7 +333,27 @@ pub async fn get_project(
         questioned_count: stats.questioned_count,
         entry_count: stats.visible_total,
         capabilities,
+        semantic_search_available: state.embedder.as_ref().is_some(),
     }))
+}
+
+fn validate_join_policy(value: &str) -> Result<&str, ApiError> {
+    if matches!(
+        value,
+        "application" | "free" | "admin_only" | "password" | "quiz"
+    ) {
+        Ok(value)
+    } else {
+        Err(Error::validation("PROJECT_JOIN_POLICY_INVALID").into())
+    }
+}
+
+fn validate_join_default_role(value: &str) -> Result<&str, ApiError> {
+    if matches!(value, "translator" | "reviewer") {
+        Ok(value)
+    } else {
+        Err(Error::validation("PROJECT_JOIN_ROLE_INVALID").into())
+    }
 }
 
 /// 更新项目请求（字段缺省表示不变）。

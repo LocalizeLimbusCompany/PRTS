@@ -1,4 +1,4 @@
-export type ProjectManageTab = 'basic' | 'ai' | 'language' | 'members' | 'danger'
+export type ProjectManageTab = 'basic' | 'ai' | 'language' | 'join' | 'members' | 'danger'
 
 export interface ProjectManageTabAccess {
   manageProject: boolean
@@ -15,6 +15,7 @@ export function availableProjectManageTabs(access: ProjectManageTabAccess): Proj
   if (access.manageProject) tabs.push('basic')
   if (access.owner) tabs.push('ai')
   if (access.manageProject) tabs.push('language')
+  if (access.manageProject) tabs.push('join')
   if (access.manageMembers) tabs.push('members')
   if (access.deleteProject) tabs.push('danger')
   return tabs

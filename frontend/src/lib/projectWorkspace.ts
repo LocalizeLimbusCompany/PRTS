@@ -19,6 +19,7 @@ export const PROJECT_WORKSPACE_SECTIONS = [
   { key: 'files', route: 'project-files', icon: 'mdi-folder-multiple-outline' },
   { key: 'tasks', route: 'project-tasks', icon: 'mdi-clipboard-text-outline' },
   { key: 'terms', route: 'project-terms', icon: 'mdi-book-alphabet' },
+  { key: 'history', route: 'project-history', icon: 'mdi-history' },
   { key: 'leaderboard', route: 'project-leaderboard', icon: 'mdi-podium' },
   { key: 'download', route: 'project-download', icon: 'mdi-download-outline' },
   { key: 'manage', route: 'project-manage', icon: 'mdi-cog-outline', capability: 'manage_project' },

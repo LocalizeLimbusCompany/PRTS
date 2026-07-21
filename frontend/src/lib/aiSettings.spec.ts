@@ -38,6 +38,31 @@ describe('AI settings validation', () => {
     expect(request.request_timeout_seconds).toBe(600)
   })
 
+  it('retains the selected native provider and transport mode', () => {
+    const form = validForm()
+    form.provider_preset = 'anthropic'
+    form.transport_mode = 'non_streaming'
+    const request = buildAiSettingsRequest(form, false)
+    expect(request.provider_preset).toBe('anthropic')
+    expect(request.transport_mode).toBe('non_streaming')
+  })
+
+  it('rejects protocol-owned fields for native providers', () => {
+    const anthropic = validForm()
+    anthropic.provider_preset = 'anthropic'
+    anthropic.custom_request_options = '{"system":"override"}'
+    expect(() => buildAiSettingsRequest(anthropic, false)).toThrowError(
+      expect.objectContaining({ code: 'jsonConflict' }),
+    )
+
+    const gemini = validForm()
+    gemini.provider_preset = 'gemini'
+    gemini.custom_request_options = '{"generationConfig":{}}'
+    expect(() => buildAiSettingsRequest(gemini, false)).toThrowError(
+      expect.objectContaining({ code: 'jsonConflict' }),
+    )
+  })
+
   it.each([
     ['{"model":"override"}', 'jsonConflict'],
     ['{"nested":{"authorization":"secret"}}', 'jsonSensitive'],

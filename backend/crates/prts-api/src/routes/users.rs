@@ -189,6 +189,7 @@ pub async fn change_password(
     locale: RequestLocale,
     Json(req): Json<ChangePasswordReq>,
 ) -> Result<StatusCode, ApiError> {
+    user.require_session()?;
     if !prts_auth::password::validate_new_password(&req.new_password) {
         return Err(
             ApiError::from(Error::bad_request("密码长度需为 8–256 字符")).with_locale(locale.0),
@@ -268,6 +269,7 @@ pub async fn my_accounts(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Result<Json<Vec<ExternalAccountDto>>, ApiError> {
+    user.require_session()?;
     let list = prts_db::users::list_external_accounts(&state.db, user.id)
         .await
         .map_err(db_err)?;
@@ -290,12 +292,21 @@ pub struct ApiKeyDto {
     pub prefix: String,
     pub created_at: String,
     pub last_used_at: Option<String>,
+    pub scopes: Vec<String>,
 }
 
 /// 创建 API Key 请求。
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateApiKeyReq {
     pub name: String,
+    pub scopes: Vec<String>,
+}
+
+/// Update an API key without rotating its secret.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct UpdateApiKeyReq {
+    pub name: String,
+    pub scopes: Vec<String>,
 }
 
 /// 新建 API Key 响应（含一次性明文）。
@@ -305,6 +316,7 @@ pub struct CreatedApiKey {
     pub name: String,
     pub prefix: String,
     pub created_at: String,
+    pub scopes: Vec<String>,
     /// 明文 Key，**仅此一次返回**，请立即保存。
     pub key: String,
 }
@@ -321,15 +333,24 @@ pub async fn create_api_key(
     user: CurrentUser,
     Json(req): Json<CreateApiKeyReq>,
 ) -> Result<Json<CreatedApiKey>, ApiError> {
+    user.require_session()?;
     let name = req.name.trim();
     if name.is_empty() || name.len() > 64 {
-        return Err(Error::bad_request("名称需为 1–64 字符").into());
+        return Err(Error::validation("API_KEY_NAME_INVALID").into());
     }
+    let scopes = validate_api_key_scopes(&state, user.id, &req.scopes).await?;
     let key = prts_auth::token::generate_api_key();
     let mut tx = state.db.begin().await.map_err(db_err)?;
-    let rec = prts_db::api_keys::create_tx(&mut tx, user.id, name, &key.hash, &key.display_prefix)
-        .await
-        .map_err(db_err)?;
+    let rec = prts_db::api_keys::create_tx(
+        &mut tx,
+        user.id,
+        name,
+        &key.hash,
+        &key.display_prefix,
+        &scopes,
+    )
+    .await
+    .map_err(db_err)?;
     prts_db::audit::append_event_tx(
         &mut tx,
         AuditActor {
@@ -341,6 +362,7 @@ pub async fn create_api_key(
             key_id: rec.id,
             name: &rec.name,
             prefix: &rec.prefix,
+            scopes: &rec.scopes,
         },
     )
     .await
@@ -351,6 +373,7 @@ pub async fn create_api_key(
         name: rec.name,
         prefix: rec.prefix,
         created_at: rec.created_at.to_rfc3339(),
+        scopes: rec.scopes,
         key: key.plaintext,
     }))
 }
@@ -362,6 +385,7 @@ pub async fn list_api_keys(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Result<Json<Vec<ApiKeyDto>>, ApiError> {
+    user.require_session()?;
     let list = prts_db::api_keys::list_by_user(&state.db, user.id)
         .await
         .map_err(db_err)?;
@@ -373,9 +397,103 @@ pub async fn list_api_keys(
                 prefix: k.prefix.clone(),
                 created_at: k.created_at.to_rfc3339(),
                 last_used_at: k.last_used_at.map(|t| t.to_rfc3339()),
+                scopes: k.scopes.clone(),
             })
             .collect(),
     ))
+}
+
+/// Return only scope groups the current account can presently exercise.
+#[utoipa::path(get, path = "/me/api-key-scopes", tag = "user",
+    security(("bearer_auth" = [])),
+    responses((status = 200, body = [String]), (status = 403, body = ErrorResponse)))]
+pub async fn list_api_key_scopes(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Json<Vec<String>>, ApiError> {
+    user.require_session()?;
+    Ok(Json(
+        prts_db::api_keys::available_scopes(&state.db, user.id)
+            .await
+            .map_err(db_err)?,
+    ))
+}
+
+/// Change a key's name/scopes; authentication reads scopes from the database on every request.
+#[utoipa::path(put, path = "/me/api-keys/{id}", tag = "user", request_body = UpdateApiKeyReq,
+    security(("bearer_auth" = [])),
+    responses((status = 200, body = ApiKeyDto), (status = 400, body = ErrorResponse),
+        (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+pub async fn update_api_key(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Json(req): Json<UpdateApiKeyReq>,
+) -> Result<Json<ApiKeyDto>, ApiError> {
+    user.require_session()?;
+    let name = req.name.trim();
+    if name.is_empty() || name.len() > 64 {
+        return Err(Error::validation("API_KEY_NAME_INVALID").into());
+    }
+    let scopes = validate_api_key_scopes(&state, user.id, &req.scopes).await?;
+    let mut tx = state.db.begin().await.map_err(db_err)?;
+    let current = prts_db::api_keys::find_owned_for_update_tx(&mut tx, user.id, id)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    let record = prts_db::api_keys::update_tx(&mut tx, user.id, id, name, &scopes)
+        .await
+        .map_err(db_err)?
+        .ok_or(Error::NotFound)?;
+    let mut changed_fields = Vec::with_capacity(2);
+    if current.name != record.name {
+        changed_fields.push("name");
+    }
+    if current.scopes != record.scopes {
+        changed_fields.push("scopes");
+    }
+    prts_db::audit::append_event_tx(
+        &mut tx,
+        AuditActor {
+            id: Some(user.id),
+            kind: AuditActorKind::User,
+            ip: None,
+        },
+        AuditEvent::ApiKeyUpdated {
+            key_id: record.id,
+            changed_fields: &changed_fields,
+            scopes: &record.scopes,
+        },
+    )
+    .await
+    .map_err(|_| Error::AuditUnavailable)?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(ApiKeyDto {
+        id: record.id,
+        name: record.name,
+        prefix: record.prefix,
+        created_at: record.created_at.to_rfc3339(),
+        last_used_at: record.last_used_at.map(|value| value.to_rfc3339()),
+        scopes: record.scopes,
+    }))
+}
+
+async fn validate_api_key_scopes(
+    state: &AppState,
+    user_id: i64,
+    requested: &[String],
+) -> Result<Vec<String>, ApiError> {
+    let scopes = prts_core::api_scope::normalize(requested).map_err(Error::validation)?;
+    if scopes == [prts_core::api_scope::ALL] {
+        return Ok(scopes);
+    }
+    let available = prts_db::api_keys::available_scopes(&state.db, user_id)
+        .await
+        .map_err(db_err)?;
+    if scopes.iter().any(|scope| !available.contains(scope)) {
+        return Err(Error::validation("API_KEY_SCOPE_NOT_AVAILABLE").into());
+    }
+    Ok(scopes)
 }
 
 /// 吊销一条 API Key。
@@ -390,6 +508,7 @@ pub async fn revoke_api_key(
     user: CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
+    user.require_session()?;
     let mut tx = state.db.begin().await.map_err(db_err)?;
     let record = prts_db::api_keys::revoke_tx(&mut tx, user.id, id)
         .await

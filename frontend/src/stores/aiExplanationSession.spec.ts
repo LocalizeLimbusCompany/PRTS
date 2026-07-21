@@ -26,7 +26,7 @@ function deferred<T>() {
 
 function explanation(text: string): AiExplanationDto {
   return {
-    overall_meaning: text,
+    reference_translation: text,
     tokens: [],
     grammar_notes: '',
     provider_source: 'personal',
@@ -68,8 +68,8 @@ describe('AI explanation editor sessions', () => {
     first.resolve(explanation('first'))
     second.resolve(explanation('second'))
     await Promise.all([firstRun, secondRun])
-    expect(store.getOrCreate(4, 10, 'zh-CN').result?.overall_meaning).toBe('first')
-    expect(store.getOrCreate(4, 11, 'zh-CN').result?.overall_meaning).toBe('second')
+    expect(store.getOrCreate(4, 10, 'zh-CN').result?.reference_translation).toBe('first')
+    expect(store.getOrCreate(4, 11, 'zh-CN').result?.reference_translation).toBe('second')
   })
 
   it('does not abort when the same session is retrieved after a tab remount', () => {
@@ -114,7 +114,7 @@ describe('AI explanation editor sessions', () => {
     await store.analyze(4, 10, 'zh-CN')
     await store.analyze(4, 10, 'zh-CN')
     const state = store.getOrCreate(4, 10, 'zh-CN')
-    expect(state.result?.overall_meaning).toBe('stable result')
+    expect(state.result?.reference_translation).toBe('stable result')
     expect(state.errorCode).toBe('AI_PROVIDER_ERROR')
   })
 })

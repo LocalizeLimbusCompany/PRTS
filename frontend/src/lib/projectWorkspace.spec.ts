@@ -10,6 +10,7 @@ describe('project workspace navigation', () => {
       'files',
       'tasks',
       'terms',
+      'history',
       'leaderboard',
       'download',
       'manage',

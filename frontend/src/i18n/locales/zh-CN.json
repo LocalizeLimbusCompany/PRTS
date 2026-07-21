@@ -85,6 +85,12 @@
   },
   "profile": {
     "title": "个人主页",
+    "tabs": {
+      "profile": "个人资料",
+      "ai": "AI",
+      "security": "安全与关联账号",
+      "api_keys": "API Keys"
+    },
     "cp": "贡献分 CP",
     "description": "个人描述",
     "translationLanguages": "翻译语言偏好",
@@ -94,7 +100,7 @@
     "previewTranslationDiffHint": "仅在原译文非空且译文正文确实变化时弹出，不影响状态或标签单独变更。",
     "ai": {
       "heading": "个人 AI",
-      "description": "配置 OpenAI-compatible 接口。API Key 由服务端加密保存，绝不会下发到浏览器。",
+      "description": "配置原生 OpenAI、Anthropic、Gemini 或 OpenAI-compatible 接口。API Key 由服务端加密保存，绝不会下发到浏览器。",
       "sourcePreference": "编辑器 AI 来源",
       "sourcePreferenceHint": "自动模式优先使用个人 AI；个人或项目模式不可用时不会静默切换。",
       "sources": {
@@ -110,7 +116,15 @@
         "qwen": "Qwen（通义千问）",
         "deepseek": "DeepSeek",
         "gemini": "Gemini",
+        "anthropic": "Anthropic",
         "custom": "自定义兼容接口"
+      },
+      "transportMode": "传输模式",
+      "transportModeHint": "自动模式优先流式传输；仅在服务方明确不支持时改用非流式，并缓存探测结果 24 小时。",
+      "transportModes": {
+        "auto": "自动",
+        "streaming": "流式",
+        "non_streaming": "非流式"
       },
       "model": "模型",
       "apiKey": "API Key",
@@ -196,11 +210,28 @@
     "noLinkedAccounts": "暂无关联账号",
     "apiKeys": {
       "new": "新建 API Key",
+      "edit": "编辑 API Key",
+      "updated": "API Key 已更新",
       "createdAt": "创建于",
       "empty": "暂无 API Key",
       "name": "名称",
+      "permissions": "权限范围",
+      "permissionsHint": "“全部权限”会动态跟随账号当前及未来具备的业务权限；选择具体范围时始终再与账号权限取交集。",
       "copyNow": "请立即复制，密钥仅显示这一次：",
-      "createFailed": "API Key 创建失败"
+      "createFailed": "API Key 创建失败",
+      "scopes": {
+        "all": "全部权限",
+        "profile_read": "读取个人资料",
+        "profile_write": "修改个人资料",
+        "project_read": "读取项目",
+        "entry_write": "编辑词条",
+        "project_write": "修改项目内容",
+        "project_manage": "管理项目",
+        "ai_use": "使用 AI",
+        "message_read": "读取消息",
+        "message_write": "发送消息",
+        "platform_manage": "管理平台"
+      }
     },
     "password": {
       "title": "修改密码",
@@ -235,6 +266,7 @@
     "workspaceNav": "项目工作区导航",
     "loadFailed": "项目加载失败",
     "openEditor": "翻译编辑器",
+    "search": "搜索此项目",
     "private": "私有",
     "public": "公开",
     "soon": "稍后开放",
@@ -277,11 +309,55 @@
       "public": "公开",
       "publicHint": "所有项目可见者可看，除游客外的登录用户都可评论。"
     },
+    "join": {
+      "heading": "加入项目",
+      "policy": "加入机制",
+      "defaultRole": "自助加入默认角色",
+      "password": "项目口令",
+      "answer": "回答",
+      "message": "申请留言（可选）",
+      "action": "加入项目",
+      "apply": "提交申请",
+      "withdraw": "撤回申请",
+      "leave": "退出项目",
+      "member": "你已是项目成员",
+      "pending": "申请已提交，等待管理员处理",
+      "joined": "已加入项目",
+      "left": "已退出项目",
+      "failed": "加入项目失败",
+      "saved": "加入机制已保存",
+      "approved": "申请已批准",
+      "rejected": "申请已拒绝",
+      "settingsHeading": "加入机制与历史可见性",
+      "settingsDescription": "公开项目才会启用自助加入；切换为私有时保留配置但暂停生效。口令和答案只保存哈希。",
+      "passwordUpdate": "设置新口令",
+      "quizQuestion": "答题题目",
+      "quizAnswer": "设置严格答案",
+      "secretRetain": "留空保留已有秘密",
+      "applications": "待处理加入申请",
+      "noMessage": "未填写留言",
+      "approve": "批准申请",
+      "reject": "拒绝申请",
+      "historyVisibility": {
+        "label": "历史可见性",
+        "viewers": "所有可查看者",
+        "members": "仅项目成员",
+        "managers": "仅项目管理者"
+      },
+      "policies": {
+        "application": "提交申请",
+        "free": "自由加入",
+        "admin_only": "仅管理员添加",
+        "password": "使用口令加入",
+        "quiz": "回答问题加入"
+      }
+    },
     "sections": {
       "info": "信息",
       "files": "文件",
       "tasks": "任务",
       "terms": "术语",
+      "history": "历史记录",
       "leaderboard": "排行榜",
       "download": "下载",
       "manage": "管理"
@@ -446,6 +522,21 @@
         "deleted_at": "删除状态"
       }
     },
+    "entryTimeline": {
+      "heading": "词条历史记录",
+      "empty": "暂无词条版本记录",
+      "loadMore": "加载更多",
+      "loadFailed": "加载词条历史失败",
+      "emptyValue": "空",
+      "fields": {
+        "original": "源文",
+        "translation": "译文",
+        "state": "状态",
+        "questioned": "有疑问",
+        "locked": "锁定",
+        "hidden": "隐藏"
+      }
+    },
     "download": {
       "heading": "导出项目",
       "archive": "项目归档包",
@@ -577,6 +668,7 @@
     "export": "导出",
     "exportFailed": "导出失败",
     "loadMore": "加载更多术语",
+    "searchPlaceholder": "搜索原文、译文或备注",
     "empty": "当前范围没有术语",
     "emptyHint": "切换范围，或由有权限的成员创建、导入术语。",
     "active": "启用",
@@ -684,11 +776,17 @@
     "fieldSourceAny": "任一源文",
     "fieldTranslation": "译文",
     "fieldKey": "词条键",
+    "fieldAnyText": "任一源文 / 键值 / 译文",
     "opContains": "包含",
     "opNotContains": "不包含",
     "opStartsWith": "开头为",
     "opEndsWith": "结尾为",
     "opEquals": "等于",
+    "opRegex": "正则表达式",
+    "caseSensitive": "区分大小写",
+    "normalSearch": "普通搜索",
+    "semanticSearch": "语义搜索",
+    "semanticQuery": "语义搜索正文",
     "addCondition": "添加条件",
     "vectorSearch": "向量搜索",
     "termSuggestions": "术语建议",
@@ -756,6 +854,10 @@
     "questionedChanged": "有疑问标签变更",
     "questionedAdded": "已添加",
     "questionedRemoved": "已移除",
+    "lockedChanged": "锁定标志变更",
+    "hiddenChanged": "隐藏标志变更",
+    "flagEnabled": "已开启",
+    "flagDisabled": "已关闭",
     "translationDiff": "译文变化",
     "sourceDiff": "原文变化",
     "systemActor": "系统",
@@ -772,11 +874,12 @@
     "ai": {
       "tab": "AI",
       "heading": "AI 原文解释",
-      "description": "点击后仅分析当前词条的主源文本，给出整体含义、去重分词和逐词语境解释。",
-      "analyze": "分析原文",
-      "analyzeAgain": "重新分析",
+      "description": "点击后仅分析当前词条的主源文本，给出参考译名、去重分词和逐词语境解释。",
+      "analyze": "生成参考译名",
+      "analyzeAgain": "重新生成",
       "loadFailed": "AI 分析失败",
-      "overallMeaning": "整体含义",
+      "referenceTranslation": "参考译名",
+      "referenceOnly": "仅供参考",
       "grammar": "语法说明",
       "tokens": "分词解释",
       "noTokens": "AI 未返回可用的分词。",
@@ -806,6 +909,12 @@
   },
   "admin": {
     "title": "管理后台",
+    "tabs": {
+      "users": "用户",
+      "settings": "平台设置",
+      "pos": "词性预设",
+      "search": "搜索"
+    },
     "platformSettings": "平台设置",
     "registrationOpen": "开放注册",
     "registrationOpenHint": "关闭后新用户无法自助注册。",

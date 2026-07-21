@@ -144,6 +144,9 @@ pub struct SearchExecutionFilter<'a> {
     pub states: &'a [String],
     pub questioned: Option<bool>,
     pub conditions: &'a [CanonicalSearchCondition],
+    pub case_sensitive: bool,
+    /// Optional lexical query used only as an exact-case guard when case_sensitive is true.
+    pub query: Option<&'a str>,
     pub include_hidden: bool,
 }
 
@@ -218,15 +221,30 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, filter: &SearchExecutionFil
     if let Some(questioned) = filter.questioned {
         qb.push(" AND entry.questioned = ").push_bind(questioned);
     }
+    if filter.case_sensitive {
+        if let Some(query) = filter.query {
+            qb.push(" AND (strpos(entry.source_all_text, ")
+                .push_bind(query.to_string())
+                .push(") > 0 OR strpos(entry.translation, ")
+                .push_bind(query.to_string())
+                .push(") > 0 OR strpos(entry.key, ")
+                .push_bind(query.to_string())
+                .push(") > 0)");
+        }
+    }
     qb.push(" AND prts_entry_effective_visible(entry.id, ")
         .push_bind(filter.include_hidden)
         .push(")");
     for condition in filter.conditions {
-        push_condition(qb, condition);
+        push_condition(qb, condition, filter.case_sensitive);
     }
 }
 
-fn push_condition(qb: &mut QueryBuilder<'_, Postgres>, condition: &CanonicalSearchCondition) {
+fn push_condition(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    condition: &CanonicalSearchCondition,
+    case_sensitive: bool,
+) {
     qb.push(" AND ");
     match &condition.field {
         SearchField::Source(language) => {
@@ -240,20 +258,20 @@ fn push_condition(qb: &mut QueryBuilder<'_, Postgres>, condition: &CanonicalSear
                 },
                 condition.operator,
                 &condition.value,
+                case_sensitive,
             );
             qb.push(")");
         }
         SearchField::SourceAny => {
-            qb.push("EXISTS (SELECT 1 FROM jsonb_each_text(entry.original) AS source_any(language, value) WHERE ");
             push_operator(
                 qb,
                 |qb| {
-                    qb.push("source_any.value");
+                    qb.push("entry.source_all_text");
                 },
                 condition.operator,
                 &condition.value,
+                case_sensitive,
             );
-            qb.push(")");
         }
         SearchField::Translation => push_operator(
             qb,
@@ -262,6 +280,7 @@ fn push_condition(qb: &mut QueryBuilder<'_, Postgres>, condition: &CanonicalSear
             },
             condition.operator,
             &condition.value,
+            case_sensitive,
         ),
         SearchField::Key => push_operator(
             qb,
@@ -270,7 +289,48 @@ fn push_condition(qb: &mut QueryBuilder<'_, Postgres>, condition: &CanonicalSear
             },
             condition.operator,
             &condition.value,
+            case_sensitive,
         ),
+        SearchField::AnyText => {
+            // Keep the compound field indexable by matching its physical columns independently.
+            // A negative contains condition must hold for every column; positive operators match any.
+            let separator = if condition.operator == SearchOperator::NotContains {
+                " AND "
+            } else {
+                " OR "
+            };
+            qb.push("(");
+            push_operator(
+                qb,
+                |qb| {
+                    qb.push("entry.source_all_text");
+                },
+                condition.operator,
+                &condition.value,
+                case_sensitive,
+            );
+            qb.push(separator);
+            push_operator(
+                qb,
+                |qb| {
+                    qb.push("entry.key");
+                },
+                condition.operator,
+                &condition.value,
+                case_sensitive,
+            );
+            qb.push(separator);
+            push_operator(
+                qb,
+                |qb| {
+                    qb.push("entry.translation");
+                },
+                condition.operator,
+                &condition.value,
+                case_sensitive,
+            );
+            qb.push(")");
+        }
     }
 }
 
@@ -279,37 +339,56 @@ fn push_operator<F>(
     mut push_expression: F,
     operator: SearchOperator,
     value: &str,
+    case_sensitive: bool,
 ) where
     F: FnMut(&mut QueryBuilder<'_, Postgres>),
 {
     match operator {
         SearchOperator::Contains | SearchOperator::NotContains => {
-            qb.push("strpos(");
             push_expression(qb);
-            qb.push(", ").push_bind(value.to_string()).push(
-                if matches!(operator, SearchOperator::Contains) {
-                    ") > 0"
+            qb.push(if matches!(operator, SearchOperator::NotContains) {
+                if case_sensitive {
+                    " NOT LIKE "
                 } else {
-                    ") = 0"
-                },
-            );
+                    " NOT ILIKE "
+                }
+            } else if case_sensitive {
+                " LIKE "
+            } else {
+                " ILIKE "
+            });
+            qb.push("('%' || prts_escape_like_pattern(")
+                .push_bind(value.to_string())
+                .push(") || '%') ESCAPE '\\'");
         }
         SearchOperator::StartsWith => {
-            qb.push("starts_with(");
             push_expression(qb);
-            qb.push(", ").push_bind(value.to_string()).push(")");
+            qb.push(if case_sensitive { " LIKE " } else { " ILIKE " });
+            qb.push("(prts_escape_like_pattern(")
+                .push_bind(value.to_string())
+                .push(") || '%') ESCAPE '\\'");
         }
         SearchOperator::EndsWith => {
-            qb.push("right(");
             push_expression(qb);
-            qb.push(", char_length(")
+            qb.push(if case_sensitive { " LIKE " } else { " ILIKE " });
+            qb.push("('%' || prts_escape_like_pattern(")
                 .push_bind(value.to_string())
-                .push(")) = ")
-                .push_bind(value.to_string());
+                .push(")) ESCAPE '\\'");
         }
         SearchOperator::Equals => {
             push_expression(qb);
-            qb.push(" = ").push_bind(value.to_string());
+            if case_sensitive {
+                qb.push(" = ").push_bind(value.to_string());
+            } else {
+                qb.push(" ILIKE prts_escape_like_pattern(")
+                    .push_bind(value.to_string())
+                    .push(") ESCAPE '\\'");
+            }
+        }
+        SearchOperator::Regex => {
+            push_expression(qb);
+            qb.push(if case_sensitive { " ~ " } else { " ~* " })
+                .push_bind(value.to_string());
         }
     }
 }
@@ -320,16 +399,14 @@ pub async fn fts_search(
     pool: &PgPool,
     project_id: i64,
     q: &str,
-    src_lang: &str,
+    _src_lang: &str,
     tgt_lang: &str,
     filter: &SearchExecutionFilter<'_>,
     per_path: i64,
 ) -> Result<Vec<i64>, sqlx::Error> {
     let per_path = per_path.max(1);
-    let mut qb =
-        QueryBuilder::new("SELECT entry.id FROM entries AS entry, plainto_tsquery(prts_ts_config(");
-    qb.push_bind(src_lang.to_string())
-        .push("), ")
+    let mut qb = QueryBuilder::new("SELECT entry.id FROM entries AS entry, plainto_tsquery(");
+    qb.push("'simple'::regconfig, ")
         .push_bind(q.to_string())
         .push(") AS sq(query), ");
     qb.push("plainto_tsquery(prts_ts_config(")
@@ -338,9 +415,9 @@ pub async fn fts_search(
         .push_bind(q.to_string())
         .push(") AS tq(query) WHERE entry.project_id = ")
         .push_bind(project_id);
-    qb.push(" AND (entry.source_tsv @@ sq.query OR entry.translation_tsv @@ tq.query)");
+    qb.push(" AND (entry.source_all_tsv @@ sq.query OR entry.translation_tsv @@ tq.query)");
     push_filters(&mut qb, filter);
-    qb.push(" ORDER BY (ts_rank(entry.source_tsv, sq.query) + ts_rank(entry.translation_tsv, tq.query)) DESC, entry.id ASC LIMIT ")
+    qb.push(" ORDER BY (ts_rank(entry.source_all_tsv, sq.query) + ts_rank(entry.translation_tsv, tq.query)) DESC, entry.id ASC LIMIT ")
         .push_bind(per_path);
     qb.build_query_scalar().fetch_all(pool).await
 }
@@ -357,7 +434,7 @@ pub async fn trgm_search(
     let mut qb =
         QueryBuilder::new("SELECT entry.id FROM entries AS entry WHERE entry.project_id = ");
     qb.push_bind(project_id);
-    qb.push(" AND (entry.source_text % ")
+    qb.push(" AND (entry.source_all_text % ")
         .push_bind(q.to_string())
         .push(" OR entry.translation % ")
         .push_bind(q.to_string())
@@ -365,7 +442,7 @@ pub async fn trgm_search(
         .push_bind(q.to_string())
         .push(")");
     push_filters(&mut qb, filter);
-    qb.push(" ORDER BY GREATEST(similarity(entry.source_text, ")
+    qb.push(" ORDER BY GREATEST(similarity(entry.source_all_text, ")
         .push_bind(q.to_string())
         .push("), similarity(entry.translation, ")
         .push_bind(q.to_string())
@@ -463,7 +540,7 @@ pub async fn ranked_search_page(
     pool: &PgPool,
     project_id: i64,
     query: &str,
-    src_lang: &str,
+    _src_lang: &str,
     tgt_lang: &str,
     filter: &SearchExecutionFilter<'_>,
     query_vector: Option<&[f32]>,
@@ -475,15 +552,14 @@ pub async fn ranked_search_page(
         "WITH fts_ranked AS (
              SELECT entry.id,
                     row_number() OVER (
-                        ORDER BY (ts_rank(entry.source_tsv, sq.query)
+                        ORDER BY (ts_rank(entry.source_all_tsv, sq.query)
                                   + ts_rank(entry.translation_tsv, tq.query)) DESC,
                                  entry.id ASC
                     )::FLOAT8 AS rank
              FROM entries AS entry,
-                  plainto_tsquery(prts_ts_config(",
+                  plainto_tsquery(",
     );
-    qb.push_bind(src_lang.to_string())
-        .push("), ")
+    qb.push("'simple'::regconfig, ")
         .push_bind(query.to_string())
         .push(") AS sq(query), plainto_tsquery(prts_ts_config(")
         .push_bind(tgt_lang.to_string())
@@ -491,13 +567,13 @@ pub async fn ranked_search_page(
         .push_bind(query.to_string())
         .push(") AS tq(query) WHERE entry.project_id = ")
         .push_bind(project_id)
-        .push(" AND (entry.source_tsv @@ sq.query OR entry.translation_tsv @@ tq.query)");
+        .push(" AND (entry.source_all_tsv @@ sq.query OR entry.translation_tsv @@ tq.query)");
     push_filters(&mut qb, filter);
     qb.push(
         "), trgm_ranked AS (
              SELECT entry.id,
                     row_number() OVER (
-                        ORDER BY GREATEST(similarity(entry.source_text, ",
+                        ORDER BY GREATEST(similarity(entry.source_all_text, ",
     )
     .push_bind(query.to_string())
     .push("), similarity(entry.translation, ")
@@ -510,7 +586,7 @@ pub async fn ranked_search_page(
              FROM entries AS entry WHERE entry.project_id = ",
     )
     .push_bind(project_id)
-    .push(" AND (entry.source_text % ")
+    .push(" AND (entry.source_all_text % ")
     .push_bind(query.to_string())
     .push(" OR entry.translation % ")
     .push_bind(query.to_string())

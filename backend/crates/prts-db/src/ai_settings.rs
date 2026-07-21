@@ -32,6 +32,7 @@ pub async fn upsert_user_tx(
     hint: &str,
     enabled: bool,
     provider_preset: &str,
+    transport_mode: &str,
     thinking_mode: &str,
     reasoning_effort: &str,
     thinking_budget: Option<i64>,
@@ -50,17 +51,18 @@ pub async fn upsert_user_tx(
     sqlx::query_as(
         "INSERT INTO user_ai_settings (
              user_id, base_url, model, api_key_ciphertext, api_key_nonce, api_key_hint, enabled,
-             provider_preset, thinking_mode, reasoning_effort, thinking_budget,
+             provider_preset, transport_mode, thinking_mode, reasoning_effort, thinking_budget,
              request_timeout_seconds, custom_request_options, web_search_mode, web_search_provider,
              web_search_endpoint, web_search_api_key_ciphertext, web_search_api_key_nonce,
              web_search_api_key_hint, web_search_timeout_seconds, web_search_max_results,
              web_search_citations_enabled
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
          ON CONFLICT (user_id) DO UPDATE SET
              base_url = EXCLUDED.base_url, model = EXCLUDED.model,
              api_key_ciphertext = EXCLUDED.api_key_ciphertext,
              api_key_nonce = EXCLUDED.api_key_nonce, api_key_hint = EXCLUDED.api_key_hint,
              enabled = EXCLUDED.enabled, provider_preset = EXCLUDED.provider_preset,
+             transport_mode = EXCLUDED.transport_mode,
              thinking_mode = EXCLUDED.thinking_mode,
              reasoning_effort = EXCLUDED.reasoning_effort,
              thinking_budget = EXCLUDED.thinking_budget,
@@ -86,6 +88,7 @@ pub async fn upsert_user_tx(
     .bind(hint)
     .bind(enabled)
     .bind(provider_preset)
+    .bind(transport_mode)
     .bind(thinking_mode)
     .bind(reasoning_effort)
     .bind(thinking_budget)
@@ -146,6 +149,7 @@ pub async fn upsert_project_tx(
     hint: &str,
     enabled: bool,
     provider_preset: &str,
+    transport_mode: &str,
     thinking_mode: &str,
     reasoning_effort: &str,
     thinking_budget: Option<i64>,
@@ -165,17 +169,18 @@ pub async fn upsert_project_tx(
     sqlx::query_as(
         "INSERT INTO project_ai_settings (
              project_id, base_url, model, api_key_ciphertext, api_key_nonce, api_key_hint,
-             enabled, provider_preset, thinking_mode, reasoning_effort, thinking_budget,
+             enabled, provider_preset, transport_mode, thinking_mode, reasoning_effort, thinking_budget,
              request_timeout_seconds, custom_request_options, web_search_mode, web_search_provider,
              web_search_endpoint, web_search_api_key_ciphertext, web_search_api_key_nonce,
              web_search_api_key_hint, web_search_timeout_seconds, web_search_max_results,
              web_search_citations_enabled, updated_by
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
          ON CONFLICT (project_id) DO UPDATE SET
              base_url = EXCLUDED.base_url, model = EXCLUDED.model,
              api_key_ciphertext = EXCLUDED.api_key_ciphertext,
              api_key_nonce = EXCLUDED.api_key_nonce, api_key_hint = EXCLUDED.api_key_hint,
              enabled = EXCLUDED.enabled, provider_preset = EXCLUDED.provider_preset,
+             transport_mode = EXCLUDED.transport_mode,
              thinking_mode = EXCLUDED.thinking_mode,
              reasoning_effort = EXCLUDED.reasoning_effort,
              thinking_budget = EXCLUDED.thinking_budget,
@@ -201,6 +206,7 @@ pub async fn upsert_project_tx(
     .bind(hint)
     .bind(enabled)
     .bind(provider_preset)
+    .bind(transport_mode)
     .bind(thinking_mode)
     .bind(reasoning_effort)
     .bind(thinking_budget)

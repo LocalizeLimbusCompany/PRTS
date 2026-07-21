@@ -7,6 +7,7 @@ import type {
   AiReasoningEffort,
   AiSettingsDto,
   AiSettingsWriteRequest,
+  AiTransportMode,
   WebSearchMode,
 } from '@/api'
 import {
@@ -54,9 +55,17 @@ watch(
 )
 
 const providerOptions = computed(() =>
-  (['openai', 'qwen', 'deepseek', 'gemini', 'custom'] as AiProviderPreset[]).map((value) => ({
+  (['openai', 'qwen', 'deepseek', 'gemini', 'anthropic', 'custom'] as AiProviderPreset[]).map(
+    (value) => ({
+      value,
+      label: t(`profile.ai.presets.${value}`),
+    }),
+  ),
+)
+const transportOptions = computed(() =>
+  (['auto', 'streaming', 'non_streaming'] as AiTransportMode[]).map((value) => ({
     value,
-    label: t(`profile.ai.presets.${value}`),
+    label: t(`profile.ai.transportModes.${value}`),
   })),
 )
 const thinkingOptions = computed(() =>
@@ -148,9 +157,19 @@ function submit() {
         :label="t('profile.ai.model')"
         :disable="loading"
       />
+      <q-select
+        v-model="form.transport_mode"
+        outlined
+        dense
+        emit-value
+        map-options
+        :options="transportOptions"
+        :label="t('profile.ai.transportMode')"
+        :hint="t('profile.ai.transportModeHint')"
+        :disable="loading"
+      />
       <q-input
         v-model="form.base_url"
-        class="ai-settings-form__wide"
         outlined
         dense
         type="url"

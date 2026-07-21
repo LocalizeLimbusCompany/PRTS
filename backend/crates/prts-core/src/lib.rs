@@ -7,6 +7,7 @@
 //! - 翻译工作流是单值枚举 [`EntryState`]；
 //! - `locked` / `hidden` 是**正交标志位**（[`EntryFlags`]），独立于工作流。
 
+pub mod api_scope;
 pub mod capabilities;
 pub mod contribution;
 pub mod delete_challenge;

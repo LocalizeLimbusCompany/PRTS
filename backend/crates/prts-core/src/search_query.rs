@@ -61,6 +61,7 @@ pub enum SearchOperator {
     StartsWith,
     EndsWith,
     Equals,
+    Regex,
 }
 
 impl SearchOperator {
@@ -71,6 +72,7 @@ impl SearchOperator {
             Self::StartsWith => "starts_with",
             Self::EndsWith => "ends_with",
             Self::Equals => "equals",
+            Self::Regex => "regex",
         }
     }
 }
@@ -93,6 +95,9 @@ pub struct StructuredSearchRequest {
     pub query: Option<String>,
     #[serde(default)]
     pub conditions: Vec<SearchCondition>,
+    /// Global literal/regex case sensitivity for every condition and lexical query guard.
+    #[serde(default)]
+    pub case_sensitive: bool,
     pub scope: SearchScope,
     #[serde(default)]
     pub states: Vec<EntryState>,
@@ -121,6 +126,7 @@ pub enum SearchField {
     SourceAny,
     Translation,
     Key,
+    AnyText,
 }
 
 impl SearchField {
@@ -130,6 +136,7 @@ impl SearchField {
             Self::SourceAny => "source_any".to_string(),
             Self::Translation => "translation".to_string(),
             Self::Key => "key".to_string(),
+            Self::AnyText => "any_text".to_string(),
         }
     }
 }
@@ -147,6 +154,7 @@ pub struct CanonicalSearchCondition {
 pub struct StructuredSearchPlan {
     pub query: Option<String>,
     pub conditions: Vec<CanonicalSearchCondition>,
+    pub case_sensitive: bool,
     pub scope: SearchScope,
     pub states: Vec<EntryState>,
     pub questioned: Option<bool>,
@@ -171,6 +179,8 @@ pub enum SearchQueryError {
     SourceLanguageNotInProject,
     InvalidPath,
     InvalidResourceId,
+    RegexTooLong,
+    InvalidRegex,
 }
 
 impl SearchQueryError {
@@ -182,6 +192,8 @@ impl SearchQueryError {
             Self::SourceLanguageNotInProject => "SEARCH_SOURCE_LANGUAGE_NOT_IN_PROJECT",
             Self::InvalidPath => "SEARCH_PATH_INVALID",
             Self::InvalidResourceId => "SEARCH_SCOPE_RESOURCE_INVALID",
+            Self::RegexTooLong => "SEARCH_REGEX_TOO_LONG",
+            Self::InvalidRegex => "SEARCH_REGEX_INVALID",
         }
     }
 }
@@ -219,6 +231,14 @@ pub fn plan_structured_search(
             .then(left.value.cmp(&right.value))
     });
     conditions.dedup();
+    for condition in &conditions {
+        if condition.operator == SearchOperator::Regex {
+            if condition.value.chars().count() > 512 {
+                return Err(SearchQueryError::RegexTooLong);
+            }
+            regex::Regex::new(&condition.value).map_err(|_| SearchQueryError::InvalidRegex)?;
+        }
+    }
 
     let mut states = request.states.clone();
     states.sort_by_key(|state| match state {
@@ -252,6 +272,7 @@ pub fn plan_structured_search(
             .filter(|query| !query.is_empty())
             .map(str::to_string),
         conditions,
+        case_sensitive: request.case_sensitive,
         scope,
         states,
         questioned: request.questioned,
@@ -270,6 +291,7 @@ fn canonicalize_condition(
         "source_any" => SearchField::SourceAny,
         "translation" => SearchField::Translation,
         "key" => SearchField::Key,
+        "any_text" => SearchField::AnyText,
         _ if raw_field.starts_with("source:") => {
             let raw_language = &raw_field["source:".len()..];
             let language = canonicalize_language_tag(raw_language)
@@ -343,6 +365,7 @@ mod tests {
         StructuredSearchRequest {
             query: Some("  hello  ".to_string()),
             conditions: Vec::new(),
+            case_sensitive: false,
             scope,
             states: Vec::new(),
             questioned: None,
@@ -457,6 +480,47 @@ mod tests {
                 &["en".to_string()]
             ),
             Err(SearchQueryError::InvalidResourceId)
+        );
+    }
+
+    #[test]
+    fn validates_regex_and_accepts_the_composite_any_text_field() {
+        let mut input = request(SearchScope::All);
+        input.case_sensitive = true;
+        input.conditions = vec![SearchCondition {
+            field: "any_text".to_string(),
+            operator: SearchOperator::Regex,
+            value: r"^(Key|Translation)-\d+$".to_string(),
+        }];
+        let plan = plan_structured_search(&input, &["en".to_string()]).unwrap();
+        assert!(plan.case_sensitive);
+        assert_eq!(plan.conditions[0].field, SearchField::AnyText);
+        assert_eq!(plan.conditions[0].operator, SearchOperator::Regex);
+
+        input.conditions[0].value = "[unterminated".to_string();
+        assert_eq!(
+            plan_structured_search(&input, &["en".to_string()]),
+            Err(SearchQueryError::InvalidRegex)
+        );
+
+        input.conditions[0].value = "x".repeat(513);
+        assert_eq!(
+            plan_structured_search(&input, &["en".to_string()]),
+            Err(SearchQueryError::RegexTooLong)
+        );
+    }
+
+    #[test]
+    fn case_sensitivity_is_part_of_the_cursor_fingerprint() {
+        let insensitive =
+            plan_structured_search(&request(SearchScope::All), &["en".to_string()]).unwrap();
+        let mut sensitive_request = request(SearchScope::All);
+        sensitive_request.case_sensitive = true;
+        let sensitive = plan_structured_search(&sensitive_request, &["en".to_string()]).unwrap();
+
+        assert_ne!(
+            insensitive.fingerprint_material(),
+            sensitive.fingerprint_material()
         );
     }
 
