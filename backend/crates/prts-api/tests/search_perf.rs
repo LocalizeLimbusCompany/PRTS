@@ -169,6 +169,7 @@ async fn search_perf_five_scopes_and_materialized_reads() {
                 states: &[],
                 questioned: None,
                 conditions: &conditions,
+                case_sensitive: false,
                 include_hidden: false,
                 per_path: 100,
                 top_k: 200,
