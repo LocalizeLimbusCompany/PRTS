@@ -173,7 +173,9 @@ function Test-Contracts {
     Assert-Contains 'backend/migrations/0020_api_key_scopes.sql' 'scopes TEXT\[\] NOT NULL DEFAULT ARRAY\[''all''\]' 'API key scopes migrate existing keys to all'
     Assert-Contains 'backend/migrations/0021_project_join_history_search.sql' 'join_policy' 'Project join policy migration is present'
     Assert-Contains 'backend/migrations/0022_ai_transport_mode.sql' 'transport_mode TEXT NOT NULL DEFAULT ''auto''' 'AI transport mode migration is present'
-    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0022_ai_transport_mode.sql') '0022 AI transport migration is the newest migration'
+    Assert-Contains 'backend/migrations/0023_source_value_search.sql' 'source_all_values TEXT\[\]' 'Individual source values avoid JSONB expansion for exact search'
+    Assert-Contains 'backend/migrations/0023_source_value_search.sql' 'source_all_values_folded TEXT\[\]' 'Case-insensitive source equality has a maintained array'
+    Assert-True ((Get-ChildItem -LiteralPath 'backend/migrations' -File | Sort-Object Name | Select-Object -Last 1).Name -eq '0023_source_value_search.sql') '0023 source value search migration is the newest migration'
 }
 
 function Test-ScaleRecoverySecurityContracts {

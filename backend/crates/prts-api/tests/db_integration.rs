@@ -304,7 +304,7 @@ const AUDITED_ENTRYPOINTS: &[AuditedEntrypoint] = &[
     AuditedEntrypoint {
         entrypoint: "routes::users::create_api_key",
         action: "api_key.created",
-        allowed_payload_keys: &["name", "prefix"],
+        allowed_payload_keys: &["name", "prefix", "scopes"],
     },
     AuditedEntrypoint {
         entrypoint: "auth::extract::api_key_touch",
@@ -4300,7 +4300,8 @@ async fn audit_contract_presented_invalid_credentials_are_audited_before_denial_
         )
         .await
         .unwrap();
-    assert_eq!(optional_invalid.status(), StatusCode::NO_CONTENT);
+    // An explicitly presented invalid credential must never be downgraded to an anonymous read.
+    assert_eq!(optional_invalid.status(), StatusCode::UNAUTHORIZED);
 
     let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, serde_json::Value)>(
         "SELECT action, target_type, target_id, project_id_snapshot, payload

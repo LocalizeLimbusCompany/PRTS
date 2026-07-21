@@ -263,15 +263,7 @@ fn push_condition(
             qb.push(")");
         }
         SearchField::SourceAny => {
-            push_operator(
-                qb,
-                |qb| {
-                    qb.push("entry.source_all_text");
-                },
-                condition.operator,
-                &condition.value,
-                case_sensitive,
-            );
+            push_source_any_operator(qb, condition.operator, &condition.value, case_sensitive);
         }
         SearchField::Translation => push_operator(
             qb,
@@ -300,15 +292,7 @@ fn push_condition(
                 " OR "
             };
             qb.push("(");
-            push_operator(
-                qb,
-                |qb| {
-                    qb.push("entry.source_all_text");
-                },
-                condition.operator,
-                &condition.value,
-                case_sensitive,
-            );
+            push_source_any_operator(qb, condition.operator, &condition.value, case_sensitive);
             qb.push(separator);
             push_operator(
                 qb,
@@ -327,6 +311,51 @@ fn push_condition(
                 },
                 condition.operator,
                 &condition.value,
+                case_sensitive,
+            );
+            qb.push(")");
+        }
+    }
+}
+
+/// Match source-language values without expanding `original` JSONB on the search hot path.
+/// Exact and boundary-sensitive operators use the maintained array so one language value is not
+/// confused with the newline-joined aggregate; contains keeps the trigram-indexed text column.
+fn push_source_any_operator(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    operator: SearchOperator,
+    value: &str,
+    case_sensitive: bool,
+) {
+    match operator {
+        SearchOperator::Contains | SearchOperator::NotContains => push_operator(
+            qb,
+            |qb| {
+                qb.push("entry.source_all_text");
+            },
+            operator,
+            value,
+            case_sensitive,
+        ),
+        SearchOperator::Equals if case_sensitive => {
+            qb.push("entry.source_all_values @> ARRAY[")
+                .push_bind(value.to_string())
+                .push("]::TEXT[]");
+        }
+        SearchOperator::Equals => {
+            qb.push("entry.source_all_values_folded @> ARRAY[lower(")
+                .push_bind(value.to_string())
+                .push(")]::TEXT[]");
+        }
+        SearchOperator::StartsWith | SearchOperator::EndsWith | SearchOperator::Regex => {
+            qb.push("EXISTS (SELECT 1 FROM unnest(entry.source_all_values) AS source_value WHERE ");
+            push_operator(
+                qb,
+                |qb| {
+                    qb.push("source_value");
+                },
+                operator,
+                value,
                 case_sensitive,
             );
             qb.push(")");
